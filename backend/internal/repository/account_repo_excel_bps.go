@@ -11,8 +11,8 @@ import (
 
 var _ service.AccountExcelBPSRepository = (*accountRepository)(nil)
 
-// DisableExcelBPSOn403 changes only the protocol switch. A stale request cannot
-// disable an account whose credentials or opt-in have since been changed.
+// DisableExcelBPSOn403 pauses effective routing without changing the admin's
+// configured switch. A stale request cannot pause changed credentials or opt-in.
 func (r *accountRepository) DisableExcelBPSOn403(ctx context.Context, account *service.Account) (bool, error) {
 	if !account.IsExcelBPSAutoDisableOn403Enabled() {
 		return false, nil
@@ -49,12 +49,13 @@ func (r *accountRepository) disableExcelBPSOn403InTx(ctx context.Context, accoun
 	client := clientFromContext(ctx, r.client)
 	result, err := client.ExecContext(ctx, `
 UPDATE accounts
-SET extra = jsonb_set(extra, '{openai_excel_bps}', 'false'::jsonb), updated_at = NOW()
+SET extra = jsonb_set(extra, '{openai_excel_bps_paused_on_403_at}', to_jsonb(NOW()::text)), updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL AND parent_account_id IS NULL
   AND platform = 'openai' AND type = 'oauth'
   AND credentials = $2::jsonb
   AND extra -> 'openai_excel_bps' = 'true'::jsonb
-  AND extra -> 'openai_excel_bps_auto_disable_on_403' = 'true'::jsonb`,
+  AND extra -> 'openai_excel_bps_auto_disable_on_403' = 'true'::jsonb
+  AND NOT (extra ? 'openai_excel_bps_paused_on_403_at')`,
 		account.ID, string(credentials))
 	if err != nil {
 		return false, err

@@ -15,6 +15,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExcelBPSPauseKeepsConfiguredSwitch(t *testing.T) {
+	a := excelAccount()
+	a.Extra["openai_excel_bps_auto_disable_on_403"] = true
+	require.True(t, a.IsExcelBPSEnabled())
+	a.Extra[OpenAIExcelBPSPausedOn403AtExtraKey] = "2026-09-26 11:40:00+00"
+	require.Equal(t, true, a.Extra["openai_excel_bps"])
+	require.False(t, a.IsExcelBPSEnabled())
+	require.False(t, a.IsExcelBPSEnabledForModel("gpt-6-astra"))
+	require.False(t, a.IsExcelBPSAutoDisableOn403Enabled())
+	delete(a.Extra, OpenAIExcelBPSPausedOn403AtExtraKey)
+	require.True(t, a.IsExcelBPSEnabled())
+}
+
 func TestExcelBPSModelSelection(t *testing.T) {
 	a := excelAccount()
 	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-sol"), "legacy all-model setting")

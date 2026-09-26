@@ -43,7 +43,7 @@ func (s *OpenAIGatewayService) disableExcelBPSOn403(ctx context.Context, account
 		return false
 	}
 	if changed {
-		logger.LegacyPrintf("service.openai_excel_bps", "automatically disabled Excel BPS after upstream HTTP 403: account_id=%d", account.ID)
+		logger.LegacyPrintf("service.openai_excel_bps", "paused Excel BPS routing after upstream HTTP 403: account_id=%d", account.ID)
 	}
 	return changed
 }
@@ -255,7 +255,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			message = "Excel BPS rate limit exceeded; request was not replayed"
 		}
 		if resp.StatusCode == http.StatusForbidden && s.disableExcelBPSOn403(ctx, account) {
-			message = "Excel BPS rejected this request; Excel BPS was automatically disabled for this account; request was not replayed"
+			message = "Excel BPS rejected this request; BPS routing was paused for this account while its saved setting was preserved; request was not replayed"
 		}
 		return fail(resp.StatusCode, "basispoints_upstream_error", message)
 	}

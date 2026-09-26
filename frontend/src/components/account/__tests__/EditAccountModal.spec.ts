@@ -352,6 +352,34 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.unrelated).toBe('preserve')
   })
 
+  it('keeps a saved BPS switch on after a 403 pause and resumes only on request', async () => {
+    const account = buildAccount()
+    account.type = 'oauth'
+    account.extra = {
+      openai_excel_bps: true,
+      openai_excel_bps_auto_disable_on_403: true,
+      openai_excel_bps_paused_on_403_at: '2026-09-26 11:40:00+00'
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    expect(wrapper.get('[data-testid="excel-bps-toggle"]').attributes('aria-checked')).toBe('true')
+    expect(wrapper.find('[data-testid="excel-bps-paused"]').exists()).toBe(true)
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps).toBe(true)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps_paused_on_403_at).toBe('2026-09-26 11:40:00+00')
+
+    await wrapper.setProps({ show: false })
+    await wrapper.setProps({ show: true })
+    await wrapper.get('[data-testid="excel-bps-resume"]').trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.openai_excel_bps).toBe(true)
+    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.openai_excel_bps_paused_on_403_at).toBeNull()
+  })
+
   it('saves, restores and clears Excel BPS cache creation input billing', async () => {
     const account = buildAccount()
     account.type = 'oauth'

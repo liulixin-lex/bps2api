@@ -1787,6 +1787,12 @@
           </div>
         </div>
         <p v-if="excelBPSEnabled" class="mt-2 text-xs text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.excelBPSNotice') }}</p>
+        <div v-if="excelBPSEnabled && excelBPSPausedOn403At" data-testid="excel-bps-paused"
+          class="mt-3 flex items-center justify-between gap-3 border-l-2 border-amber-500 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          <span>{{ t('admin.accounts.openai.excelBPSPausedOn403') }}</span>
+          <button type="button" class="btn btn-secondary btn-sm flex-shrink-0" data-testid="excel-bps-resume"
+            @click="excelBPSPausedOn403At = null">{{ t('admin.accounts.openai.excelBPSResume') }}</button>
+        </div>
         <div v-if="excelBPSEnabled" class="mt-3">
           <label class="flex items-center gap-2">
             <input v-model="excelBPSAutoDisableOn403" type="checkbox"
@@ -3815,6 +3821,7 @@ const excelBPSAllModels = ref(false)
 const excelBPSModels = ref<string[]>(['gpt-6-astra'])
 const excelBPSCacheCreationAsInput = ref(false)
 const excelBPSAutoDisableOn403 = ref(false)
+const excelBPSPausedOn403At = ref<string | null>(null)
 const copilotSDKEnabled = ref(false)
 const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
@@ -4312,6 +4319,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   excelBPSModels.value = ['gpt-6-astra']
   excelBPSCacheCreationAsInput.value = false
   excelBPSAutoDisableOn403.value = false
+  excelBPSPausedOn403At.value = null
   copilotSDKEnabled.value = false
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
@@ -4340,6 +4348,8 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     }
     excelBPSCacheCreationAsInput.value = excelBPSEnabled.value && extra?.openai_excel_bps_cache_creation_as_input === true
     excelBPSAutoDisableOn403.value = newAccount.type === 'oauth' && extra?.openai_excel_bps_auto_disable_on_403 === true
+    excelBPSPausedOn403At.value = excelBPSEnabled.value && typeof extra?.openai_excel_bps_paused_on_403_at === 'string'
+      ? extra.openai_excel_bps_paused_on_403_at : null
     copilotSDKEnabled.value = newAccount.type === 'apikey' && extra?.openai_copilot_sdk === true
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
     openaiFlattenNamespacesEnabled.value =
@@ -5820,6 +5830,9 @@ const handleSubmit = async () => {
       const hadCodexCLIOnlyEnabled = currentExtra.codex_cli_only === true
       if (props.account.type === 'oauth' && !isSparkShadow.value && excelBPSEnabled.value) {
         newExtra.openai_excel_bps = true
+        if (currentExtra.openai_excel_bps_paused_on_403_at && !excelBPSPausedOn403At.value) {
+          newExtra.openai_excel_bps_paused_on_403_at = null
+        }
         if (excelBPSAllModels.value) {
           delete newExtra.openai_excel_bps_models
         } else {
@@ -5828,6 +5841,7 @@ const handleSubmit = async () => {
       } else {
         delete newExtra.openai_excel_bps
         delete newExtra.openai_excel_bps_models
+        delete newExtra.openai_excel_bps_paused_on_403_at
       }
       if (newExtra.openai_excel_bps === true && excelBPSCacheCreationAsInput.value) {
         newExtra.openai_excel_bps_cache_creation_as_input = true
