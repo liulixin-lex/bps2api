@@ -15,6 +15,7 @@ services:
     image: ghcr.io/liulixin-lex/bps2api:latest
     container_name: sub2api
     restart: unless-stopped
+    stop_grace_period: ${SERVER_STOP_GRACE_PERIOD:-330s}
     security_opt:
       - no-new-privileges:true
     ulimits:
@@ -38,6 +39,7 @@ services:
       # =======================================================================
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8080
+      - SERVER_SHUTDOWN_TIMEOUT_SECONDS=${SERVER_SHUTDOWN_TIMEOUT_SECONDS:-300}
       - SERVER_MODE=${SERVER_MODE:-release}
       - ENABLE_SERVER_TIMING=${ENABLE_SERVER_TIMING:-false}
       - RUN_MODE=${RUN_MODE:-standard}

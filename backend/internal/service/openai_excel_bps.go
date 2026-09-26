@@ -120,6 +120,11 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		ctx, cancel = context.WithTimeoutCause(ctx, time.Duration(timeouts.TotalSeconds)*time.Second, errExcelBPSRequestTimeout)
 		defer cancel()
 	}
+	return s.forwardExcelBPSAttempt(ctx, c, account, body, start, timeouts, 0)
+}
+
+func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time, timeouts config.ExcelBPSTimeoutConfig, attempt int) (*OpenAIForwardResult, error) {
+	originalBody := append([]byte(nil), body...)
 	fail := func(status int, code, message string) (*OpenAIForwardResult, error) {
 		// A compact keepalive may already have committed SSE headers. Otherwise
 		// finish a single JSON response so the handler cannot append another error.
@@ -291,12 +296,43 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	}
 	var completed []byte
 	terminal := ""
+	terminalCode := "basispoints_upstream_error"
+	// Hold only initial metadata so a failed local translation can be regenerated
+	// once without exposing duplicate response IDs or replaying client tool calls.
+	var pending strings.Builder
+	outputCommitted := false
 	cacheCreationAsInput := account.IsExcelBPSCacheCreationAsInputEnabled()
 	for scanner.Next(ctx, time.Duration(timeouts.IdleSeconds)*time.Second, heartbeat.C, keepalive) {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
 			payload := []byte(strings.TrimPrefix(line, "data: "))
 			kind := gjson.GetBytes(payload, "type").String()
+			protocolMessage := gjson.GetBytes(payload, "response.error.message").String()
+			// Only a malformed JSON tool envelope is eligible. Unknown tools,
+			// structured-output validation and arbitrary source text stay errors.
+			correctable := strings.HasPrefix(protocolMessage, "basispoints tool transport code must contain one JSON client-tool envelope;") &&
+				(strings.Contains(protocolMessage, "format=json_object;") || strings.Contains(protocolMessage, "format=json_string;")) &&
+				strings.Contains(protocolMessage, "json_failure=") && !strings.Contains(protocolMessage, "json_failure=trailing_data")
+			if correctable && kind == "response.failed" && gjson.GetBytes(payload, "response.error.code").String() == "basispoints_protocol_error" && attempt == 0 && !outputCommitted && ctx.Err() == nil {
+				instructions := gjson.GetBytes(originalBody, "instructions").String()
+				instructions += "\nTransport correction: the previous tool response was rejected before any client output or tool dispatch. Follow the exact catalog transport. Use the declared FUNCTION_CODE or CUSTOM raw transport for source text. For ordinary FUNCTION, serialize one valid JSON envelope with escaped strings. Never invent tool names or execute wrapper code."
+				corrected, correctionErr := sjson.SetBytes(originalBody, "instructions", instructions)
+				if correctionErr == nil {
+					scanner.Close()
+					_ = converted.Close()
+					_ = resp.Body.Close()
+					logger.LegacyPrintf("service.openai_excel_bps", "retrying pre-output protocol failure once: account_id=%d", account.ID)
+					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+						Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+						UpstreamStatusCode: http.StatusBadGateway, UpstreamRequestID: resp.Header.Get("x-request-id"),
+						Kind: "protocol_retry", Message: "Local BPS tool translation rejected before output; one correction attempt",
+					})
+					return s.forwardExcelBPSAttempt(ctx, c, account, corrected, start, timeouts, attempt+1)
+				}
+			}
+			if openAIStreamDataStartsClientOutput(string(payload), kind) || openAIStreamEventTypeIsTerminal(kind) {
+				outputCommitted = true
+			}
 			s.parseSSEUsageBytes(payload, &result.Usage)
 			if cacheCreationAsInput {
 				payload, err = excelBPSDownstreamUsage(payload)
@@ -313,24 +349,59 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			switch kind {
 			case "response.completed", "response.failed", "response.incomplete", "error":
 				terminal = kind
+				if kind == "response.incomplete" {
+					terminalCode = "response_incomplete"
+				} else if code := gjson.GetBytes(payload, "response.error.code").String(); code != "" {
+					terminalCode = code
+				}
 				completed = []byte(gjson.GetBytes(payload, "response").Raw)
 				result.ResponseID = gjson.GetBytes(payload, "response.id").String()
 				result.UpstreamResponseModel = gjson.GetBytes(payload, "response.model").String()
 			}
 		}
 		if stream {
-			if _, err = c.Writer.WriteString(line + "\n"); err != nil {
+			if !outputCommitted {
+				if _, err = pending.WriteString(line + "\n"); err != nil {
+					return result, err
+				}
+				if pending.Len() < 64<<10 {
+					continue
+				}
+				// Bound metadata memory and permanently disarm recovery when flushed.
+				outputCommitted = true
+				line = ""
+			} else {
+				line += "\n"
+			}
+			if pending.Len() > 0 {
+				if _, err = c.Writer.WriteString(pending.String()); err != nil {
+					result.ClientDisconnect = true
+					result.Duration = time.Since(start)
+					return result, err
+				}
+				pending.Reset()
+			}
+			if _, err = c.Writer.WriteString(line); err != nil {
 				result.ClientDisconnect = true
 				result.Duration = time.Since(start)
 				return result, err
 			}
-			if line == "" {
+			if line == "\n" || line == "" {
 				c.Writer.Flush()
 			}
 		}
 	}
 	result.Duration = time.Since(start)
 	result.UpstreamTerminalEvent = terminal
+	// If no correction was taken, preserve the original SSE contract on EOF or
+	// timeout: metadata already received is followed by one terminal SSE error.
+	if stream && pending.Len() > 0 && !errors.Is(ctx.Err(), context.Canceled) {
+		if _, err = c.Writer.WriteString(pending.String()); err != nil {
+			result.ClientDisconnect = true
+			return result, err
+		}
+		pending.Reset()
+	}
 	if err = scanner.Err(); err != nil || terminal == "" {
 		if errors.Is(err, errOpenAISSEIdle) || errors.Is(err, errOpenAISSEFirstOutput) || errors.Is(context.Cause(ctx), errExcelBPSRequestTimeout) {
 			// Compact clients can have SSE headers committed by the keepalive
@@ -367,7 +438,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	}
 	if !stream {
 		if terminal != "response.completed" {
-			c.JSON(502, gin.H{"error": gin.H{"code": "basispoints_protocol_error", "message": "Excel BPS did not complete the response"}})
+			c.JSON(502, gin.H{"error": gin.H{"code": terminalCode, "message": "Excel BPS did not complete the response"}})
 		} else {
 			c.Data(200, "application/json", completed)
 		}

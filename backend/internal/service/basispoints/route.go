@@ -34,11 +34,10 @@ func NativeFallbackReason(body []byte) string {
 		}
 	}
 	choice := gjson.GetBytes(body, "tool_choice")
-	if choice.Exists() && choice.Type == gjson.JSON {
-		name := choice.Get("name").String()
-		if strings.Contains(strings.ToLower(name), "web_search") || strings.Contains(strings.ToLower(name), "image_generation") {
-			return "tool_choice"
-		}
+	// The bridge only implements auto/none. Preserve forced-tool semantics on
+	// the native channel instead of rejecting or silently weakening them.
+	if choice.String() == "required" || choice.IsObject() {
+		return "tool_choice"
 	}
 	// Inline data images are handled by Sub2API's local relay before Prepare;
 	// leave them on BPS so the relay can rewrite them to signed HTTPS URLs.

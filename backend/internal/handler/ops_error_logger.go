@@ -850,7 +850,7 @@ var _ gin.ResponseWriter = (*opsCaptureWriter)(nil)
 
 func isOpsTerminalSSEFrame(frame []byte) bool {
 	eventType, payload := parseOpsSSEFrameEnvelope(frame)
-	if bytes.Equal(eventType, []byte("response.failed")) || bytes.Equal(eventType, []byte("error")) {
+	if bytes.Equal(eventType, []byte("response.failed")) || bytes.Equal(eventType, []byte("response.incomplete")) || bytes.Equal(eventType, []byte("error")) {
 		return true
 	}
 	if len(payload) == 0 {
@@ -858,14 +858,14 @@ func isOpsTerminalSSEFrame(frame []byte) bool {
 	}
 	// Most successful frames cannot be terminal. Avoid JSON decoding on this
 	// hot path while still validating any plausible terminal payload below.
-	if !bytes.Contains(payload, []byte("response.failed")) && !bytes.Contains(payload, []byte(`"error"`)) {
+	if !bytes.Contains(payload, []byte("response.failed")) && !bytes.Contains(payload, []byte("response.incomplete")) && !bytes.Contains(payload, []byte(`"error"`)) {
 		return false
 	}
 	var event struct {
 		Type string `json:"type"`
 	}
 	return json.Unmarshal(payload, &event) == nil &&
-		(event.Type == "response.failed" || event.Type == "error")
+		(event.Type == "response.failed" || event.Type == "response.incomplete" || event.Type == "error")
 }
 
 func parseOpsSSEFrameEnvelope(frame []byte) ([]byte, []byte) {
@@ -1012,7 +1012,7 @@ func endsAtOpsSSEFrameBoundary(chunk []byte) bool {
 }
 
 func mayContainOpsTerminalSSE(chunk []byte) bool {
-	if bytes.Contains(chunk, []byte("response.failed")) {
+	if bytes.Contains(chunk, []byte("response.failed")) || bytes.Contains(chunk, []byte("response.incomplete")) {
 		return true
 	}
 	return bytes.Contains(chunk, []byte("error")) &&
@@ -1024,6 +1024,7 @@ func isOpsTerminalSSEEventLine(line []byte) bool {
 	field, value, found := bytes.Cut(line, []byte{':'})
 	return found && bytes.Equal(bytes.TrimSpace(field), []byte("event")) &&
 		(bytes.Equal(bytes.TrimSpace(value), []byte("response.failed")) ||
+			bytes.Equal(bytes.TrimSpace(value), []byte("response.incomplete")) ||
 			bytes.Equal(bytes.TrimSpace(value), []byte("error")))
 }
 
@@ -1894,7 +1895,7 @@ func parseOpsSSEFailure(body []byte) (parsedOpsError, bool) {
 		}
 		eventTypeBytes, payloadBytes := parseOpsSSEFrameEnvelope([]byte(frame))
 		eventType := string(eventTypeBytes)
-		if eventType != "response.failed" && eventType != "error" && len(payloadBytes) == 0 {
+		if eventType != "response.failed" && eventType != "response.incomplete" && eventType != "error" && len(payloadBytes) == 0 {
 			continue
 		}
 
@@ -1905,11 +1906,24 @@ func parseOpsSSEFailure(body []byte) (parsedOpsError, bool) {
 				eventType, _ = event["type"].(string)
 			}
 		}
-		if eventType != "response.failed" && eventType != "error" {
+		if eventType != "response.failed" && eventType != "response.incomplete" && eventType != "error" {
 			continue
 		}
 
 		parsed := parsedOpsError{ErrorType: "upstream_error", StreamFailure: true}
+		if eventType == "response.incomplete" {
+			parsed.Code = "response_incomplete"
+			parsed.StatusCode = http.StatusBadGateway
+			parsed.Message = "upstream response incomplete"
+			if response, ok := event["response"].(map[string]any); ok {
+				if details, ok := response["incomplete_details"].(map[string]any); ok {
+					if reason, ok := details["reason"].(string); ok && strings.TrimSpace(reason) != "" {
+						parsed.Message += ": " + truncateString(strings.TrimSpace(reason), 256)
+					}
+				}
+			}
+			return parsed, true
+		}
 		if eventType == "error" {
 			parsed.ErrorType = "api_error"
 		}
@@ -2226,6 +2240,9 @@ func classifyOpsSeverity(errType string, status int) string {
 }
 
 func classifyOpsErrorLog(c *gin.Context, errType, message, code string, status int) (phase string, isBusinessLimited bool, errorOwner string, errorSource string) {
+	if strings.TrimSpace(code) == "basispoints_protocol_error" {
+		return "internal", false, "platform", "gateway"
+	}
 	phase = classifyOpsPhase(errType, message, code)
 	routingCapacityLimited := isOpsRoutingCapacityLimited(c)
 	clientBusinessLimited := service.HasOpsClientBusinessLimited(c)
