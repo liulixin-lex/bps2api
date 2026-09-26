@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -257,6 +258,19 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 			return
 		}
 		decoded := int64(len(body))
+		// Most Responses calls do not contain inline images. Keep their body
+		// intact, but release the image processing lease before handing off so
+		// ordinary text traffic cannot consume image relay capacity.
+		if !bpsImageRequestNeedsRelay(body) {
+			c.Request.Body = httputil.NewPrereadBody(body)
+			c.Request.ContentLength = decoded
+			c.Request.Header.Del("Content-Encoding")
+			c.Request.Header.Del("Content-Length")
+			decodeLease.release()
+			processLease.release()
+			c.Next()
+			return
+		}
 		weight := max(decoded, int64(bpsImageMinBodyBytes)) * bpsImageBodyMultiplier
 		if !processLease.resize(weight) {
 			reject("processing_bytes", decoded, weight)
@@ -275,6 +289,13 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 			zap.Int64("reserved_bytes", weight), zap.Duration("decode_duration", time.Since(started)))
 		c.Next()
 	}
+}
+
+// ImageRelay.Rewrite only transforms input_image data URLs. Avoid holding the
+// long-lived processing lease for text, tool-only, or HTTPS-image requests.
+// This bounded marker check runs after the body has already been safely read.
+func bpsImageRequestNeedsRelay(body []byte) bool {
+	return bytes.Contains(body, []byte(`"input_image"`)) && bytes.Contains(body, []byte(`"data:`))
 }
 
 func readBPSAdmissionBody(c *gin.Context, limit int64, timeout time.Duration) ([]byte, error) {

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/klauspost/compress/zstd"
@@ -71,6 +72,7 @@ func TestExcelBPSImageAdmission200ConcurrentRequests(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			payload := bytes.Repeat([]byte("x"), int(max(tt.length, 1024)))
+			copy(payload, []byte(`{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]}`))
 			switch tt.encoding {
 			case "gzip":
 				var b bytes.Buffer
@@ -93,22 +95,49 @@ func TestExcelBPSImageAdmission200ConcurrentRequests(t *testing.T) {
 			var once sync.Once
 			var wg sync.WaitGroup
 			t.Cleanup(func() { once.Do(func() { close(release) }); wg.Wait() })
-			r := bpsImageTestRouter(bpsImageTestSettings{enabled: true}, func(c *gin.Context) {
-				n := active.Add(1)
-				for old := peak.Load(); n > old; old = peak.Load() {
-					if peak.CompareAndSwap(old, n) {
-						break
+			r := func() *gin.Engine {
+				engine := gin.New()
+				engine.Use(func(c *gin.Context) {
+					c.Set(string(ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+					c.Next()
+				})
+				engine.Use(ExcelBPSImageAdmission(bpsImageTestSettings{enabled: true}, 256<<20, config.ImageRelayAdmissionConfig{ProcessingBudgetBytes: 512 << 20, MaxConcurrentRequests: 32}))
+				for _, path := range []string{"/responses", "/v1/responses", "/backend-api/codex/responses", "/chat/completions", "/v1/messages"} {
+					engine.POST(path, func(c *gin.Context) {
+						n := active.Add(1)
+						for old := peak.Load(); n > old; old = peak.Load() {
+							if peak.CompareAndSwap(old, n) {
+								break
+							}
+						}
+						_, err := io.Copy(io.Discard, c.Request.Body)
+						if err != nil {
+							t.Error(err)
+						}
+						entered <- struct{}{}
+						<-release
+						active.Add(-1)
+						c.Status(http.StatusNoContent)
+					})
+				}
+				engine.POST("/v1/responses/*subpath", func(c *gin.Context) {
+					n := active.Add(1)
+					for old := peak.Load(); n > old; old = peak.Load() {
+						if peak.CompareAndSwap(old, n) {
+							break
+						}
 					}
-				}
-				_, err := io.Copy(io.Discard, c.Request.Body)
-				if err != nil {
-					t.Error(err)
-				}
-				entered <- struct{}{}
-				<-release
-				active.Add(-1)
-				c.Status(http.StatusNoContent)
-			})
+					_, err := io.Copy(io.Discard, c.Request.Body)
+					if err != nil {
+						t.Error(err)
+					}
+					entered <- struct{}{}
+					<-release
+					active.Add(-1)
+					c.Status(http.StatusNoContent)
+				})
+				return engine
+			}()
 			results := make(chan *httptest.ResponseRecorder, 200)
 			paths := []string{"/responses", "/v1/responses/compact", "/backend-api/codex/responses", "/chat/completions", "/v1/messages"}
 			launch := func(i int) {
@@ -331,6 +360,7 @@ func TestExcelBPSImageAdmissionSmallBodyDoesNotHoldWorstCaseBudget(t *testing.T)
 
 func TestExcelBPSImageAdmissionConfiguredLimits(t *testing.T) {
 	settings := bpsImageTestSettings{enabled: true, bodyLimitMiB: 1, budgetMiB: 512, maxRequests: 1}
+	const imageBody = `{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]}`
 	entered := make(chan struct{}, 1)
 	release := make(chan struct{})
 	var once sync.Once
@@ -342,7 +372,7 @@ func TestExcelBPSImageAdmissionConfiguredLimits(t *testing.T) {
 		}
 		c.Status(http.StatusNoContent)
 	})
-	first := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("small"))
+	first := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(imageBody))
 	first.Header.Set("Hold", "true")
 	firstResult := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
@@ -356,7 +386,7 @@ func TestExcelBPSImageAdmissionConfiguredLimits(t *testing.T) {
 		t.Fatal("first request did not reach handler")
 	}
 	second := httptest.NewRecorder()
-	r.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("small")))
+	r.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(imageBody)))
 	require.Equal(t, http.StatusServiceUnavailable, second.Code)
 	require.Contains(t, second.Body.String(), "basispoints_image_request_busy")
 	once.Do(func() { close(release) })
@@ -366,7 +396,7 @@ func TestExcelBPSImageAdmissionConfiguredLimits(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("first request did not finish")
 	}
-	tooLarge := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("small"))
+	tooLarge := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(imageBody))
 	tooLarge.ContentLength = 2 << 20
 	result := httptest.NewRecorder()
 	r.ServeHTTP(result, tooLarge)

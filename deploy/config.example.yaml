@@ -537,8 +537,8 @@ gateway:
     decode_max_concurrent: 1
     decode_wait_milliseconds: 250 # bounded wait before reading any body
     decode_budget_bytes: 536870912
-    processing_budget_bytes: 536870912
-    max_concurrent_requests: 32
+    processing_budget_bytes: 1073741824
+    max_concurrent_requests: 128
     body_read_timeout_seconds: 60
   # Deployment BPS timeouts (binary defaults remain 0 for compatibility).
   # 0 explicitly disables a timeout; increase limits for longer reasoning.
