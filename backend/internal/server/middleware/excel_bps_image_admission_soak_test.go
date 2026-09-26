@@ -37,7 +37,7 @@ func TestExcelBPSImageAdmissionSoak(t *testing.T) {
 	encoder, err := zstd.NewWriter(nil)
 	require.NoError(t, err)
 	compressed := encoder.EncodeAll(payload, nil)
-	encoder.Close()
+	require.NoError(t, encoder.Close())
 	held := make(chan struct{})
 	r := admissionRouter(config.ImageRelayAdmissionConfig{}, func(c *gin.Context) {
 		body, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
@@ -69,7 +69,7 @@ func TestExcelBPSImageAdmissionSoak(t *testing.T) {
 	req.Header.Set("Hold", "true")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, 200, resp.StatusCode)
 	<-held
 	ctx, cancel := context.WithTimeout(context.Background(), duration)

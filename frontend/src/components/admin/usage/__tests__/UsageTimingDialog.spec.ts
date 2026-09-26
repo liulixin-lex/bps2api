@@ -39,8 +39,10 @@ describe('Usage timing details', () => {
       spans: [{ name: 'handler', start_ms: 0, end_ms: 50000 }, { name: 'user_queue', start_ms: 0, end_ms: 6000 }],
       attempts: [{ kind: 'egress', number: 1, cleanup_canceled: true, account_id: 1, proxy_id: 0, start_ms: 6000, end_ms: 50000, status: 200, reused: false, body_eof: false, request_bytes: 20, response_bytes: 100, events: { response_headers: 10000 } }]
     }] })
-    const wrapper = mount(UsageTimingDialog, { props: { record: row(1) }, ...options })
+    const wrapper = mount(UsageTimingDialog, { props: { record: { ...row(1), output_tokens: 1_095, duration_ms: 9_250, first_token_ms: 9_240 } }, ...options })
     await flushPromises()
+    expect(wrapper.text()).toContain('usage.latencyTps 118 t/s')
+    expect(wrapper.text()).toContain('requestTiming.tpsNote')
     expect(wrapper.text()).toContain('requestTiming.health.firstSlow')
     expect(wrapper.text()).toContain('requestTiming.health.largest')
     expect(wrapper.text()).toContain('requestTiming.health.normalClose')

@@ -36,7 +36,7 @@ func TestExcelBPSImageAdmissionReadDeadlineThroughOpsWriter(t *testing.T) {
 	defer s.Close()
 	conn, err := net.Dial("tcp", s.Listener.Addr().String())
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
 	_, err = io.WriteString(conn, "POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\na")
 	require.NoError(t, err)

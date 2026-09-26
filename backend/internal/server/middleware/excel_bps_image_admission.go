@@ -68,6 +68,15 @@ func (b *bpsImageAdmissionBudget) reserveLocked(weight int64) (*bpsImageReservat
 	return &bpsImageReservation{budget: b, weight: weight}, true
 }
 
+// Configure and reserve atomically; a save cannot bypass existing reservations.
+// Both values have already been clamped to the deployment hard ceilings.
+func (b *bpsImageAdmissionBudget) reserveConfigured(weight, limitBytes int64, maxRequests int) (*bpsImageReservation, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.maxBytes, b.maxRequests = limitBytes, maxRequests
+	return b.reserveLocked(weight)
+}
+
 // Waiters already hold a processing lease, so their number is bounded by the
 // active-request limit. No request body is read or buffered while waiting.
 // A short wait absorbs decode microbursts without increasing peak memory.
@@ -116,7 +125,7 @@ func (r *bpsImageReservation) resize(weight int64) bool {
 	if limit == 0 {
 		limit = bpsImageBudgetBytes
 	}
-	if r.released || weight < 0 || weight-r.weight > limit-b.bytes {
+	if r.released || weight < 0 || (weight > r.weight && weight-r.weight > limit-b.bytes) {
 		return false
 	}
 	b.bytes += weight - r.weight
@@ -157,9 +166,9 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 	cfg = cfg.WithDefaults()
 	decode := &bpsImageAdmissionBudget{maxBytes: cfg.DecodeBudgetBytes, maxRequests: cfg.DecodeMaxConcurrent}
 	processing := &bpsImageAdmissionBudget{maxBytes: cfg.ProcessingBudgetBytes, maxRequests: cfg.MaxConcurrentRequests}
-	maxBody := int64(bpsImageMaxBodyBytes)
-	if configuredMax > 0 && configuredMax < maxBody {
-		maxBody = configuredMax
+	bodyCeiling := int64(bpsImageMaxBodyBytes)
+	if configuredMax > 0 && configuredMax < bodyCeiling {
+		bodyCeiling = configuredMax
 	}
 	return func(c *gin.Context) {
 		if settings == nil || !bpsImageAdmissionRoute(c) {
@@ -180,6 +189,17 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 			c.Next()
 			return
 		}
+		maxBody := bodyCeiling
+		if relay.BodyLimitMiB > 0 {
+			maxBody = min(maxBody, int64(relay.BodyLimitMiB)<<20)
+		}
+		processingLimit, activeLimit := cfg.ProcessingBudgetBytes, cfg.MaxConcurrentRequests
+		if relay.BudgetMiB > 0 && !relay.InheritBudget {
+			processingLimit = min(processingLimit, int64(relay.BudgetMiB)<<20)
+		}
+		if relay.MaxRequests > 0 && !relay.InheritMaxRequests {
+			activeLimit = min(activeLimit, relay.MaxRequests)
+		}
 		wireLength, encoding := c.Request.ContentLength, c.GetHeader("Content-Encoding")
 		if wireLength > maxBody {
 			bpsImageAdmissionError(c, 413, "basispoints_image_body_too_large", "Request body exceeds the image relay ingress limit")
@@ -193,15 +213,15 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 				zap.String("encoding", encoding), zap.Int64("wire_bytes", wireLength), zap.Int64("decoded_bytes", decoded),
 				zap.Int64("requested_bytes", requested), zap.Int64("decode_bytes", db), zap.Int("decode_active", dn),
 				zap.Int64("processing_bytes", pb), zap.Int("processing_active", pn),
-				zap.Int64("processing_limit_bytes", cfg.ProcessingBudgetBytes), zap.Int("active_limit", cfg.MaxConcurrentRequests))
+				zap.Int64("processing_limit_bytes", processingLimit), zap.Int("active_limit", activeLimit))
 			bpsImageAdmissionError(c, 503, "basispoints_image_request_busy", "Image relay request capacity is busy; retry later")
 		}
 		// Reject a full process before reading more bodies or using a decoder.
-		processLease, ok := processing.reserve(bpsImageMinBodyBytes * bpsImageBodyMultiplier)
+		processLease, ok := processing.reserveConfigured(bpsImageMinBodyBytes*bpsImageBodyMultiplier, processingLimit, activeLimit)
 		if !ok {
 			_, active := processing.snapshot()
 			reason := "processing_bytes"
-			if active >= cfg.MaxConcurrentRequests {
+			if active >= activeLimit {
 				reason = "active_requests"
 			}
 			reject(reason, -1, bpsImageMinBodyBytes*bpsImageBodyMultiplier)

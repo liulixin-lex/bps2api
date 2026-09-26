@@ -32,7 +32,7 @@ func TestExcelBPSTimeoutsDoNotReplay(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			reader, writer := io.Pipe()
-			defer writer.Close()
+			defer func() { _ = writer.Close() }()
 			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{}, Body: reader}}
 			svc := openAIClientToolsTestService(upstream)
 			svc.cfg.Gateway.ExcelBPSTimeouts = tt.limits
@@ -42,7 +42,7 @@ func TestExcelBPSTimeoutsDoNotReplay(t *testing.T) {
 					defer close(done)
 					_, _ = io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"test\",\"output\":[]}}\n\n")
 				}()
-				defer func() { reader.Close(); <-done }()
+				defer func() { _ = reader.Close(); <-done }()
 			}
 			body := []byte(`{"model":"gpt-6-astra","input":"hello","stream":false}`)
 			if tt.stream {
@@ -59,7 +59,9 @@ func TestExcelBPSTimeoutsDoNotReplay(t *testing.T) {
 				defer stop()
 				value, exists := c.Get(openAICompactSSEKeepaliveKey)
 				require.True(t, exists)
-				keepalive = value.(*openAICompactSSEKeepalive)
+				var ok bool
+				keepalive, ok = value.(*openAICompactSSEKeepalive)
+				require.True(t, ok)
 				require.True(t, keepalive.beat())
 			}
 			start := time.Now()
@@ -87,7 +89,7 @@ func TestExcelBPSTimeoutsDoNotReplay(t *testing.T) {
 
 func TestExcelBPSRawActivityKeepsBufferedBridgeAlive(t *testing.T) {
 	reader, writer := io.Pipe()
-	defer writer.Close()
+	defer func() { _ = writer.Close() }()
 	pump := newOpenAISSEReadPump(reader, 1024)
 	defer pump.Close()
 	activity := &excelBPSActivityBody{ReadCloser: io.NopCloser(strings.NewReader("upstream bytes"))}

@@ -15,7 +15,7 @@ import (
 
 func TestBoundedBodyIncludesPrereadAndIdentity(t *testing.T) {
 	for _, preread := range []bool{false, true} {
-		var body io.ReadCloser = io.NopCloser(bytes.NewReader([]byte("12345")))
+		body := io.NopCloser(bytes.NewReader([]byte("12345")))
 		if preread {
 			body = NewPrereadBody([]byte("12345"))
 		}
@@ -43,7 +43,7 @@ func TestDecompressedBodyExactBoundary(t *testing.T) {
 				w, err := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1))
 				require.NoError(t, err)
 				compressed = w.EncodeAll(payload, nil)
-				w.Close()
+				require.NoError(t, w.Close())
 			}
 			req := newRequestWithBody(t, compressed, encoding)
 			got, err := ReadRequestBodyWithPrealloc(req)

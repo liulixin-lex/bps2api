@@ -24,7 +24,7 @@ func (c *opsQueueDepthCache) GetConcurrencyQueueDepth(ctx context.Context) (int,
 func TestCollectConcurrencyQueueDepthIncludesUserQueuesWithoutAccounts(t *testing.T) {
 	cache := &opsQueueDepthCache{depth: 5}
 	collector := &OpsMetricsCollector{concurrencyService: NewConcurrencyService(cache)}
-	depth := collector.collectConcurrencyQueueDepth(nil)
+	depth := collector.collectConcurrencyQueueDepth(context.Background())
 	require.NotNil(t, depth)
 	require.Equal(t, 5, *depth)
 	cache.err = errors.New("Redis unavailable")

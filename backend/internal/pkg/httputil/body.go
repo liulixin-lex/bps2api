@@ -64,7 +64,20 @@ func (p *PrereadBody) Bytes() []byte {
 // client used to compress the body (zstd, gzip, deflate).
 // 已由 PrereadBody 回填的请求体直接返回其完整切片（零拷贝），不检查内部
 // reader 是否已被消费——见 PrereadBody 的文档说明。
-func ReadRequestBodyWithPrealloc(req *http.Request) (result []byte, resultErr error) {
+func ReadRequestBodyWithPrealloc(req *http.Request) ([]byte, error) {
+	return readRequestBodyWithPrealloc(req, maxDecompressedBodySize, false)
+}
+
+// ReadRequestBodyWithPreallocLimit bounds wire and decoded bytes, including a
+// preread body. Callers must separately bound aggregate concurrent memory.
+func ReadRequestBodyWithPreallocLimit(req *http.Request, maxDecodedBytes int64) ([]byte, error) {
+	if maxDecodedBytes <= 0 || maxDecodedBytes > 128<<20 {
+		return nil, errors.New("request body limit must be between 1 byte and 128 MiB")
+	}
+	return readRequestBodyWithPrealloc(req, maxDecodedBytes, true)
+}
+
+func readRequestBodyWithPrealloc(req *http.Request, maxDecodedBytes int64, strict bool) (result []byte, resultErr error) {
 	defer func() {
 		if resultErr == nil && req != nil {
 			requestcapture.FromContext(req.Context()).ClientRequest(result, req.Header.Get("Content-Type"), req.Header)
@@ -75,9 +88,18 @@ func ReadRequestBodyWithPrealloc(req *http.Request) (result []byte, resultErr er
 		return nil, nil
 	}
 	if preread, ok := req.Body.(*PrereadBody); ok {
+		if strict && int64(len(preread.Bytes())) > maxDecodedBytes {
+			return nil, &http.MaxBytesError{Limit: maxDecodedBytes}
+		}
 		return preread.Bytes(), nil
 	}
 
+	if strict {
+		if req.ContentLength > maxDecodedBytes {
+			return nil, &http.MaxBytesError{Limit: maxDecodedBytes}
+		}
+		req.Body = http.MaxBytesReader(nil, req.Body, maxDecodedBytes)
+	}
 	capHint := requestBodyReadInitCap
 	if req.ContentLength > 0 {
 		switch {
@@ -100,7 +122,7 @@ func ReadRequestBodyWithPrealloc(req *http.Request) (result []byte, resultErr er
 		return raw, nil
 	}
 
-	decoded, err := decompressRequestBody(enc, raw)
+	decoded, err := decompressRequestBody(enc, raw, maxDecodedBytes)
 	if err != nil {
 		return nil, fmt.Errorf("decode Content-Encoding %q: %w", enc, err)
 	}
@@ -172,30 +194,30 @@ func ReadLenientJSONRequestBodyWithPrealloc(req *http.Request, maxNormalizedByte
 	return NormalizeLenientJSONRequestBody(body, maxNormalizedBytes)
 }
 
-func decompressRequestBody(encoding string, raw []byte) ([]byte, error) {
+func decompressRequestBody(encoding string, raw []byte, maxDecodedBytes int64) ([]byte, error) {
 	switch encoding {
 	case "zstd":
 		dec, err := zstd.NewReader(bytes.NewReader(raw), zstd.WithDecoderConcurrency(1),
-			zstd.WithDecoderMaxWindow(maxDecompressedBodySize), zstd.WithDecoderMaxMemory(maxDecompressedBodySize))
+			zstd.WithDecoderMaxWindow(uint64(max(int64(maxDecompressedBodySize), maxDecodedBytes))), zstd.WithDecoderMaxMemory(uint64(max(int64(maxDecompressedBodySize), maxDecodedBytes))))
 		if err != nil {
 			return nil, err
 		}
 		defer dec.Close()
-		return readDecompressedBody(dec)
+		return readDecompressedBodyLimit(dec, maxDecodedBytes)
 	case "gzip", "x-gzip":
 		gr, err := gzip.NewReader(bytes.NewReader(raw))
 		if err != nil {
 			return nil, err
 		}
 		defer func() { _ = gr.Close() }()
-		return readDecompressedBody(gr)
+		return readDecompressedBodyLimit(gr, maxDecodedBytes)
 	case "deflate":
 		zr, err := zlib.NewReader(bytes.NewReader(raw))
 		if err != nil {
 			return nil, err
 		}
 		defer func() { _ = zr.Close() }()
-		return readDecompressedBody(zr)
+		return readDecompressedBodyLimit(zr, maxDecodedBytes)
 	default:
 		return nil, errors.New("unsupported Content-Encoding")
 	}
@@ -217,7 +239,7 @@ func ReadRequestBodyBounded(w http.ResponseWriter, req *http.Request, limit int6
 		}
 		req.Body = http.MaxBytesReader(w, req.Body, wireLimit)
 	}
-	body, err := ReadRequestBodyWithPrealloc(req)
+	body, err := ReadRequestBodyWithPreallocLimit(req, min(limit, int64(maxDecompressedBodySize)))
 	if err != nil {
 		return nil, err
 	}
@@ -228,14 +250,18 @@ func ReadRequestBodyBounded(w http.ResponseWriter, req *http.Request, limit int6
 }
 
 func readDecompressedBody(r io.Reader) ([]byte, error) {
+	return readDecompressedBodyLimit(r, maxDecompressedBodySize)
+}
+
+func readDecompressedBodyLimit(r io.Reader, limit int64) ([]byte, error) {
 	// Read one extra byte: silently truncating at the cap can turn an oversized
 	// body into a valid JSON prefix or an unrelated JSON parsing error.
-	body, err := readRequestBodyChunks(io.LimitReader(r, maxDecompressedBodySize+1), requestBodyReadInitCap, -1)
+	body, err := readRequestBodyChunks(io.LimitReader(r, limit+1), requestBodyReadInitCap, -1)
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(body)) > maxDecompressedBodySize {
-		return nil, &http.MaxBytesError{Limit: maxDecompressedBodySize}
+	if int64(len(body)) > limit {
+		return nil, &http.MaxBytesError{Limit: limit}
 	}
 	return body, nil
 }

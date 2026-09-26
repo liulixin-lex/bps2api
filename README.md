@@ -1,23 +1,35 @@
 # bps2api
 
-基于 [ranxi2001/sub2api](https://github.com/ranxi2001/sub2api) `v2.8.13`
-（`6b0c0ddbd1649caad5d980e92368059b1a5d1158`）的独立稳定性改进版本。
-本仓库由 `liulixin-lex` 发布，默认分支为 `main`，保留上游提交历史和
-[LGPL-3.0 许可证](LICENSE)。原项目源自 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api)。
+基于 [ranxi2001/sub2api](https://github.com/ranxi2001/sub2api) 的独立稳定性改进版本，
+保留上游历史与 [LGPL-3.0 许可证](LICENSE)。原项目源自 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api)。
 
-本次改进包括图片中继读取/解压与处理预算分离、BPS 超时控制、单上游 Caddy
-503 处理、SSE 错误分类、Redis 队列深度采样和数据库连接池默认值统一。
-变更细节、配置、回归测试及发布边界见
-[图片中继容量修复说明](docs/image-relay-capacity-fix.md)。
+## 0.0.1
 
-- 源码：`git clone https://github.com/liulixin-lex/bps2api.git`
-- 问题反馈：[bps2api Issues](https://github.com/liulixin-lex/bps2api/issues)
-- 构建：使用本仓库源码及根目录 `Dockerfile` 构建自己的镜像。
-  部署前先完成隔离验证、配置备份和生产灰度。
+在原有图片中继容量、BPS 超时、Caddy 503、SSE 错误分类和队列观测修复上，
+选择性整合上游 v2.8.14（e39898c680ecd69381e549ae54c97011107f1757）。
+新增代码工具原文传输、429 冷却、用量快照、可选 403 协议关闭、工具往返探测、
+请求采集修复和平均 TPS。保留默认 32 个在途请求、512 MiB 处理预算及独立解压预算，
+后台调参不能突破部署硬上限，也不会随并发配置自动扩容。
 
-当前发布的是源码，不表示这些改动已部署到生产，也尚未发布本仓库的容器镜像或
-二进制 Release。下方保留的上游文档中，安装脚本、镜像、下载、交流群及赞助链接
-仍属于上游；直接使用上游镜像不会包含本仓库的修复。
+- [0.0.1 更新内容、冲突取舍与升级说明](docs/bps2api-0.0.1.md)
+- [既有稳定性修复和容量配置](docs/image-relay-capacity-fix.md)
+- [版本下载](https://github.com/liulixin-lex/bps2api/releases/tag/v0.0.1)
+- [问题反馈](https://github.com/liulixin-lex/bps2api/issues)
+
+默认分支为 main，应用自更新和本仓库安装脚本均使用 liulixin-lex/bps2api。
+本版没有增加数据库迁移。二进制、服务和数据目录名称继续使用 sub2api，便于原地升级。
+升级前备份数据库和配置，核验 Release 中的 checksums.txt，先在隔离环境验证。
+发版与生产部署是两个独立操作。
+
+~~~bash
+git clone https://github.com/liulixin-lex/bps2api.git
+cd bps2api
+git checkout v0.0.1
+~~~
+
+安装入口为本仓库的 deploy/install.sh（安装参数 install -v v0.0.1），
+容器入口为 ghcr.io/liulixin-lex/bps2api:0.0.1。
+下方是保留署名的上游参考文档，其维护者、社区和上游版本链接不代表本仓库发布渠道。
 
 ---
 

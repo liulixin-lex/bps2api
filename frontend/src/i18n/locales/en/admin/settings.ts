@@ -21,9 +21,14 @@ export default {
           enabledHint: 'Changes apply immediately after saving, without restarting. Disabling stops conversion and blocks temporary image access.',
           baseUrl: 'Public HTTPS address',
           baseUrlHint: 'Enter the public HTTPS origin of this service, without /v1 or another path. The account must still have the Excel / BPS protocol enabled.',
+          bodyLimit: 'Request body limit (MiB)',
+          budget: 'Shared resource budget (MiB)',
+          maxRequests: 'Maximum in-flight requests',
+          budgetHint: 'Processing budget never grows automatically with concurrency. Defaults: 32 in-flight requests and 512 MiB processing budget, plus a separate decode budget. Changes apply to new requests within the deployment hard limits. Review both budgets and instance memory before increasing concurrency.',
           retentionHint: 'Supports PNG, JPEG, GIF and WebP. Maximum 20 MiB per image and 20 images / 32 MiB per request. Files are temporarily stored in the data directory, capped at 1 GiB / 512 images per process. Links expire 30 minutes after the last submission and files are cleaned in the background. Anyone with a valid link can read the image.',
-          capacityHint: 'When enabled, OpenAI/Composite Responses, Chat and Messages HTTP requests (including text-only requests) share a 64 MiB body limit, a resource budget and a maximum of 32 in-flight requests. Larger requests allow less concurrency. Excess requests receive 503 without being queued in memory. This is not a 200-concurrent-user capacity guarantee.',
+          capacityHint: 'These limits cover OpenAI/Composite Responses, Chat and Messages HTTP requests, including text-only requests. Larger requests allow less concurrency; excess requests receive 503 without being queued in memory. Raising the budget increases memory pressure.',
           invalidBaseUrl: 'Enter a valid HTTPS origin without a path, credentials, query or fragment.',
+          invalidCapacity: 'Set a body limit of 1–64 MiB, a shared budget of 512–2048 MiB at least eight times the body limit, and 1–512 in-flight requests.',
         },
         channelMonitor: {
           title: 'Channel Monitor',
@@ -1322,6 +1327,10 @@ export default {
       user_error_view: {
         label: 'Allow users to view their own error requests',
         description: 'When enabled, users can see a redacted view of their failed requests on the usage page (no internal/upstream details). Requires ops monitoring enabled to have data.',
+      },
+      long_context_badge: {
+        label: 'Show long-context billing badge',
+        description: 'When enabled, usage records billed under long-context tiered pricing show an x2 badge next to their cost. Enabled by default.',
       },
       saveSettings: 'Save Settings',
       saving: 'Saving...',

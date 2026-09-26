@@ -21,12 +21,15 @@ import (
 )
 
 type bpsImageTestSettings struct {
-	enabled bool
-	err     error
+	bodyLimitMiB int
+	budgetMiB    int
+	maxRequests  int
+	enabled      bool
+	err          error
 }
 
 func (s bpsImageTestSettings) GetExcelBPSImageRelaySettings(context.Context) (service.ExcelBPSImageRelaySettings, error) {
-	return service.ExcelBPSImageRelaySettings{Enabled: s.enabled}, s.err
+	return service.ExcelBPSImageRelaySettings{Enabled: s.enabled, BodyLimitMiB: s.bodyLimitMiB, BudgetMiB: s.budgetMiB, MaxRequests: s.maxRequests}, s.err
 }
 
 type bpsImageCountingBody struct {
@@ -68,18 +71,19 @@ func TestExcelBPSImageAdmission200ConcurrentRequests(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			payload := bytes.Repeat([]byte("x"), int(max(tt.length, 1024)))
-			if tt.encoding == "gzip" {
+			switch tt.encoding {
+			case "gzip":
 				var b bytes.Buffer
 				w := gzip.NewWriter(&b)
 				_, err := w.Write(payload)
 				require.NoError(t, err)
 				require.NoError(t, w.Close())
 				payload = b.Bytes()
-			} else if tt.encoding == "zstd" {
+			case "zstd":
 				w, err := zstd.NewWriter(nil)
 				require.NoError(t, err)
 				payload = w.EncodeAll(payload, nil)
-				w.Close()
+				require.NoError(t, w.Close())
 			}
 			var reads atomic.Int32
 			var active atomic.Int32
@@ -249,4 +253,122 @@ func TestExcelBPSImageAdmissionReleasesAfterCancellation(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/responses", nil))
 	require.Equal(t, http.StatusNoContent, w.Code)
+}
+
+func TestExcelBPSImageAdmissionSmallBodyDoesNotHoldWorstCaseBudget(t *testing.T) {
+	const body = `{"model":"gpt-6-astra","input":"hello"}`
+	var compressed bytes.Buffer
+	zipper := gzip.NewWriter(&compressed)
+	_, err := zipper.Write([]byte(body))
+	require.NoError(t, err)
+	require.NoError(t, zipper.Close())
+
+	for _, tt := range []struct {
+		name     string
+		wire     []byte
+		length   int64
+		encoding string
+	}{
+		{"chunked", []byte(body), -1, ""},
+		{"gzip", compressed.Bytes(), int64(compressed.Len()), "gzip"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			type observed struct {
+				body     string
+				length   int64
+				encoding string
+			}
+			entered := make(chan observed, 1)
+			release := make(chan struct{})
+			var once sync.Once
+			t.Cleanup(func() { once.Do(func() { close(release) }) })
+			r := bpsImageTestRouter(bpsImageTestSettings{enabled: true}, func(c *gin.Context) {
+				read, readErr := io.ReadAll(c.Request.Body)
+				if readErr != nil {
+					c.Status(http.StatusBadRequest)
+					return
+				}
+				if c.GetHeader("Hold") == "true" {
+					entered <- observed{string(read), c.Request.ContentLength, c.GetHeader("Content-Encoding")}
+					<-release
+				}
+				c.Status(http.StatusNoContent)
+			})
+			first := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(tt.wire))
+			first.ContentLength = tt.length
+			first.Header.Set("Hold", "true")
+			if tt.encoding != "" {
+				first.Header.Set("Content-Encoding", tt.encoding)
+			}
+			firstResult := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				recorder := httptest.NewRecorder()
+				r.ServeHTTP(recorder, first)
+				firstResult <- recorder
+			}()
+			select {
+			case got := <-entered:
+				require.Equal(t, body, got.body)
+				require.Equal(t, int64(len(body)), got.length)
+				require.Empty(t, got.encoding)
+			case <-time.After(5 * time.Second):
+				t.Fatal("first request did not reach the handler")
+			}
+			second := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+			secondResult := httptest.NewRecorder()
+			r.ServeHTTP(secondResult, second)
+			require.Equal(t, http.StatusNoContent, secondResult.Code, secondResult.Body.String())
+			once.Do(func() { close(release) })
+			select {
+			case result := <-firstResult:
+				require.Equal(t, http.StatusNoContent, result.Code)
+			case <-time.After(5 * time.Second):
+				t.Fatal("first request did not finish")
+			}
+		})
+	}
+}
+
+func TestExcelBPSImageAdmissionConfiguredLimits(t *testing.T) {
+	settings := bpsImageTestSettings{enabled: true, bodyLimitMiB: 1, budgetMiB: 512, maxRequests: 1}
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	r := bpsImageTestRouter(settings, func(c *gin.Context) {
+		if c.GetHeader("Hold") == "true" {
+			entered <- struct{}{}
+			<-release
+		}
+		c.Status(http.StatusNoContent)
+	})
+	first := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("small"))
+	first.Header.Set("Hold", "true")
+	firstResult := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		r.ServeHTTP(recorder, first)
+		firstResult <- recorder
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first request did not reach handler")
+	}
+	second := httptest.NewRecorder()
+	r.ServeHTTP(second, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("small")))
+	require.Equal(t, http.StatusServiceUnavailable, second.Code)
+	require.Contains(t, second.Body.String(), "basispoints_image_request_busy")
+	once.Do(func() { close(release) })
+	select {
+	case result := <-firstResult:
+		require.Equal(t, http.StatusNoContent, result.Code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("first request did not finish")
+	}
+	tooLarge := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader("small"))
+	tooLarge.ContentLength = 2 << 20
+	result := httptest.NewRecorder()
+	r.ServeHTTP(result, tooLarge)
+	require.Equal(t, http.StatusRequestEntityTooLarge, result.Code)
 }

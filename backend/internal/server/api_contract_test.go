@@ -880,6 +880,9 @@ func TestAPIContracts(t *testing.T) {
 					"default_subscriptions": [],
 					"enable_model_fallback": false,
 					"excel_bps_image_base_url": "",
+					"excel_bps_image_body_limit_mib": 64,
+					"excel_bps_image_budget_mib": 512,
+					"excel_bps_image_max_requests": 32,
  "request_capture_enabled": false,
  "request_capture_quota_mib": 1024,
  "request_capture_retention_days": 7,
@@ -1038,7 +1041,8 @@ func TestAPIContracts(t *testing.T) {
 					"wechat_connect_redirect_url": "",
 					"wechat_connect_frontend_redirect_url": "/auth/wechat/callback",
 					"wechat_connect_scopes": "snsapi_login",
-					"allow_user_view_error_requests": false
+					"allow_user_view_error_requests": false,
+					"usage_show_long_context_badge": true
 				}
 			}`,
 		},
@@ -1221,6 +1225,9 @@ func TestAPIContracts(t *testing.T) {
 					"default_subscriptions": [],
 					"enable_model_fallback": false,
 					"excel_bps_image_base_url": "",
+					"excel_bps_image_body_limit_mib": 64,
+					"excel_bps_image_budget_mib": 512,
+					"excel_bps_image_max_requests": 32,
  "request_capture_enabled": false,
  "request_capture_quota_mib": 1024,
  "request_capture_retention_days": 7,
@@ -1407,7 +1414,8 @@ func TestAPIContracts(t *testing.T) {
 					"auth_source_default_dingtalk_grant_on_signup": false,
 					"auth_source_default_dingtalk_grant_on_first_bind": false,
 					"force_email_on_third_party_signup": false,
-					"allow_user_view_error_requests": false
+					"allow_user_view_error_requests": false,
+					"usage_show_long_context_badge": true
 				}
 			}`,
 		},

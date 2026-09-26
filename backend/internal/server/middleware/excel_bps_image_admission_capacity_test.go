@@ -38,7 +38,7 @@ func TestExcelBPSImageAdmissionDecodeAndProcessingAreIndependent(t *testing.T) {
 	enc, err := zstd.NewWriter(nil)
 	require.NoError(t, err)
 	payload := enc.EncodeAll([]byte(`{"input":"hello"}`), nil)
-	enc.Close()
+	require.NoError(t, enc.Close())
 	r := admissionRouter(config.ImageRelayAdmissionConfig{}, func(c *gin.Context) {
 		b, err := httputil.ReadRequestBodyWithPrealloc(c.Request)
 		if err != nil || string(b) != `{"input":"hello"}` {
@@ -205,17 +205,17 @@ func TestExcelBPSImageAdmissionBodyReadDeadline(t *testing.T) {
 	defer s.Close()
 	conn, err := net.Dial("tcp", s.Listener.Addr().String())
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
 	_, err = io.WriteString(conn, "POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\na")
 	require.NoError(t, err)
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, 408, resp.StatusCode)
 	// A timed-out uploader cannot retain the sole decoder lease.
 	resp2, err := s.Client().Post(s.URL+"/v1/responses", "application/json", strings.NewReader("test"))
 	require.NoError(t, err)
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	require.Equal(t, 200, resp2.StatusCode)
 }

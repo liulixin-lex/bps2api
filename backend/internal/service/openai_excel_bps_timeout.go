@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-var errExcelBPSRequestTimeout = errors.New("Excel BPS total request timeout")
+var errExcelBPSRequestTimeout = errors.New("excel BPS total request timeout")
 
 // Count raw upstream bytes, not local keepalive writes or only bridged events.
 type excelBPSActivityBody struct {
