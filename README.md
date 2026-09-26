@@ -1,3 +1,28 @@
+# bps2api
+
+基于 [ranxi2001/sub2api](https://github.com/ranxi2001/sub2api) `v2.8.13`
+（`6b0c0ddbd1649caad5d980e92368059b1a5d1158`）的独立稳定性改进版本。
+本仓库由 `liulixin-lex` 发布，默认分支为 `main`，保留上游提交历史和
+[LGPL-3.0 许可证](LICENSE)。原项目源自 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api)。
+
+本次改进包括图片中继读取/解压与处理预算分离、BPS 超时控制、单上游 Caddy
+503 处理、SSE 错误分类、Redis 队列深度采样和数据库连接池默认值统一。
+变更细节、配置、回归测试及发布边界见
+[图片中继容量修复说明](docs/image-relay-capacity-fix.md)。
+
+- 源码：`git clone https://github.com/liulixin-lex/bps2api.git`
+- 问题反馈：[bps2api Issues](https://github.com/liulixin-lex/bps2api/issues)
+- 构建：使用本仓库源码及根目录 `Dockerfile` 构建自己的镜像。
+  部署前先完成隔离验证、配置备份和生产灰度。
+
+当前发布的是源码，不表示这些改动已部署到生产，也尚未发布本仓库的容器镜像或
+二进制 Release。下方保留的上游文档中，安装脚本、镜像、下载、交流群及赞助链接
+仍属于上游；直接使用上游镜像不会包含本仓库的修复。
+
+---
+
+## 上游项目文档
+
 <div align="center">
 
 <img src="assets/logo-icon.png" alt="Sub2API Logo" width="128" />
