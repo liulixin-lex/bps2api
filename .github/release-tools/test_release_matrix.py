@@ -216,6 +216,19 @@ class ReleaseMatrixTest(unittest.TestCase):
         notification = next(step for step in workflow['jobs']['release']['steps'] if step.get('name') == 'Send Telegram Notification')
         self.assertIn("prerelease != 'true'", notification['if'])
 
+    def test_fork_installation_channels_are_consistent(self):
+        expected = 'liulixin-lex/bps2api'
+        install = (ROOT / 'deploy/install.sh').read_text()
+        docker_install = (ROOT / 'deploy/docker-deploy.sh').read_text()
+        updater = (ROOT / 'backend/internal/service/update_service.go').read_text()
+        self.assertIn(expected, install)
+        self.assertIn(expected, docker_install)
+        self.assertIn(expected, updater)
+        self.assertNotIn('ranxi2001/sub2api', docker_install)
+        for name in ['docker-compose.yml', 'docker-compose.local.yml', 'docker-compose.standalone.yml']:
+            compose = (ROOT / 'deploy' / name).read_text()
+            self.assertIn('ghcr.io/' + expected + ':latest', compose)
+
     def test_release_announcement_requires_explicit_opt_in(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/release.yml').read_text())
         trigger = workflow.get('on', workflow.get(True))
