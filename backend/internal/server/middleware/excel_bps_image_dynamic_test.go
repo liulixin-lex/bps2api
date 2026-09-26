@@ -50,7 +50,7 @@ func TestExcelBPSImageAdmissionLiveSettingsRespectDeploymentCeiling(t *testing.T
 		c.Status(200)
 	})
 	request := func(hold bool) int {
-		q := httptest.NewRequest("POST", "/v1/responses", strings.NewReader("small"))
+		q := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]}`))
 		if hold {
 			q.Header.Set("Hold", "1")
 		}
@@ -95,4 +95,10 @@ func TestExcelBPSImageAdmissionBudgetDoesNotAutoExpand(t *testing.T) {
 	used, active := b.snapshot()
 	require.Zero(t, used)
 	require.Zero(t, active)
+}
+
+func TestBPSImageRequestNeedsRelay(t *testing.T) {
+	require.False(t, bpsImageRequestNeedsRelay([]byte(`{"input":"hello"}`)))
+	require.False(t, bpsImageRequestNeedsRelay([]byte(`{"input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`)))
+	require.True(t, bpsImageRequestNeedsRelay([]byte(`{"input":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}`)))
 }

@@ -45,10 +45,10 @@ func (c ImageRelayAdmissionConfig) WithDefaults() ImageRelayAdmissionConfig {
 		c.DecodeBudgetBytes = ImageRelayDecodeReservationBytes
 	}
 	if c.ProcessingBudgetBytes == 0 {
-		c.ProcessingBudgetBytes = 512 << 20
+		c.ProcessingBudgetBytes = 1 << 30
 	}
 	if c.MaxConcurrentRequests == 0 {
-		c.MaxConcurrentRequests = 32
+		c.MaxConcurrentRequests = 128
 	}
 	if c.BodyReadTimeoutSeconds == 0 {
 		c.BodyReadTimeoutSeconds = 60
