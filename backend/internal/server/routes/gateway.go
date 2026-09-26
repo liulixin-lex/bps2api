@@ -36,7 +36,7 @@ func RegisterGatewayRoutes(
 	r.HEAD("/api/bps-images/:token", h.OpenAIGateway.ExcelBPSImage)
 	bodyLimit := middleware.RequestBodyLimit(cfg.Gateway.MaxBodySize)
 	textBodyLimit := middleware.RequestBodyLimit(cfg.Gateway.TextMaxBodySize)
-	imageAdmission := middleware.ExcelBPSImageAdmission(settingService, cfg.Gateway.MaxBodySize)
+	imageAdmission := middleware.ExcelBPSImageAdmission(settingService, cfg.Gateway.MaxBodySize, cfg.Gateway.ImageRelayAdmission)
 	clientRequestID := middleware.ClientRequestID()
 	opsErrorLogger := handler.OpsErrorLoggerMiddleware(opsService)
 	var captureTraffic gin.HandlerFunc

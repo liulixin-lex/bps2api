@@ -368,7 +368,7 @@ func (c *OpsMetricsCollector) collectAndPersist(ctx context.Context) error {
 }
 
 func (c *OpsMetricsCollector) collectConcurrencyQueueDepth(parentCtx context.Context) *int {
-	if c == nil || c.accountRepo == nil || c.concurrencyService == nil {
+	if c == nil || c.concurrencyService == nil {
 		return nil
 	}
 	if parentCtx == nil {
@@ -378,6 +378,18 @@ func (c *OpsMetricsCollector) collectConcurrencyQueueDepth(parentCtx context.Con
 	// Best-effort: never let concurrency sampling break the metrics collector.
 	ctx, cancel := context.WithTimeout(parentCtx, 2*time.Second)
 	defer cancel()
+
+	depth, err := c.concurrencyService.GetConcurrencyQueueDepth(ctx)
+	if err != nil {
+		// An unavailable sample must not appear as an empty queue.
+		return nil
+	}
+	if depth != nil {
+		return depth
+	}
+	if c.accountRepo == nil {
+		return nil
+	}
 
 	accountLoads, err := c.listSchedulableAccountLoads(ctx)
 	if err != nil {

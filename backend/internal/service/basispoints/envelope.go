@@ -165,6 +165,27 @@ func recoverTransportEnvelope(value any, catalog map[string]tool) (object, bool)
 		return nil, false
 	}
 	raw = strings.TrimSpace(raw)
+	// Formatting wrappers are not executable syntax. Unwrap only complete JSON
+	// strings or complete fences, then apply the same single-call grammar below.
+	// No object is extracted from a program and no tool input is evaluated.
+	for depth := 0; depth < 4; depth++ {
+		var unquoted string
+		if strings.HasPrefix(raw, `"`) && json.Unmarshal([]byte(raw), &unquoted) == nil {
+			raw = strings.TrimSpace(unquoted)
+			continue
+		}
+		if strings.HasPrefix(raw, "```") && strings.HasSuffix(raw, "```") {
+			newline := strings.IndexByte(raw, '\n')
+			if newline >= 3 && newline < len(raw)-3 {
+				language := strings.ToLower(strings.TrimSpace(raw[3:newline]))
+				if language == "" || language == "json" || language == "js" || language == "javascript" {
+					raw = strings.TrimSpace(raw[newline+1 : len(raw)-3])
+					continue
+				}
+			}
+		}
+		break
+	}
 	match := catalogInvocation.FindStringSubmatch(raw)
 	if len(match) != 2 {
 		// Retain the existing complete JSON/fence/prose forms without searching

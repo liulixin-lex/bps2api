@@ -56,6 +56,8 @@ type captureResponseWriter struct {
 	stream  *requestcapture.Stream
 }
 
+func (w *captureResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *captureResponseWriter) observe(p []byte) {
 	if strings.EqualFold(w.Header().Get("Upgrade"), "websocket") {
 		return

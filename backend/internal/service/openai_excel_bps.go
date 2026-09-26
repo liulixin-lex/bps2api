@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/Wei-Shaw/sub2api/internal/util/logredact"
@@ -87,6 +88,15 @@ func newExcelBPSRequest(ctx context.Context, body []byte, token, accountID strin
 // BPS deliberately bypasses Codex ticket/cookie injection and OAuth plugins:
 // only the selected account's bearer and ChatGPT account ID belong on this host.
 func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time) (*OpenAIForwardResult, error) {
+	var timeouts config.ExcelBPSTimeoutConfig
+	if s.cfg != nil {
+		timeouts = s.cfg.Gateway.ExcelBPSTimeouts
+	}
+	if timeouts.TotalSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeoutCause(ctx, time.Duration(timeouts.TotalSeconds)*time.Second, errExcelBPSRequestTimeout)
+		defer cancel()
+	}
 	fail := func(status int, code, message string) (*OpenAIForwardResult, error) {
 		// A compact keepalive may already have committed SSE headers. Otherwise
 		// finish a single JSON response so the handler cannot append another error.
@@ -177,6 +187,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(sent).Milliseconds())
 	if err != nil {
+		if errors.Is(context.Cause(ctx), errExcelBPSRequestTimeout) {
+			return fail(504, "basispoints_request_timeout", "Excel BPS request timed out; request was not replayed")
+		}
 		return fail(502, "basispoints_transport_error", "Excel BPS connection failed; request was not replayed")
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -211,7 +224,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 		return fail(resp.StatusCode, "basispoints_upstream_error", "Excel BPS rejected this request; account scheduling was not changed")
 	}
-	converted := bridge.Stream(resp.Body)
+	activity := &excelBPSActivityBody{ReadCloser: resp.Body}
+	activity.lastRead.Store(time.Now().UnixNano())
+	converted := bridge.Stream(activity)
 	defer func() { _ = converted.Close() }()
 	// The bridge sees the body after group policy mapping. Keep the original
 	// client effort for usage display, and the BPS-normalized effort for billing.
@@ -223,6 +238,10 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		c.Header("X-Accel-Buffering", "no")
 	}
 	scanner := newOpenAISSEReadPump(converted, 16<<20)
+	scanner.upstreamActivity = &activity.lastRead
+	if timeouts.FirstOutputSeconds > 0 {
+		scanner.firstOutputDeadline = sent.Add(time.Duration(timeouts.FirstOutputSeconds) * time.Second)
+	}
 	defer scanner.Close()
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
@@ -235,7 +254,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	var completed []byte
 	terminal := ""
 	cacheCreationAsInput := account.IsExcelBPSCacheCreationAsInputEnabled()
-	for scanner.Next(ctx, 0, heartbeat.C, keepalive) {
+	for scanner.Next(ctx, time.Duration(timeouts.IdleSeconds)*time.Second, heartbeat.C, keepalive) {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
 			payload := []byte(strings.TrimPrefix(line, "data: "))
@@ -249,6 +268,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				line = "data: " + string(payload)
 			}
 			if result.FirstTokenMs == nil && (kind == "response.output_text.delta" || kind == "response.output_item.added") {
+				scanner.firstOutputDeadline = time.Time{}
 				ms := int(time.Since(start).Milliseconds())
 				result.FirstTokenMs = &ms
 			}
@@ -274,6 +294,23 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	result.Duration = time.Since(start)
 	result.UpstreamTerminalEvent = terminal
 	if err = scanner.Err(); err != nil || terminal == "" {
+		if errors.Is(err, errOpenAISSEIdle) || errors.Is(err, errOpenAISSEFirstOutput) || errors.Is(context.Cause(ctx), errExcelBPSRequestTimeout) {
+			// Compact clients can have SSE headers committed by the keepalive
+			// even when the forwarded body uses stream=false. Stop it before
+			// deciding the error format, just as the HTTP error path does.
+			compactCommitted := StopOpenAICompactSSEKeepaliveCommitted(c)
+			MarkResponseCommitted(c)
+			result.streamReadIncomplete = true
+			const code = "basispoints_stream_timeout"
+			const message = "Excel BPS stream timed out; request was not replayed"
+			if compactCommitted || (stream && c.Writer.Written()) {
+				writeOpenAICompactSSEFailureMessage(c, 504, code, message)
+			} else {
+				c.Header("Content-Type", "application/json")
+				c.JSON(504, gin.H{"error": gin.H{"type": "server_error", "code": code, "message": message}})
+			}
+			return result, fmt.Errorf("excel BPS stream timeout: %w", err)
+		}
 		if ctx.Err() != nil {
 			result.ClientDisconnect = true
 			return result, ctx.Err()

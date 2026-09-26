@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,6 +53,7 @@ func bpsImageTestRouter(settings bpsImageTestSettings, next gin.HandlerFunc) *gi
 }
 
 func TestExcelBPSImageAdmission200ConcurrentRequests(t *testing.T) {
+	initMiddlewareTestLogger(t)
 	for _, tt := range []struct {
 		name     string
 		length   int64
@@ -58,10 +62,25 @@ func TestExcelBPSImageAdmission200ConcurrentRequests(t *testing.T) {
 	}{
 		{"small", 1024, "", 32},
 		{"large", 32 << 20, "", 2},
-		{"chunked", -1, "", 1},
-		{"compressed", 1024, "gzip", 1},
+		{"chunked", -1, "", 32},
+		{"compressed", 1024, "gzip", 32},
+		{"zstd", 1024, "zstd", 32},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			payload := bytes.Repeat([]byte("x"), int(max(tt.length, 1024)))
+			if tt.encoding == "gzip" {
+				var b bytes.Buffer
+				w := gzip.NewWriter(&b)
+				_, err := w.Write(payload)
+				require.NoError(t, err)
+				require.NoError(t, w.Close())
+				payload = b.Bytes()
+			} else if tt.encoding == "zstd" {
+				w, err := zstd.NewWriter(nil)
+				require.NoError(t, err)
+				payload = w.EncodeAll(payload, nil)
+				w.Close()
+			}
 			var reads atomic.Int32
 			var active atomic.Int32
 			var peak atomic.Int32
@@ -86,25 +105,39 @@ func TestExcelBPSImageAdmission200ConcurrentRequests(t *testing.T) {
 				active.Add(-1)
 				c.Status(http.StatusNoContent)
 			})
-			start := make(chan struct{})
 			results := make(chan *httptest.ResponseRecorder, 200)
 			paths := []string{"/responses", "/v1/responses/compact", "/backend-api/codex/responses", "/chat/completions", "/v1/messages"}
-			for i := 0; i < 200; i++ {
+			launch := func(i int) {
 				wg.Add(1)
 				go func(i int) {
 					defer wg.Done()
-					<-start
 					req := httptest.NewRequest(http.MethodPost, paths[i%len(paths)], nil)
-					req.ContentLength = tt.length
+					req.ContentLength = int64(len(payload))
+					if tt.length < 0 {
+						req.ContentLength = -1
+					}
 					req.Header.Set("Content-Encoding", tt.encoding)
-					req.Body = &bpsImageCountingBody{reads: &reads, reader: strings.NewReader("test")}
+					req.Body = &bpsImageCountingBody{reads: &reads, reader: bytes.NewReader(payload)}
 					w := httptest.NewRecorder()
 					r.ServeHTTP(w, req)
 					results <- w
 				}(i)
 			}
-			close(start)
 			deadline := time.After(10 * time.Second)
+			// Fill retained-body capacity while each decoder finishes. All admitted
+			// handlers remain active, just like long-running SSE requests.
+			for i := 0; i < tt.allowed; i++ {
+				launch(i)
+				select {
+				case <-entered:
+				case <-deadline:
+					t.Fatal("admitted request did not enter")
+				}
+			}
+			beforeRejected := reads.Load()
+			for i := tt.allowed; i < 200; i++ {
+				launch(i)
+			}
 			for i := 0; i < 200-tt.allowed; i++ {
 				select {
 				case w := <-results:
@@ -115,15 +148,8 @@ func TestExcelBPSImageAdmission200ConcurrentRequests(t *testing.T) {
 					t.Fatal("rejected requests did not finish without reading their body")
 				}
 			}
-			for i := 0; i < tt.allowed; i++ {
-				select {
-				case <-entered:
-				case <-deadline:
-					t.Fatal("admitted requests did not enter")
-				}
-			}
 			require.Equal(t, int32(tt.allowed), peak.Load())
-			require.Equal(t, int32(tt.allowed*2), reads.Load(), "only admitted bodies may be read")
+			require.Equal(t, beforeRejected, reads.Load(), "full processing capacity must reject before body reads")
 			once.Do(func() { close(release) })
 			for i := 0; i < tt.allowed; i++ {
 				select {

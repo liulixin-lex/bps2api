@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -634,22 +635,27 @@ func TestRefreshIfNeeded_RequestPathDBRereadMissingGrokRefreshCredentialReturnsP
 }
 
 func TestRefreshIfNeeded_LateSuccessAfterDeadlineDoesNotPersist(t *testing.T) {
-	account := &Account{ID: 85, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive}
-	repo := &refreshAPIAccountRepo{account: account}
-	executor := &refreshAPIExecutorStub{
-		needsRefresh: true,
-		credentials:  map[string]any{"access_token": "late-token"},
-		delay:        30 * time.Millisecond,
-	}
-	api := NewOAuthRefreshAPI(repo, nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
+	// Advance both the provider delay and context deadline on one virtual clock.
+	// A busy host may otherwise resume Sleep before running the cancellation timer.
+	synctest.Test(t, func(t *testing.T) {
+		account := &Account{ID: 85, Platform: PlatformGrok, Type: AccountTypeOAuth, Status: StatusActive}
+		repo := &refreshAPIAccountRepo{account: account}
+		executor := &refreshAPIExecutorStub{
+			needsRefresh: true,
+			credentials:  map[string]any{"access_token": "late-token"},
+			delay:        30 * time.Millisecond,
+		}
+		api := NewOAuthRefreshAPI(repo, nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
 
-	result, err := api.RefreshIfNeeded(ctx, account, executor, time.Hour)
+		result, err := api.RefreshIfNeeded(ctx, account, executor, time.Hour)
 
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.Nil(t, result)
-	require.Zero(t, repo.updateCredentialsCalls, "late credentials must not cross the unified API persistence boundary")
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Nil(t, result)
+		require.Zero(t, repo.updateCredentialsCalls, "late credentials must not cross the unified API persistence boundary")
+		require.Equal(t, 1, executor.refreshCalls, "the provider must return after the deadline")
+	})
 }
 
 func TestRefreshIfNeeded_NilCredentials(t *testing.T) {

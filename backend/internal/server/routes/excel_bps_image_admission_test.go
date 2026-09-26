@@ -1,11 +1,14 @@
 package routes
 
 import (
+	"bufio"
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -19,6 +22,28 @@ type bpsImageAdmissionRouteRepo struct{ service.SettingRepository }
 
 func (*bpsImageAdmissionRouteRepo) GetMultiple(context.Context, []string) (map[string]string, error) {
 	return map[string]string{service.SettingKeyExcelBPSImageRelayEnabled: "true", service.SettingKeyExcelBPSImageBaseURL: "https://images.example"}, nil
+}
+
+func TestExcelBPSImageAdmissionReadDeadlineThroughOpsWriter(t *testing.T) {
+	cfg := &config.Config{Gateway: config.GatewayConfig{MaxBodySize: 256 << 20, TextMaxBodySize: 32 << 20, ImageRelayAdmission: config.ImageRelayAdmissionConfig{BodyReadTimeoutSeconds: 1}}}
+	settings := service.NewSettingService(&bpsImageAdmissionRouteRepo{}, cfg)
+	r := gin.New()
+	RegisterGatewayRoutes(r, &handler.Handlers{OpenAIGateway: &handler.OpenAIGatewayHandler{}, Gateway: &handler.GatewayHandler{}}, func(c *gin.Context) {
+		c.Set(string(middleware.ContextKeyAPIKey), &service.APIKey{Group: &service.Group{Platform: service.PlatformOpenAI}})
+		c.Next()
+	}, nil, nil, nil, settings, nil, cfg)
+	s := httptest.NewServer(r)
+	defer s.Close()
+	conn, err := net.Dial("tcp", s.Listener.Addr().String())
+	require.NoError(t, err)
+	defer conn.Close()
+	require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+	_, err = io.WriteString(conn, "POST /v1/responses HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\n\r\na")
+	require.NoError(t, err)
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, 408, resp.StatusCode)
 }
 
 type bpsImageUnreadBody struct{ read bool }

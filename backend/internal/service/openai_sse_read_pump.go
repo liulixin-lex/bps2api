@@ -23,8 +23,11 @@ type openAISSEReadPump struct {
 	done      chan struct{}
 	closeOnce sync.Once
 	lastRead  atomic.Int64
-	text      string
-	err       error
+	// Optional activity before a protocol bridge. The bridge may buffer or
+	// consume upstream comments without emitting downstream events.
+	upstreamActivity *atomic.Int64
+	text             string
+	err              error
 	// Consumer-owned semantic deadline; upstream heartbeats do not clear it.
 	firstOutputDeadline time.Time
 }
@@ -102,7 +105,13 @@ func (p *openAISSEReadPump) Next(ctx context.Context, idle time.Duration, heartb
 	nextDeadline := func() time.Time {
 		deadline := p.firstOutputDeadline
 		if idle > 0 {
-			idleDeadline := time.Unix(0, p.lastRead.Load()).Add(idle)
+			lastRead := p.lastRead.Load()
+			if p.upstreamActivity != nil {
+				if rawRead := p.upstreamActivity.Load(); rawRead > lastRead {
+					lastRead = rawRead
+				}
+			}
+			idleDeadline := time.Unix(0, lastRead).Add(idle)
 			if deadline.IsZero() || idleDeadline.Before(deadline) {
 				deadline = idleDeadline
 			}

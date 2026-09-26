@@ -61,6 +61,28 @@ type APIKeyConcurrencyCache interface {
 	GetAPIKeyConcurrencyBatch(ctx context.Context, apiKeyIDs []int64) (map[int64]int, error)
 }
 
+// ConcurrencyQueueDepthCache samples both user and account queues, including
+// queues whose accounts are no longer schedulable. Older cache adapters may
+// omit this optional capability and retain account-only metrics.
+type ConcurrencyQueueDepthCache interface {
+	GetConcurrencyQueueDepth(ctx context.Context) (int, error)
+}
+
+func (s *ConcurrencyService) GetConcurrencyQueueDepth(ctx context.Context) (*int, error) {
+	if s == nil || s.cache == nil {
+		return nil, nil
+	}
+	cache, ok := s.cache.(ConcurrencyQueueDepthCache)
+	if !ok {
+		return nil, nil
+	}
+	depth, err := cache.GetConcurrencyQueueDepth(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &depth, nil
+}
+
 // OpenAIWSIngressLeaseCache owns the short-lived distributed lease used to
 // bound live client WebSocket sessions. It is deliberately independent of the
 // request-slot namespace: idle ingress connections do not occupy turn slots.

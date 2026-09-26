@@ -780,6 +780,18 @@ func (w *opsCaptureWriter) Flush() {
 	defer finishDelegatedCall(state)
 	rw.Flush()
 }
+
+// Forward deadlines without exposing an unprotected pooled writer via Unwrap.
+// The delegation lease prevents a concurrent release from reusing its state.
+func (w *opsCaptureWriter) SetReadDeadline(deadline time.Time) error {
+	state, rw := w.beginDelegatedCall()
+	if state == nil {
+		return errors.New("response writer released")
+	}
+	state.mu.Unlock()
+	defer finishDelegatedCall(state)
+	return http.NewResponseController(rw).SetReadDeadline(deadline)
+}
 func (w *opsCaptureWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	state, rw := w.beginDelegatedCall()
 	if state == nil {
@@ -2028,7 +2040,7 @@ func sanitizeOpsSSEDataForPersistence(body []byte) string {
 
 func inferResponsesFailedOpsErrorType(code string) string {
 	switch strings.TrimSpace(code) {
-	case "rate_limit_exceeded":
+	case "rate_limit_exceeded", gatewayQueueFullCode, gatewayConcurrencyLimitCode:
 		return "rate_limit_error"
 	case "permission_denied", "permission_error", "insufficient_permissions", "cyber_policy", "content_policy":
 		return "permission_error"
@@ -2036,8 +2048,10 @@ func inferResponsesFailedOpsErrorType(code string) string {
 		return "invalid_request_error"
 	case "server_is_overloaded":
 		return "overloaded_error"
-	case "service_unavailable", "service_unavailable_error", "server_error":
+	case "service_unavailable", "service_unavailable_error", "server_error", "basispoints_image_request_busy":
 		return "service_unavailable_error"
+	case "basispoints_stream_timeout":
+		return "upstream_error"
 	case "authentication_failed":
 		return "authentication_error"
 	default:
@@ -2050,7 +2064,7 @@ func inferStreamFailureStatus(_ *gin.Context, parsed parsedOpsError) int {
 		return parsed.StatusCode
 	}
 	switch strings.TrimSpace(parsed.Code) {
-	case "rate_limit_exceeded":
+	case "rate_limit_exceeded", gatewayQueueFullCode, gatewayConcurrencyLimitCode:
 		return http.StatusTooManyRequests
 	case "permission_denied", "permission_error", "insufficient_permissions", "cyber_policy", "content_policy":
 		return http.StatusForbidden
@@ -2058,8 +2072,10 @@ func inferStreamFailureStatus(_ *gin.Context, parsed parsedOpsError) int {
 		return http.StatusBadRequest
 	case "server_is_overloaded":
 		return http.StatusServiceUnavailable
-	case "service_unavailable", "service_unavailable_error", "server_error":
+	case "service_unavailable", "service_unavailable_error", "server_error", "basispoints_image_request_busy":
 		return http.StatusServiceUnavailable
+	case "basispoints_stream_timeout":
+		return http.StatusGatewayTimeout
 	case "authentication_failed":
 		return http.StatusUnauthorized
 	}
@@ -2290,7 +2306,9 @@ func isOpsClientAuthError(code string, msg string) bool {
 
 func isOpsLocalBusinessLimitError(code string, msg string) bool {
 	switch strings.TrimSpace(code) {
-	case opsCodeInsufficientBalance,
+	case gatewayQueueFullCode,
+		gatewayConcurrencyLimitCode,
+		opsCodeInsufficientBalance,
 		opsCodeUsageLimitExceeded,
 		opsCodeSubscriptionNotFound,
 		opsCodeSubscriptionInvalid,

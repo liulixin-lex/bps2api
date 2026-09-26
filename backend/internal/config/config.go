@@ -1027,7 +1027,9 @@ type GatewayConfig struct {
 	// OpenAIProxyStreamCircuit: Responses SSE 代理断流熔断策略。
 	OpenAIProxyStreamCircuit GatewayOpenAIProxyStreamCircuitConfig `mapstructure:"openai_proxy_stream_circuit"`
 	// ImageConcurrency: 图片生成独立并发限制配置（默认关闭）
-	ImageConcurrency ImageConcurrencyConfig `mapstructure:"image_concurrency"`
+	ImageConcurrency    ImageConcurrencyConfig    `mapstructure:"image_concurrency"`
+	ImageRelayAdmission ImageRelayAdmissionConfig `mapstructure:"image_relay_admission"`
+	ExcelBPSTimeouts    ExcelBPSTimeoutConfig     `mapstructure:"excel_bps_timeouts"`
 
 	// HTTP 上游连接池配置（性能优化：支持高并发场景调优）
 	// MaxIdleConns: 所有主机的最大空闲连接总数
@@ -2195,8 +2197,8 @@ func setDefaults() {
 	viper.SetDefault("database.password", "postgres")
 	viper.SetDefault("database.dbname", "sub2api")
 	viper.SetDefault("database.sslmode", "prefer")
-	viper.SetDefault("database.max_open_conns", 256)
-	viper.SetDefault("database.max_idle_conns", 128)
+	viper.SetDefault("database.max_open_conns", 50)
+	viper.SetDefault("database.max_idle_conns", 10)
 	viper.SetDefault("database.conn_max_lifetime_minutes", 30)
 	viper.SetDefault("database.conn_max_idle_time_minutes", 5)
 	viper.SetDefault("database.user_platform_quota_flusher_enabled", false)
@@ -2505,6 +2507,15 @@ func setDefaults() {
 	viper.SetDefault("gateway.cn_providers.balance_threshold", 0.5)
 	viper.SetDefault("gateway.cn_providers.balance_check_interval_minutes", 10)
 	viper.SetDefault("gateway.image_concurrency.enabled", false)
+	viper.SetDefault("gateway.image_relay_admission.decode_max_concurrent", 1)
+	viper.SetDefault("gateway.image_relay_admission.decode_wait_milliseconds", 250)
+	viper.SetDefault("gateway.excel_bps_timeouts.first_output_seconds", 0)
+	viper.SetDefault("gateway.excel_bps_timeouts.idle_seconds", 0)
+	viper.SetDefault("gateway.excel_bps_timeouts.total_seconds", 0)
+	viper.SetDefault("gateway.image_relay_admission.decode_budget_bytes", ImageRelayDecodeReservationBytes)
+	viper.SetDefault("gateway.image_relay_admission.processing_budget_bytes", int64(512<<20))
+	viper.SetDefault("gateway.image_relay_admission.max_concurrent_requests", 32)
+	viper.SetDefault("gateway.image_relay_admission.body_read_timeout_seconds", 60)
 	viper.SetDefault("gateway.image_concurrency.max_concurrent_requests", 0)
 	viper.SetDefault("gateway.image_concurrency.overflow_mode", ImageConcurrencyOverflowModeReject)
 	viper.SetDefault("gateway.image_concurrency.wait_timeout_seconds", 30)
@@ -3357,6 +3368,12 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("gateway.connection_pool_isolation must be one of: %s/%s/%s",
 				ConnectionPoolIsolationProxy, ConnectionPoolIsolationAccount, ConnectionPoolIsolationAccountProxy)
 		}
+	}
+	if err := c.Gateway.ImageRelayAdmission.Validate(); err != nil {
+		return err
+	}
+	if err := c.Gateway.ExcelBPSTimeouts.Validate(); err != nil {
+		return err
 	}
 	if c.Gateway.ImageConcurrency.MaxConcurrentRequests < 0 {
 		return fmt.Errorf("gateway.image_concurrency.max_concurrent_requests must be non-negative")
