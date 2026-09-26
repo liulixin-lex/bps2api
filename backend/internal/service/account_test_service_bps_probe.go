@@ -170,7 +170,7 @@ func (s *AccountTestService) runExcelBPSProbeStep(c *gin.Context, account *Accou
 	probeCtx.Request = c.Request.Clone(stepCtx)
 	probeCtx.Request.Header.Set("Session-Id", session)
 	probeCtx.Set(bpsAccountProbeRequiredContextKey, true)
-	result, err := s.openaiGatewayService.Forward(probeCtx, probeCtx, account, raw)
+	result, err := s.openaiGatewayService.Forward(stepCtx, probeCtx, account, raw)
 	if err != nil {
 		return bpsAccountProbeResponse{}, fmt.Errorf("bps forwarding failed: %w", err)
 	}
