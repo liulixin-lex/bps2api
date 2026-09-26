@@ -863,7 +863,7 @@ func mergeExcelBPSPauseState(incoming, current map[string]any) map[string]any {
 	key := service.OpenAIExcelBPSPausedOn403AtExtraKey
 	requested, explicit := incoming[key]
 	delete(incoming, key)
-	if enabled, _ := incoming["openai_excel_bps"].(bool); enabled && !(explicit && requested == nil) {
+	if enabled, _ := incoming["openai_excel_bps"].(bool); enabled && (!explicit || requested != nil) {
 		if paused, ok := current[key]; ok && paused != nil {
 			incoming[key] = paused
 		}
