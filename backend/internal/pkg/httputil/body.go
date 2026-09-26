@@ -249,10 +249,6 @@ func ReadRequestBodyBounded(w http.ResponseWriter, req *http.Request, limit int6
 	return body, nil
 }
 
-func readDecompressedBody(r io.Reader) ([]byte, error) {
-	return readDecompressedBodyLimit(r, maxDecompressedBodySize)
-}
-
 func readDecompressedBodyLimit(r io.Reader, limit int64) ([]byte, error) {
 	// Read one extra byte: silently truncating at the cap can turn an oversized
 	// body into a valid JSON prefix or an unrelated JSON parsing error.

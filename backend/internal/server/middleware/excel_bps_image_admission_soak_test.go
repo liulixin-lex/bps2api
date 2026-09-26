@@ -112,7 +112,7 @@ func TestExcelBPSImageAdmissionSoak(t *testing.T) {
 					return
 				}
 				_, _ = io.Copy(io.Discard, response.Body)
-				response.Body.Close()
+				_ = response.Body.Close()
 				switch response.StatusCode {
 				case 204:
 					ok.Add(1)
@@ -126,7 +126,7 @@ func TestExcelBPSImageAdmissionSoak(t *testing.T) {
 	}
 	wg.Wait()
 	stopHold()
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	runtime.GC()
 	runtime.ReadMemStats(&after)
 	fmt.Printf("ADMISSION_SOAK elapsed=%s success=%d bounded_busy=%d unexpected=%d heap_before=%d heap_after=%d\n", time.Since(start).Round(time.Millisecond), ok.Load(), busy.Load(), unexpected.Load(), before.HeapAlloc, after.HeapAlloc)

@@ -42,7 +42,7 @@ func TestExcelBPSImageAdmissionReadDeadlineThroughOpsWriter(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	require.Equal(t, 408, resp.StatusCode)
 }
 
