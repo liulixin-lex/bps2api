@@ -270,8 +270,9 @@ func (b *Bridge) rebuildNativeHistoryCall(item object) (object, error) {
 	}
 	if info, ok := b.tools[name]; ok && text(item["type"]) == "function_call" && supportsFunctionCodeTransport(name, info.Kind, info.Parameters) {
 		args, _ := envelope["arguments"].(object)
-		if _, hasCode := args["code"].(string); hasCode {
-			outer, err = encodeFunctionCodeTransport(name, args)
+		field := functionCodeTransportField(info.Parameters)
+		if _, hasCode := args[field].(string); hasCode {
+			outer, err = encodeFunctionCodeTransport(name, args, field)
 			if err != nil {
 				return nil, err
 			}
@@ -499,15 +500,15 @@ func (b *Bridge) finishClientToolCall(native object, info tool, envelope object,
 		result["namespace"] = info.Namespace
 	}
 	if info.Kind == "custom" {
-		value, hasInput := envelope["input"]
-		if alias, hasAlias := envelope["args"]; hasAlias {
-			if hasInput {
-				return nil, fmt.Errorf("basispoints custom tool envelope contains conflicting input fields")
+		var value any
+		found := false
+		for _, field := range []string{"input", "args", "arguments"} {
+			if candidate, exists := envelope[field]; exists {
+				if found {
+					return nil, fmt.Errorf("basispoints custom tool envelope contains conflicting input fields")
+				}
+				value, found = candidate, true
 			}
-			value = alias
-		}
-		if _, exists := envelope["arguments"]; exists {
-			return nil, fmt.Errorf("basispoints custom tools require input text, not arguments")
 		}
 		input, ok := value.(string)
 		if !ok {

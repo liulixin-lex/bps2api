@@ -207,7 +207,11 @@ func runMainServer() {
 
 	log.Println("Shutting down server...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownSeconds := cfg.Server.ShutdownTimeoutSeconds
+	if shutdownSeconds <= 0 {
+		shutdownSeconds = 300
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(shutdownSeconds)*time.Second)
 	defer cancel()
 
 	if err := app.Server.Shutdown(ctx); err != nil {

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"math/rand/v2"
 	"net/http"
 	"time"
 
@@ -62,7 +63,7 @@ func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryC
 	if failoverErr.SameAccountRetryDelay > 0 {
 		return failoverErr.SameAccountRetryDelay
 	}
-	if !failoverErr.RequestScopedTransient || retryCount <= 1 {
+	if !failoverErr.RequestScopedTransient {
 		return sameAccountRetryDelay
 	}
 
@@ -72,6 +73,14 @@ func sameAccountRetryDelayFor(failoverErr *service.UpstreamFailoverError, retryC
 			return maxRequestScopedRetryDelay
 		}
 		delay *= 2
+	}
+	// Jitter only provider overload retries; explicit provider delays above
+	// remain authoritative and the existing backoff cap is unchanged.
+	if failoverErr.StatusCode == http.StatusServiceUnavailable {
+		delay += time.Duration(rand.Int64N(int64(delay/2) + 1))
+		if delay > maxRequestScopedRetryDelay {
+			delay = maxRequestScopedRetryDelay
+		}
 	}
 	return delay
 }
