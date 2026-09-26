@@ -41,12 +41,13 @@ func TestDisableExcelBPSOn403AtomicWrite(t *testing.T) {
 				begin.WillReturnError(failure)
 			} else {
 				query := `(?s)` + regexp.QuoteMeta("UPDATE accounts") + `.*` +
-					regexp.QuoteMeta("SET extra = jsonb_set(extra, '{openai_excel_bps}', 'false'::jsonb), updated_at = NOW()") + `.*` +
+					regexp.QuoteMeta("SET extra = jsonb_set(extra, '{openai_excel_bps_paused_on_403_at}', to_jsonb(NOW()::text)), updated_at = NOW()") + `.*` +
 					regexp.QuoteMeta("WHERE id = $1 AND deleted_at IS NULL AND parent_account_id IS NULL") + `.*` +
 					regexp.QuoteMeta("AND platform = 'openai' AND type = 'oauth'") + `.*` +
 					regexp.QuoteMeta("AND credentials = $2::jsonb") + `.*` +
 					regexp.QuoteMeta("AND extra -> 'openai_excel_bps' = 'true'::jsonb") + `.*` +
-					regexp.QuoteMeta("AND extra -> 'openai_excel_bps_auto_disable_on_403' = 'true'::jsonb")
+					regexp.QuoteMeta("AND extra -> 'openai_excel_bps_auto_disable_on_403' = 'true'::jsonb") + `.*` +
+					regexp.QuoteMeta("AND NOT (extra ? 'openai_excel_bps_paused_on_403_at')")
 				update := mock.ExpectExec(query).WithArgs(int64(27), `{"access_token":"test-token"}`)
 				switch tc.failure {
 				case "update":
@@ -87,6 +88,30 @@ func TestDisableExcelBPSOn403AtomicWrite(t *testing.T) {
 			require.Equal(t, tc.wantChange, changed)
 			require.True(t, account.IsExcelBPSEnabled())
 			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}
+
+func TestMergeExcelBPSPauseState(t *testing.T) {
+	key := service.OpenAIExcelBPSPausedOn403AtExtraKey
+	current := map[string]any{key: "2026-09-26 11:40:00+00"}
+	for _, tc := range []struct {
+		name     string
+		incoming map[string]any
+		paused   bool
+	}{
+		{"stale edit preserves pause", map[string]any{"openai_excel_bps": true}, true},
+		{"stale timestamp cannot overwrite pause", map[string]any{"openai_excel_bps": true, key: "old"}, true},
+		{"explicit resume clears pause", map[string]any{"openai_excel_bps": true, key: nil}, false},
+		{"disabling clears pause", map[string]any{"openai_excel_bps": false, key: "old"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergeExcelBPSPauseState(tc.incoming, current)
+			_, paused := got[key]
+			require.Equal(t, tc.paused, paused)
+			if paused {
+				require.Equal(t, current[key], got[key])
+			}
 		})
 	}
 }

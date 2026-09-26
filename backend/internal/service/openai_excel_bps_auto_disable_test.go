@@ -73,7 +73,7 @@ func TestExcelBPSAutoDisableOn403(t *testing.T) {
 				require.EqualError(t, err, "excel BPS: "+wantCode)
 				require.Equal(t, tc.status, rec.Code)
 				require.Equal(t, wantCode, gjson.Get(rec.Body.String(), "error.code").String())
-				require.Equal(t, tc.changed && tc.writeErr == nil, strings.Contains(rec.Body.String(), "automatically disabled"))
+				require.Equal(t, tc.changed && tc.writeErr == nil, strings.Contains(rec.Body.String(), "routing was paused"))
 				require.NotContains(t, rec.Body.String(), "PRIVATE_UPSTREAM")
 				require.Equal(t, tc.wantCalls, calls)
 				require.Len(t, upstream.requests, 1, "do not replay the failed request")

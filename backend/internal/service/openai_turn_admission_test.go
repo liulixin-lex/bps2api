@@ -28,7 +28,7 @@ func (r *turnAdmissionRepo) GetOpenAITurnAdmission(context.Context, int64) (*Acc
 }
 
 func TestOpenAITurnAdmissionLatestState(t *testing.T) {
-	for _, change := range []string{"disabled", "paused", "expired", "removed_group", "deleted", "db_error", "binding", "credentials", "credential_route", "platform", "cooldown", "model_block", "persisted_model_limit", "fingerprint", "ws_mode", "proxy_endpoint"} {
+	for _, change := range []string{"disabled", "paused", "expired", "removed_group", "deleted", "db_error", "binding", "credentials", "credential_route", "platform", "cooldown", "model_block", "persisted_model_limit", "fingerprint", "ws_mode", "proxy_endpoint", "bps_pause"} {
 		t.Run(change, func(t *testing.T) {
 			selected := ticketTestAccount(901)
 			selected.GroupIDs = []int64{9}
@@ -82,6 +82,8 @@ func TestOpenAITurnAdmissionLatestState(t *testing.T) {
 				latest.Extra[codexFingerprintSeedExtraKey] = "changed-synthetic-seed"
 			case "ws_mode":
 				latest.Extra["openai_oauth_responses_websockets_v2_mode"] = OpenAIWSIngressModeOff
+			case "bps_pause":
+				latest.Extra[OpenAIExcelBPSPausedOn403AtExtraKey] = "2026-09-26T11:40:00Z"
 			case "proxy_endpoint":
 				id := int64(22)
 				latest.ProxyID, selected.ProxyID = &id, &id

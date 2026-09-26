@@ -109,6 +109,8 @@ func TestDisableExcelBPSOn403ConcurrentAndCache(t *testing.T) {
 	after, err := repo.GetByID(ctx, account.ID)
 	require.NoError(t, err)
 	require.False(t, after.IsExcelBPSEnabled())
+	require.Equal(t, true, after.Extra["openai_excel_bps"], "preserve the configured switch")
+	require.NotEmpty(t, after.Extra[service.OpenAIExcelBPSPausedOn403AtExtraKey])
 	require.Len(t, cache.setAccounts, 1)
 	require.False(t, cache.setAccounts[0].IsExcelBPSEnabled())
 	require.True(t, before.IsExcelBPSEnabled(), "shared request snapshot must remain unchanged")
@@ -117,8 +119,34 @@ func TestDisableExcelBPSOn403ConcurrentAndCache(t *testing.T) {
 	require.Equal(t, before.Schedulable, after.Schedulable)
 	require.Equal(t, before.Concurrency, after.Concurrency)
 	for key, value := range before.Extra {
-		if key != "openai_excel_bps" {
-			require.Equal(t, value, after.Extra[key], key)
-		}
+		require.Equal(t, value, after.Extra[key], key)
 	}
+}
+
+func TestExcelBPSPersistenceRoundtrip(t *testing.T) {
+	tx := testEntTx(t)
+	ctx := dbent.NewTxContext(context.Background(), tx)
+	repo := newAccountRepositoryWithSQL(tx.Client(), tx, nil)
+	account := mustCreateAccount(t, tx.Client(), newExcelBPSAutoDisableAccount())
+	stale, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	changed, err := repo.DisableExcelBPSOn403(ctx, stale)
+	require.NoError(t, err)
+	require.True(t, changed)
+	paused, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, true, paused.Extra["openai_excel_bps"], "reopening must show the saved switch")
+	require.False(t, paused.IsExcelBPSEnabled())
+	stale.Name = "edited while upstream paused"
+	require.NoError(t, repo.Update(ctx, stale))
+	readback, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.Equal(t, true, readback.Extra["openai_excel_bps"])
+	require.Equal(t, paused.Extra[service.OpenAIExcelBPSPausedOn403AtExtraKey], readback.Extra[service.OpenAIExcelBPSPausedOn403AtExtraKey])
+	readback.Extra[service.OpenAIExcelBPSPausedOn403AtExtraKey] = nil
+	require.NoError(t, repo.Update(ctx, readback))
+	resumed, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.True(t, resumed.IsExcelBPSEnabled())
+	require.NotContains(t, resumed.Extra, service.OpenAIExcelBPSPausedOn403AtExtraKey)
 }
