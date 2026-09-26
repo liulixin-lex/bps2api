@@ -361,7 +361,9 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 		}
 		if stream {
 			if !outputCommitted {
-				pending.WriteString(line + "\n")
+				if _, err = pending.WriteString(line + "\n"); err != nil {
+					return result, err
+				}
 				if pending.Len() < 64<<10 {
 					continue
 				}
