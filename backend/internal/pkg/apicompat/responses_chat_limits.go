@@ -10,7 +10,7 @@ const (
 
 // ErrChatStreamMetadataLimit denotes an upstream stream whose retained routing
 // metadata exceeds the bounded converter's per-response allowance.
-var ErrChatStreamMetadataLimit = errors.New("Responses Chat stream metadata exceeds the resource limit")
+var ErrChatStreamMetadataLimit = errors.New("responses chat stream metadata exceeds the resource limit")
 
 type chatStreamMetadata struct {
 	entries, identityBytes int

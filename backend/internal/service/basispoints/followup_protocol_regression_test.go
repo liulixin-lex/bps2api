@@ -22,7 +22,7 @@ func TestFollowupProtocolRejectsTranslatedItemIDCollision(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := bridge.Stream(io.NopCloser(strings.NewReader("data: " + string(raw) + "\n\n")))
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	result, err := io.ReadAll(body)
 	if err != nil || !strings.Contains(string(result), "basispoints_protocol_error") || strings.Contains(string(result), "event: response.completed") || strings.Contains(string(result), "event: response.output_item.added") {
 		t.Fatalf("colliding rewritten IDs must fail before any callable item is emitted: %s; read error=%v", result, err)

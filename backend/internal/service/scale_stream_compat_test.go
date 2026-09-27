@@ -133,7 +133,7 @@ func TestScaleStreamBPSConcurrentCancellation(t *testing.T) {
 		go func() {
 			defer group.Done()
 			reader, writer := io.Pipe()
-			defer writer.Close()
+			defer func() { _ = writer.Close() }()
 			upstreamBody := &scaleStreamCancelBody{ReadCloser: reader, started: make(chan struct{})}
 			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{}, Body: upstreamBody}}
 			svc := openAIClientToolsTestService(upstream)

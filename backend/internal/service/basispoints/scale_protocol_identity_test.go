@@ -64,7 +64,7 @@ func TestScaleProtocolTerminalIntegrity(t *testing.T) {
 			_, bridge := mustPrepare(t, source, "scale-terminal", nil)
 			encoded, _ := json.Marshal(payload)
 			body := bridge.Stream(io.NopCloser(strings.NewReader("data: " + string(encoded) + "\n\n")))
-			defer body.Close()
+			defer func() { _ = body.Close() }()
 			result, err := io.ReadAll(body)
 			if err != nil || !strings.Contains(string(result), "basispoints_protocol_error") || strings.Contains(string(result), "event: response.completed") || strings.Contains(string(result), "event: response.output_item.added") {
 				t.Fatalf("malformed completion must not emit callable items or success: %s %v", result, err)

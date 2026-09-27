@@ -70,7 +70,7 @@ func TestScaleImageSlowConsumerReleasesSlotAndRetiredQuota(t *testing.T) {
 	defer server.Close()
 	client, err := net.Dial("tcp", server.Listener.Addr().String())
 	require.NoError(t, err)
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if tcp, ok := client.(*net.TCPConn); ok {
 		require.NoError(t, tcp.SetReadBuffer(1024))
 	}
@@ -106,7 +106,7 @@ func TestScaleImageSlowConsumerReleasesSlotAndRetiredQuota(t *testing.T) {
 	httpClient.Timeout = 2 * time.Second
 	response, err := httpClient.Get(server.URL + smallPath)
 	require.NoError(t, err)
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	got, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, response.StatusCode)

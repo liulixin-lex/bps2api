@@ -64,7 +64,7 @@ func TestFollowupChatCheckedPrefixMigrationAndAccounting(t *testing.T) {
 		for _, chunk := range chunks {
 			for _, choice := range chunk.Choices {
 				if choice.Delta.Content != nil {
-					output.WriteString(*choice.Delta.Content)
+					_, _ = output.WriteString(*choice.Delta.Content)
 				}
 			}
 		}
