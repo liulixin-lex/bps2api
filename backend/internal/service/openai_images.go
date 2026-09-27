@@ -617,6 +617,9 @@ func (s *OpenAIGatewayService) ForwardImages(
 		return nil, admissionErr
 	}
 	account = latest
+	if account.IsExcelBPSConfigured() {
+		return nil, rejectExcelBPSNativeEndpoint(c, "The dedicated Images API is unavailable on the selected BPS channel; use a native-channel account for image generation or editing")
+	}
 	switch account.Type {
 	case AccountTypeAPIKey:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)

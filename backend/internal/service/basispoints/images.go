@@ -22,6 +22,16 @@ func validateImage(part object) error {
 	if fileID := text(part["file_id"]); fileID != "" {
 		return fmt.Errorf("basispoints input_image does not support file_id; provide only an HTTPS image_url")
 	}
+	// A successful alias normalization removes these fields. If they remain,
+	// the original input was ambiguous or mixed with another payload; do not
+	// silently forward only its primary URL.
+	for key := range part {
+		switch key {
+		case "type", "image_url", "detail", "file_id":
+		default:
+			return fmt.Errorf("basispoints input_image contains conflicting or unsupported image fields")
+		}
+	}
 	if detail, exists := part["detail"]; exists && detail != nil {
 		switch text(detail) {
 		case "auto", "low", "high", "original":

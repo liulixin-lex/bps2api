@@ -30,6 +30,9 @@ func (s *OpenAIGatewayService) ForwardAlphaSearch(ctx context.Context, c *gin.Co
 	if s == nil || c == nil || account == nil {
 		return nil, fmt.Errorf("service, context, and account are required")
 	}
+	if account.IsExcelBPSConfigured() {
+		return nil, rejectExcelBPSNativeEndpoint(c, "Standalone alpha search is unavailable on the selected BPS channel; use a native-channel account for this endpoint")
+	}
 	if _, err := s.prepareCodexAccountIdentitySource(ctx, c, account); err != nil {
 		return nil, err
 	}

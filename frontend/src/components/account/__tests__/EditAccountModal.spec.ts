@@ -511,7 +511,7 @@ describe('EditAccountModal', () => {
     }
   })
 
-  it('defaults new BPS settings to Astra only', async () => {
+  it('enables the BPS channel without offering model-based native fallback', async () => {
     const account = buildAccount()
     account.type = 'oauth'
     account.extra = {}
@@ -519,39 +519,37 @@ describe('EditAccountModal', () => {
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
     const wrapper = mountModal(account)
     await wrapper.get('[data-testid="excel-bps-toggle"]').trigger('click')
-    expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-all-models"]').element.checked).toBe(false)
+    expect(wrapper.find('[data-testid="excel-bps-all-models"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="excel-bps-channel-policy"]').exists()).toBe(true)
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     await flushPromises()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps_models).toEqual(['gpt-6-astra'])
   })
 
-  it('preserves legacy all-model settings and lets users select Astra only', async () => {
+  it('preserves legacy all-model settings without offering a native fallback scope', async () => {
     const account = buildAccount()
     account.type = 'oauth'
     account.extra = { openai_excel_bps: true, unrelated: 'preserve' }
     updateAccountMock.mockReset().mockResolvedValue(account)
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
     const wrapper = mountModal(account)
-    expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-all-models"]').element.checked).toBe(true)
+    expect(wrapper.find('[data-testid="excel-bps-model-selection"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="excel-bps-channel-policy"]').exists()).toBe(true)
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     await flushPromises()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('openai_excel_bps_models')
-    await wrapper.get('[data-testid="excel-bps-all-models"]').setValue(false)
-    await wrapper.get('[data-testid="excel-bps-astra-only"]').trigger('click')
-    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
-    await flushPromises()
-    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.openai_excel_bps_models).toEqual(['gpt-6-astra'])
-    expect(updateAccountMock.mock.calls[1]?.[1]?.extra?.unrelated).toBe('preserve')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.unrelated).toBe('preserve')
   })
 
-  it.each([{ models: [] }, { models: ['gpt-6-astra', 'gpt-6-sol'] }])('restores and saves explicit BPS selection $models', async ({ models }) => {
+  it.each([{ models: [] }, { models: ['gpt-6-astra', 'gpt-6-sol'] }])('preserves legacy BPS model metadata $models without route controls', async ({ models }) => {
     const account = buildAccount()
     account.type = 'oauth'
     account.extra = { openai_excel_bps: true, openai_excel_bps_models: models }
     updateAccountMock.mockReset().mockResolvedValue(account)
     checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
     const wrapper = mountModal(account)
-    expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-all-models"]').element.checked).toBe(false)
+    expect(wrapper.find('[data-testid="excel-bps-all-models"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="excel-bps-channel-policy"]').exists()).toBe(true)
     await wrapper.get('form#edit-account-form').trigger('submit.prevent')
     await flushPromises()
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_excel_bps_models).toEqual(models)

@@ -29,14 +29,17 @@ func RequestHasInlineImages(raw []byte) bool {
 				continue
 			}
 			field.ForEach(func(_, part gjson.Result) bool {
-				kind := imageRelayJSONField(part, "type").Str
-				reference := imageRelayJSONField(part, "image_url")
-				rawURL := reference.Str
-				if reference.IsObject() {
-					rawURL = imageRelayJSONField(reference, "url").Str
-				}
-				if (kind == "input_image" || kind == "image_url") && len(rawURL) >= len("data:") && strings.EqualFold(rawURL[:len("data:")], "data:") {
-					found = true
+				switch imageRelayJSONField(part, "type").Str {
+				case "input_image", "image_url", "image", "output_image", "screenshot", "computer_screenshot", "provider_image":
+					// Charge all recognized reference aliases conservatively.
+					// Rewrite performs full ambiguity/shape validation later.
+					for _, name := range []string{"image_url", "source", "url"} {
+						reference := imageRelayJSONField(part, name)
+						if imageRelayInlineReference(reference) {
+							found = true
+							break
+						}
+					}
 				}
 				return !found
 			})
@@ -60,4 +63,20 @@ func imageRelayJSONField(value gjson.Result, name string) gjson.Result {
 		})
 	}
 	return result
+}
+
+func imageRelayInlineReference(reference gjson.Result) bool {
+	if reference.Type == gjson.String {
+		raw := reference.Str
+		return len(raw) >= len("data:") && strings.EqualFold(raw[:len("data:")], "data:")
+	}
+	if reference.IsObject() {
+		for _, name := range []string{"url", "image_url"} {
+			raw := imageRelayJSONField(reference, name)
+			if raw.Type == gjson.String && len(raw.Str) >= len("data:") && strings.EqualFold(raw.Str[:len("data:")], "data:") {
+				return true
+			}
+		}
+	}
+	return false
 }

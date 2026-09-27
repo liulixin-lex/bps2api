@@ -3,7 +3,13 @@
 基于 [ranxi2001/sub2api](https://github.com/ranxi2001/sub2api) 的独立稳定性改进版本，
 保留上游历史与 [LGPL-3.0 许可证](LICENSE)。原项目源自 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api)。
 
-## 0.0.1
+## 0.0.13
+
+最新版本的通道规则见 [0.0.13 更新说明](docs/bps2api-0.0.13.md)：开启 Excel / BPS 时，
+该 OpenAI 账号的推理请求固定选择 BPS 通道；关闭后才恢复原生通道。
+其他供应商保持原有路由。旧版自动回退规则不再适用。
+
+## 0.0.1 历史说明
 
 在原有图片中继容量、BPS 超时、Caddy 503、SSE 错误分类和队列观测修复上，
 选择性整合上游 v2.8.14（e39898c680ecd69381e549ae54c97011107f1757）。
@@ -87,7 +93,7 @@ git checkout v0.0.1
 - **DeepSeek 与 Codex 适配**：支持 Responses 到 Chat Completions 的转换、工具调用历史和上下文压缩兼容。配置模型映射后，可通过切换 API Key 分组使用 DeepSeek，沿用客户端配置。[操作教程](https://tosky.io/docs/?doc=deepseek-switch-group)
 - **Codex ticket 管理**：提供后台采集、注入、模型选择及账号状态展示；相关开关和采集代理由管理员配置。
 - **Mihomo 出口管理**：集成采集出口管理、票据刷新策略和节点状态操作，日常业务代理与采集出口分别配置。
-- **Excel / Basispoints**：维护模型级 BPS 路由、内嵌图片 HTTPS 中转、磁盘和并发保护、结构化输出校验，以及工具历史和 transport 恢复。BPS 不支持的搜索、图片生成等请求按请求回退原 Codex 通道。
+- **Excel / Basispoints**：Excel / BPS 开关只选择 OpenAI OAuth 账号的通道，开启后该账号所有模型固定使用 BPS，不按请求自动回退原生；其他供应商的路由不受影响。保留内嵌图片 HTTPS 中转、磁盘和并发保护、结构化输出校验，以及工具历史和 transport 恢复。不具备等价 BPS 协议的独立搜索、图片生成接口返回明确错误，需使用关闭 BPS 的原生账号。
 - **上游修复维护**：持续跟踪上游 Codex、Responses、工具调用、密文恢复和限流修复；先确认与本 fork 的行为差异，再按提交级别移植并补充回归测试。
 - **独立发布与升级**：使用 `ranxi2001/sub2api` 的 Release、安装资源和容器镜像。版本变更见 [更新说明](https://github.com/ranxi2001/sub2api/releases)；Release 成功不代表生产服务已经部署，线上状态需要单独验证。
 

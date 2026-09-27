@@ -208,6 +208,11 @@ func (a *Account) IsSchedulable() bool {
 	if !a.IsActive() || !a.Schedulable {
 		return false
 	}
+	// A configured, paused BPS channel has no permitted inference route. Skip
+	// it before slot acquisition instead of repeatedly selecting a known 403.
+	if a.IsExcelBPSConfigured() && !a.IsExcelBPSEnabled() {
+		return false
+	}
 	now := time.Now()
 	if a.AutoPauseOnExpired && a.ExpiresAt != nil && !now.Before(*a.ExpiresAt) {
 		return false
@@ -2150,15 +2155,23 @@ func (a *Account) IsOpenAIPassthroughEnabled() bool {
 
 const OpenAIExcelBPSPausedOn403AtExtraKey = "openai_excel_bps_paused_on_403_at"
 
-// IsExcelBPSEnabled reports effective routing. A 403 pause leaves the admin's
-// configured switch intact while stopping further requests to a denied upstream.
-func (a *Account) IsExcelBPSEnabled() bool {
+// IsExcelBPSConfigured reports the administrator's explicit channel choice.
+// Pausing the channel must not restore native Codex routing.
+func (a *Account) IsExcelBPSConfigured() bool {
 	if a == nil || a.Platform != PlatformOpenAI || a.Type != AccountTypeOAuth || a.IsShadow() || a.IsOpenAIAgentIdentity() || a.IsOpenAIPersonalAccessToken() {
 		return false
 	}
 	enabled, _ := a.Extra["openai_excel_bps"].(bool)
+	return enabled
+}
+
+// IsExcelBPSEnabled reports whether the configured BPS channel is unpaused.
+func (a *Account) IsExcelBPSEnabled() bool {
+	if !a.IsExcelBPSConfigured() {
+		return false
+	}
 	_, paused := a.Extra[OpenAIExcelBPSPausedOn403AtExtraKey]
-	return enabled && !paused
+	return !paused
 }
 
 // IsExcelBPSCacheCreationAsInputEnabled controls local billing and downstream usage.
@@ -2180,52 +2193,20 @@ func (a *Account) IsExcelBPSAutoDisableOn403Enabled() bool {
 	return enabled
 }
 
-// isExcelBPSAllModelsEnabled preserves legacy account-wide routing. An explicit
-// list, including an empty or malformed list, never enables BPS for all models.
+// The saved switch selects the BPS channel for every model. Retained legacy
+// model lists are persistence metadata and cannot silently restore native routing.
 func (a *Account) isExcelBPSAllModelsEnabled() bool {
-	if !a.IsExcelBPSEnabled() {
-		return false
-	}
-	_, scoped := a.Extra["openai_excel_bps_models"]
-	return !scoped
+	return a.IsExcelBPSConfigured()
 }
 
-// IsExcelBPSEnabledForModel selects the protocol after account model mapping.
-// The list selects a protocol; it does not restrict access to other models.
-func (a *Account) IsExcelBPSEnabledForModel(requestedModel string) bool {
-	if !a.IsExcelBPSEnabled() {
-		return false
-	}
-	return a.isExcelBPSUpstreamModelEnabled(a.GetMappedModel(requestedModel))
+// IsExcelBPSEnabledForModel selects the configured channel before forwarding.
+// A paused BPS account remains bound to BPS and is rejected by that channel.
+func (a *Account) IsExcelBPSEnabledForModel(_ string) bool {
+	return a.IsExcelBPSConfigured()
 }
 
-func (a *Account) isExcelBPSUpstreamModelEnabled(model string) bool {
-	if !a.IsExcelBPSEnabled() {
-		return false
-	}
-	raw, scoped := a.Extra["openai_excel_bps_models"]
-	if !scoped {
-		return true
-	}
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return false
-	}
-	switch models := raw.(type) {
-	case []string:
-		for _, selected := range models {
-			if strings.TrimSpace(selected) == model {
-				return true
-			}
-		}
-	case []any:
-		for _, selected := range models {
-			if name, ok := selected.(string); ok && strings.TrimSpace(name) == model {
-				return true
-			}
-		}
-	}
-	return false
+func (a *Account) isExcelBPSUpstreamModelEnabled(_ string) bool {
+	return a.IsExcelBPSConfigured()
 }
 
 // IsCopilotSDKEnabled selects the stateful Responses sidecar contract. The

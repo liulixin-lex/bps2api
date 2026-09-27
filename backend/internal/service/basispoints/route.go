@@ -6,7 +6,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// NativeFallbackReason reports capabilities that must stay on the native Codex
+// NativeFallbackReason is a legacy capability diagnostic, not a routing decision.
+// An enabled BPS account must never use this result to select native Codex.
+// It reports capabilities that require the native Codex
 // channel because Basispoints cannot execute them. Empty means the request can
 // use the BPS bridge.
 func NativeFallbackReason(body []byte) string {
