@@ -261,6 +261,9 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			defer timer.Stop()
 			select {
 			case <-ctx.Done():
+				if errors.Is(context.Cause(ctx), errExcelBPSRequestTimeout) {
+					return fail(504, "basispoints_request_timeout", "Excel BPS request timed out; request was not replayed")
+				}
 				return nil, ctx.Err()
 			case <-timer.C:
 			}
@@ -436,11 +439,13 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
-			result.ClientDisconnect = true
-			return result, ctx.Err()
+			// Preserve the timeout cause for the shared terminal handling below.
+			// An internal deadline is not a client disconnect or an empty 200.
+			err = ctx.Err()
+			result.Duration = time.Since(start)
 		case <-timer.C:
+			return s.forwardExcelBPSAttempt(ctx, c, account, originalBody, start, timeouts, attempt+1)
 		}
-		return s.forwardExcelBPSAttempt(ctx, c, account, originalBody, start, timeouts, attempt+1)
 	}
 	// If no correction was taken, preserve the original SSE contract on EOF or
 	// timeout: metadata already received is followed by one terminal SSE error.

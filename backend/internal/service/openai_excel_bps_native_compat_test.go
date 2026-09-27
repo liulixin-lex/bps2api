@@ -191,3 +191,29 @@ func TestNativeCompatBPSRecoverySharesBudgetAndCancellation(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeCompatBPSTotalTimeoutDuringRecovery(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusServiceUnavailable} {
+		for _, stream := range []bool{false, true} {
+			upstream := &httpUpstreamRecorder{responses: []*http.Response{
+				{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))},
+			}}
+			svc := openAIClientToolsTestService(upstream)
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			body, err := json.Marshal(map[string]any{"model": "gpt-5.6-sol", "input": "test", "stream": stream})
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeoutCause(context.Background(), 30*time.Millisecond, errExcelBPSRequestTimeout)
+			result, err := svc.Forward(ctx, c, excelAccount(), body)
+			cancel()
+			require.Error(t, err)
+			require.Len(t, upstream.requests, 1)
+			require.Equal(t, http.StatusGatewayTimeout, rec.Code, "internal timeout must produce a terminal failure, not an empty 200")
+			require.Contains(t, rec.Body.String(), "timed out")
+			if result != nil {
+				require.False(t, result.ClientDisconnect, "internal timeout is not a client disconnect")
+			}
+		}
+	}
+}
