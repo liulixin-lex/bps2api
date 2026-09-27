@@ -37,7 +37,7 @@ func TestExcelBPSInlineImageForwardAndFetch(t *testing.T) {
 				server := httptest.NewTLSServer(router)
 				defer server.Close()
 				svc.settingService = NewSettingService(&excelBPSImageSettingsRepo{values: map[string]string{SettingKeyExcelBPSImageRelayEnabled: "true", SettingKeyExcelBPSImageBaseURL: server.URL}}, svc.cfg)
-				body := []byte(fmt.Sprintf(`{"model":"gpt-6-astra","stream":%v,"input":[{"role":"user","content":[{"type":"input_text","text":"describe"},{"type":"input_image","image_url":%q,"detail":"high"}]}]}`, stream, dataURL))
+				body := []byte(fmt.Sprintf(`{"model":"gpt-6-astra","stream":%v,"input":[{"role":"user","content":[{"type":"input_text","text":"describe"},{"type":"input_image","image_url":%q,"detail":"original"}]}]}`, stream, dataURL))
 				rec := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(rec)
 				c.Request = httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
@@ -51,6 +51,7 @@ func TestExcelBPSInlineImageForwardAndFetch(t *testing.T) {
 					for _, part := range item.Get("content").Array() {
 						if part.Get("type").String() == "input_image" {
 							imageURL = part.Get("image_url").String()
+							require.Equal(t, "original", part.Get("detail").String())
 						}
 					}
 				}
