@@ -210,6 +210,7 @@ func (r *ImageRelay) Rewrite(raw []byte, scope string) ([]byte, error) {
 			parts, _ := item[field].([]any)
 			for _, rawPart := range parts {
 				part, _ := rawPart.(object)
+				normalizeContentPart(part)
 				if text(part["type"]) != "input_image" {
 					continue
 				}

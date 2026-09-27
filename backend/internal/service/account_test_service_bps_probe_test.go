@@ -133,7 +133,7 @@ func TestExcelBPSToolProbeRejectsIncompleteStages(t *testing.T) {
 	}{
 		{"wrong_basic", 1},
 		{"failed_terminal", 1},
-		{"wrong_tool", 2},
+		{"wrong_tool", 3}, // One pre-dispatch protocol correction; never execute an unknown tool.
 		{"wrong_argument", 2},
 		{"wrong_final", 3},
 	} {

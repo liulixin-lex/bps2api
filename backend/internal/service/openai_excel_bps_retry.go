@@ -50,3 +50,22 @@ func excelBPSHTTPRetryDelay(status int, retryAfter string, now time.Time) (time.
 	}
 	return 0, false
 }
+
+// These errors arise in local transport translation before client dispatch.
+// Never regenerate provider refusals, structured answers or arbitrary failures.
+func excelBPSCorrectableProtocolError(message string) bool {
+	for _, prefix := range []string{
+		"basispoints function code transport requires an exact catalog function",
+		"basispoints function code transport requires string code",
+		"basispoints function code transport extended_summary must contain",
+		"basispoints raw transport requires a declared custom tool",
+		"basispoints returned a tool outside the client's catalog",
+	} {
+		if strings.HasPrefix(message, prefix) {
+			return true
+		}
+	}
+	return strings.HasPrefix(message, "basispoints tool transport code must contain one JSON client-tool envelope;") &&
+		(strings.Contains(message, "format=json_object;") || strings.Contains(message, "format=json_string;") || strings.Contains(message, "format=text_or_code;") || strings.Contains(message, "format=markdown;")) &&
+		strings.Contains(message, "json_failure=") && !strings.Contains(message, "json_failure=trailing_data")
+}

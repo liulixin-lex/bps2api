@@ -106,7 +106,7 @@ func TestInvocationRecoveryRejectsExecutableOrAmbiguousWrappers(t *testing.T) {
 		`"{\"name\":\"functions.shell\",\"arguments\":{}}" trailing`,
 		`Excel.run(() => ({"name":"functions.shell","arguments":{}}))`,
 		`unknown({"name":"functions.shell","arguments":{}})`,
-		`functions.shell({command: "pwd"})`,
+		`functions.shell({command: pwd})`,
 		`functions.shell({"command": other()})`,
 		`functions.shell("not an object")`,
 		`functions.exec({"not":"raw input"})`,
