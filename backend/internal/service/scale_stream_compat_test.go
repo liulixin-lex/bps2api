@@ -23,7 +23,7 @@ func scaleStreamText(wire string) string {
 	var out strings.Builder
 	for _, line := range strings.Split(wire, "\n") {
 		if strings.HasPrefix(line, "data: ") && line != "data: [DONE]" {
-			out.WriteString(gjson.Get(strings.TrimPrefix(line, "data: "), "choices.0.delta.content").String())
+			_, _ = out.WriteString(gjson.Get(strings.TrimPrefix(line, "data: "), "choices.0.delta.content").String())
 		}
 	}
 	return out.String()
@@ -215,9 +215,11 @@ func TestScaleStreamBPSBufferedItemBoundaries(t *testing.T) {
 	}
 	var wire strings.Builder
 	for _, event := range events {
-		wire.WriteString(incidentBPSFrame(event["type"].(string), event))
+		eventType, ok := event["type"].(string)
+		require.True(t, ok)
+		_, _ = wire.WriteString(incidentBPSFrame(eventType, event))
 	}
-	wire.WriteString(incidentBPSFrame("response.completed", map[string]any{"response": map[string]any{"status": "completed", "output": []any{}}}))
+	_, _ = wire.WriteString(incidentBPSFrame("response.completed", map[string]any{"response": map[string]any{"status": "completed", "output": []any{}}}))
 	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(wire.String()))}}
 	svc := openAIClientToolsTestService(upstream)
 	recorder := httptest.NewRecorder()
