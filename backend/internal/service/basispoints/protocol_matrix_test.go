@@ -63,11 +63,21 @@ func TestProtocolMatrixImageHistoryCapacity(t *testing.T) {
 			require.Zero(t, r.reservedBytes)
 			var source object
 			require.NoError(t, decode(result, &source))
-			content := source["input"].([]any)[0].(object)["content"].([]any)
+			input, ok := source["input"].([]any)
+			require.True(t, ok)
+			require.NotEmpty(t, input)
+			message, ok := input[0].(object)
+			require.True(t, ok)
+			content, ok := message["content"].([]any)
+			require.True(t, ok)
 			require.Len(t, content, count)
-			first := content[0].(object)["image_url"]
+			firstPart, ok := content[0].(object)
+			require.True(t, ok)
+			first := firstPart["image_url"]
 			for _, p := range content {
-				require.Equal(t, first, p.(object)["image_url"])
+				part, ok := p.(object)
+				require.True(t, ok)
+				require.Equal(t, first, part["image_url"])
 				require.Equal(t, "original", p.(object)["detail"])
 			}
 			w := httptest.NewRecorder()
