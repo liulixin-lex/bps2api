@@ -796,7 +796,7 @@ func rewriteToolOutputMediaValue(value any) (any, []ChatContentPart, bool) {
 			return map[string]any{
 				"type": "input_text",
 				"text": toolOutputMediaMarker,
-			}, []ChatContentPart{toolOutputImagePart(imageURL)}, true
+			}, []ChatContentPart{toolOutputImagePart(imageURL, toolOutputImageDetail(typed))}, true
 		}
 
 		content, ok := typed["content"]
@@ -845,10 +845,14 @@ func isToolOutputImageDataURL(value string) bool {
 	return payloadIndex < len(value)
 }
 
-func toolOutputImagePart(imageURL string) ChatContentPart {
+func toolOutputImagePart(imageURL string, details ...string) ChatContentPart {
+	detail := ""
+	if len(details) > 0 {
+		detail = details[0]
+	}
 	return ChatContentPart{
 		Type:     "image_url",
-		ImageURL: &ChatImageURL{URL: imageURL},
+		ImageURL: &ChatImageURL{URL: imageURL, Detail: detail},
 	}
 }
 
@@ -1090,7 +1094,7 @@ func responsesContentPartsToChatContent(rawParts []json.RawMessage, role string)
 			hasNonText = true
 			chatParts = append(chatParts, ChatContentPart{
 				Type:     "image_url",
-				ImageURL: &ChatImageURL{URL: imageURL},
+				ImageURL: &ChatImageURL{URL: imageURL, Detail: responsesImageDetail(part)},
 			})
 		}
 	}
@@ -1119,7 +1123,7 @@ func chatContentFromSingleResponsesPart(partType string, part map[string]json.Ra
 		}
 		return json.Marshal([]ChatContentPart{{
 			Type:     "image_url",
-			ImageURL: &ChatImageURL{URL: imageURL},
+			ImageURL: &ChatImageURL{URL: imageURL, Detail: responsesImageDetail(part)},
 		}})
 	default:
 		return json.Marshal(rawString(part["text"]))
@@ -2346,4 +2350,22 @@ func nonEmpty(value, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// Preserve the preprocessing hint for both Responses and Chat-shaped image parts.
+func responsesImageDetail(part map[string]json.RawMessage) string {
+	if detail := rawString(part["detail"]); detail != "" {
+		return detail
+	}
+	return rawNestedString(part["image_url"], "detail")
+}
+func toolOutputImageDetail(part map[string]any) string {
+	if detail, ok := part["detail"].(string); ok && detail != "" {
+		return detail
+	}
+	if nested, ok := part["image_url"].(map[string]any); ok {
+		detail, _ := nested["detail"].(string)
+		return detail
+	}
+	return ""
 }

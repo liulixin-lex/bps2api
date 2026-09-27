@@ -30,7 +30,7 @@ func functionCodeTransportField(parameters any) string {
 	properties, _ := schema["properties"].(object)
 	isString := func(name string) bool {
 		field, _ := properties[name].(object)
-		return schemaAcceptsSourceString(field, 0)
+		return schemaAcceptsSourceString(field, schema, 0)
 	}
 	if isString("code") {
 		return "code"
@@ -53,10 +53,27 @@ func functionCodeTransportField(parameters any) string {
 }
 
 // Nullable string contracts remain valid when the supplied source is a string.
-// Only explicit string branches qualify; untyped or reference-only schemas do not.
-func schemaAcceptsSourceString(schema object, depth int) bool {
-	if depth > 4 {
+// Only explicit string branches qualify, including bounded in-document references.
+func schemaAcceptsSourceString(schema, root object, depth int) bool {
+	if depth > 16 {
 		return false
+	}
+	if ref, ok := schema["$ref"].(string); ok {
+		// No network, files or dynamic references; cycles stop at the depth cap.
+		if !strings.HasPrefix(ref, "#/") || schema["$id"] != nil {
+			return false
+		}
+		var node any = root
+		for _, component := range strings.Split(ref[2:], "/") {
+			component = strings.ReplaceAll(strings.ReplaceAll(component, "~1", "/"), "~0", "~")
+			fields, ok := node.(object)
+			if !ok || (fields["$id"] != nil && depth > 0) {
+				return false
+			}
+			node = fields[component]
+		}
+		child, _ := node.(object)
+		return schemaAcceptsSourceString(child, root, depth+1)
 	}
 	if schema["type"] == "string" {
 		return true
@@ -72,7 +89,7 @@ func schemaAcceptsSourceString(schema object, depth int) bool {
 		branches, _ := schema[keyword].([]any)
 		for _, branch := range branches {
 			child, _ := branch.(object)
-			if schemaAcceptsSourceString(child, depth+1) {
+			if schemaAcceptsSourceString(child, root, depth+1) {
 				return true
 			}
 		}

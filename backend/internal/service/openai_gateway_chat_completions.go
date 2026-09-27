@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -304,6 +305,37 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		)
 	}
 	logger.L().Debug("openai chat_completions: model mapping applied", logFields...)
+
+	if account.IsExcelBPSEnabledForModel(upstreamModel) {
+		if reason := basispoints.NativeFallbackReason(responsesBody); reason == "" {
+			// Select BPS before Codex-only identity and tool rewrites. Keep the
+			// caller's Chat format while using the same BPS forwarding loop.
+			responsesBody, err = sjson.SetBytes(responsesBody, "stream", clientStream)
+			if err != nil {
+				return nil, err
+			}
+			if promptCacheKey != "" {
+				responsesBody, err = sjson.SetBytes(responsesBody, "prompt_cache_key", promptCacheKey)
+				if err != nil {
+					return nil, err
+				}
+			}
+			responsesBody, err = s.applyOpenAIFastPolicyToBody(ctx, account, upstreamModel, responsesBody)
+			if err != nil {
+				var blocked *OpenAIFastBlockedError
+				if errors.As(err, &blocked) {
+					MarkOpsClientBusinessLimited(c, OpsClientBusinessLimitedReasonLocalPolicyDenied)
+					writeChatCompletionsError(c, http.StatusForbidden, "permission_error", blocked.Message)
+				}
+				return nil, err
+			}
+			chatCtx := context.WithValue(ctx, excelBPSChatContextKey{}, &excelBPSChatRequest{OriginalModel: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel, IncludeUsage: gjson.GetBytes(body, "stream_options.include_usage").Bool()})
+			return s.forwardExcelBPS(chatCtx, c, account, responsesBody, startTime)
+		} else {
+			c.Header("X-Codex2API-Upstream", "codex")
+			c.Header("X-Codex2API-Basispoints-Bypass", reason)
+		}
+	}
 
 	if account.UsesOpenAICodexProtocol() {
 		var reqBody map[string]any

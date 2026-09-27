@@ -37,8 +37,8 @@ const (
 	imageRelayMaxBytes         = 1 << 30
 	imageRelayMaxEntries       = 512
 	imageRelayMaxImageBytes    = 20 << 20
-	imageRelayMaxRequestBytes  = 32 << 20
-	imageRelayMaxRequestImages = 20
+	imageRelayMaxRequestBytes  = 50_000_000
+	imageRelayMaxRequestImages = 500
 	imageRelayMaxPixels        = 64 * 1024 * 1024
 	imageRelayCleanupInterval  = time.Minute
 )
@@ -189,6 +189,9 @@ func (r *ImageRelay) Rewrite(raw []byte, scope string) ([]byte, error) {
 	}
 	input, _ := source["input"].([]any)
 	images := make(map[string]*relayImage)
+	// Repeated images in expanded Codex history share one staged file.
+	seenURLs := make(map[string]string)
+	imageCount := 0
 	var staged []*relayImage
 	// Every failed/duplicate batch releases both files and quota.
 	defer func() {
@@ -218,18 +221,29 @@ func (r *ImageRelay) Rewrite(raw []byte, scope string) ([]byte, error) {
 				if len(rawURL) < len("data:") || !strings.EqualFold(rawURL[:len("data:")], "data:") {
 					continue
 				}
-				if len(staged) >= imageRelayMaxRequestImages {
-					return nil, fmt.Errorf("basispoints accepts at most 20 inline images per request")
+				imageCount++
+				if imageCount > imageRelayMaxRequestImages {
+					return nil, fmt.Errorf("basispoints accepts at most 500 inline images per request")
+				}
+				if token, ok := seenURLs[rawURL]; ok {
+					part["image_url"] = baseURL + ImageRelayPath + token
+					if err := validateImage(part); err != nil {
+						return nil, err
+					}
+					continue
 				}
 				img, token, err := r.storeImage(rawURL, scope)
 				if err != nil {
 					return nil, err
 				}
 				staged = append(staged, img)
-				totalBytes += img.size
-				if totalBytes > imageRelayMaxRequestBytes {
-					return nil, fmt.Errorf("basispoints inline images exceed the 32 MiB request limit")
+				if images[token] == nil {
+					totalBytes += img.size
 				}
+				if totalBytes > imageRelayMaxRequestBytes {
+					return nil, fmt.Errorf("basispoints unique inline images exceed the 50 MB request limit")
+				}
+				seenURLs[rawURL] = token
 				part["image_url"] = baseURL + ImageRelayPath + token
 				if err := validateImage(part); err != nil {
 					return nil, err
@@ -277,7 +291,7 @@ func relayImagePayload(raw string) (string, string, error) {
 		return "", "", fmt.Errorf("basispoints inline image has an invalid media type")
 	}
 	switch declared {
-	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	case "image/png", "image/jpeg", "image/gif", "image/webp", "application/octet-stream":
 	default:
 		return "", "", fmt.Errorf("basispoints inline images must be PNG, JPEG, GIF or WebP")
 	}
@@ -349,13 +363,20 @@ func (r *ImageRelay) storeImage(raw, scope string) (*relayImage, string, error) 
 	if err != nil || dimensions.Width <= 0 || dimensions.Height <= 0 || int64(dimensions.Width)*int64(dimensions.Height) > imageRelayMaxPixels {
 		return nil, "", fmt.Errorf("basispoints inline image is invalid or exceeds 64 megapixels")
 	}
-	if "image/"+format != declared {
+	detected := "image/" + format
+	switch detected {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	default:
+		return nil, "", fmt.Errorf("basispoints inline images must be PNG, JPEG, GIF or WebP")
+	}
+	// Codex emits generic binary data URLs; serve only a verified image MIME.
+	if declared != "application/octet-stream" && detected != declared {
 		return nil, "", fmt.Errorf("basispoints inline image media type does not match its contents")
 	}
 	if err := file.Close(); err != nil {
 		return nil, "", ErrImageRelayStorage
 	}
-	img.size, img.contentType = int(n), declared
+	img.size, img.contentType = int(n), detected
 	success = true
 	return img, base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }

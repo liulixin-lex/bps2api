@@ -222,7 +222,7 @@ func TestImageRelayBatchValidationAndLimitsAreAtomic(t *testing.T) {
 	raw, err := json.Marshal(source)
 	require.NoError(t, err)
 	_, err = r.Rewrite(raw, "scope")
-	require.ErrorContains(t, err, "at most 20")
+	require.ErrorContains(t, err, "at most 500")
 	require.Empty(t, r.entries)
 	r.bytes = imageRelayMaxBytes
 	_, err = r.Rewrite(relayTestRequest(t, relayTestPNG(t)), "scope")
@@ -242,18 +242,25 @@ func TestImageRelayAggregateRequestByteLimit(t *testing.T) {
 	require.NoError(t, err)
 	// Valid PNG metadata with padding exercises the decoded byte accounting
 	// without requiring a decompression bomb or a large pixel allocation.
-	data := make([]byte, imageRelayMaxRequestBytes/2+1)
+	data := make([]byte, imageRelayMaxRequestBytes/3+1)
 	copy(data, relayTestPNG(t))
 	var source object
 	require.NoError(t, decode(relayTestRequest(t, data), &source))
 	input := mustTestValue[[]any](t, source["input"])
 	item := mustTestValue[object](t, input[0])
 	parts := mustTestValue[[]any](t, item["content"])
-	item["content"] = []any{parts[1], parts[1]}
+	// Three distinct images exceed the aggregate limit; repetitions do not.
+	first := mustTestValue[object](t, parts[1])
+	images := []any{first}
+	for i := byte(1); i <= 2; i++ {
+		data[len(data)-1] = i
+		images = append(images, object{"type": "input_image", "image_url": "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)})
+	}
+	item["content"] = images
 	raw, err := json.Marshal(source)
 	require.NoError(t, err)
 	_, err = r.Rewrite(raw, "scope")
-	require.ErrorContains(t, err, "32 MiB")
+	require.ErrorContains(t, err, "50 MB")
 	require.Empty(t, r.entries)
 }
 

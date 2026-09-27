@@ -315,6 +315,7 @@ type ResponsesContentPart struct {
 	Type                  string          `json:"type"` // "input_text" | "output_text" | "input_image" | "input_file"
 	Text                  string          `json:"text,omitempty"`
 	ImageURL              string          `json:"image_url,omitempty"` // data URI for input_image
+	Detail                string          `json:"detail,omitempty"`    // Preserve model-supported image preprocessing.
 
 	// input_file fields.
 	Filename string `json:"filename,omitempty"`
@@ -728,7 +729,7 @@ type ChatContentPart struct {
 // ChatImageURL contains the URL for an image content part.
 type ChatImageURL struct {
 	URL    string `json:"url"`
-	Detail string `json:"detail,omitempty"` // "auto" | "low" | "high"
+	Detail string `json:"detail,omitempty"` // "auto" | "low" | "high" | "original"
 }
 
 // ChatFile contains the payload of a "file" content part (e.g. PDF input).
