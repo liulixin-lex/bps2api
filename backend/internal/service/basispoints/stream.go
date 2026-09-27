@@ -97,9 +97,9 @@ func (b *Bridge) transform(reader io.Reader, writer io.Writer) error {
 		if kind == "" {
 			kind = event
 		}
-		if b.structured != nil && kind == "response.completed" {
+		if kind == "response.completed" {
 			if response, ok := payload["response"].(object); !ok || response == nil {
-				return fmt.Errorf("basispoints structured output is missing its terminal response")
+				return fmt.Errorf("basispoints completed output is missing its terminal response")
 			}
 		}
 		if isToolEvent(kind) {

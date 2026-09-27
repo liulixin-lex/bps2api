@@ -1,6 +1,7 @@
 package basispoints
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -41,7 +42,53 @@ const (
 	imageRelayMaxRequestImages = 500
 	imageRelayMaxPixels        = 64 * 1024 * 1024
 	imageRelayCleanupInterval  = time.Minute
+	imageRelayDownloadTimeout  = 2 * time.Minute
 )
+
+// ImageRelayOptions bounds retained disk data and concurrent downloads per
+// process. Zero preserves the default. Limits are fixed for an instance's life;
+// callers should size them against available disk and proxy bandwidth.
+type ImageRelayOptions struct {
+	MaxEntries      int
+	MaxBytes        int64
+	MaxDownloads    int
+	DownloadTimeout time.Duration
+}
+
+func resolveImageRelayOptions(options []ImageRelayOptions) (ImageRelayOptions, error) {
+	if len(options) > 1 {
+		return ImageRelayOptions{}, fmt.Errorf("image relay accepts at most one options object")
+	}
+	var limits ImageRelayOptions
+	if len(options) == 1 {
+		limits = options[0]
+	}
+	if limits.MaxEntries == 0 {
+		limits.MaxEntries = imageRelayMaxEntries
+	}
+	if limits.MaxBytes == 0 {
+		limits.MaxBytes = imageRelayMaxBytes
+	}
+	if limits.MaxDownloads == 0 {
+		limits.MaxDownloads = 32
+	}
+	if limits.DownloadTimeout == 0 {
+		limits.DownloadTimeout = imageRelayDownloadTimeout
+	}
+	if limits.MaxEntries < 1 || limits.MaxEntries > 100_000 {
+		return ImageRelayOptions{}, fmt.Errorf("image relay max entries must be between 1 and 100000")
+	}
+	if limits.MaxBytes < 1<<20 || limits.MaxBytes > 64<<30 || int64(int(limits.MaxBytes)) != limits.MaxBytes {
+		return ImageRelayOptions{}, fmt.Errorf("image relay max bytes must be between 1 MiB and 64 GiB and supported by this platform")
+	}
+	if limits.MaxDownloads < 1 || limits.MaxDownloads > 256 {
+		return ImageRelayOptions{}, fmt.Errorf("image relay max downloads must be between 1 and 256")
+	}
+	if limits.DownloadTimeout < time.Second || limits.DownloadTimeout > 10*time.Minute {
+		return ImageRelayOptions{}, fmt.Errorf("image relay download timeout must be between 1 second and 10 minutes")
+	}
+	return limits, nil
+}
 
 // Image bytes live in private disk files; only bounded metadata lives on heap.
 // Pending uploads reserve disk capacity before decoding. Files are never exposed
@@ -51,6 +98,8 @@ type ImageRelay struct {
 	key             [32]byte
 	mu              sync.Mutex
 	entries         map[string]*relayImage
+	sources         map[[32]byte]string
+	pending         map[[32]byte]*relayImage
 	bytes           int
 	reservedBytes   int
 	reservedEntries int
@@ -61,6 +110,10 @@ type ImageRelay struct {
 	stop            chan struct{}
 	done            chan struct{}
 	downloads       chan struct{}
+	maxEntries      int
+	maxBytes        int
+	pruneAfter      time.Time
+	downloadTimeout time.Duration
 }
 
 type relayImage struct {
@@ -71,6 +124,12 @@ type relayImage struct {
 	expires     time.Time
 	readers     int
 	retired     bool
+	sourceKey   [32]byte
+	pins        int
+	reused      *relayImage
+	ready       chan struct{}
+	token       string
+	loadErr     error
 }
 
 func ValidateImageRelayOrigin(baseURL string) error {
@@ -81,14 +140,18 @@ func ValidateImageRelayOrigin(baseURL string) error {
 	return nil
 }
 
-func NewImageRelay(baseURL, storageRoot string) (*ImageRelay, error) {
+func NewImageRelay(baseURL, storageRoot string, options ...ImageRelayOptions) (*ImageRelay, error) {
 	if err := ValidateImageRelayOrigin(baseURL); err != nil {
 		return nil, err
 	}
 	if storageRoot == "" {
 		return nil, ErrImageRelayStorage
 	}
-	relay := &ImageRelay{baseURL: strings.TrimRight(baseURL, "/"), entries: make(map[string]*relayImage), root: storageRoot, stop: make(chan struct{}), done: make(chan struct{}), downloads: make(chan struct{}, 32)}
+	limits, err := resolveImageRelayOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	relay := &ImageRelay{baseURL: strings.TrimRight(baseURL, "/"), entries: make(map[string]*relayImage), sources: make(map[[32]byte]string), pending: make(map[[32]byte]*relayImage), root: storageRoot, stop: make(chan struct{}), done: make(chan struct{}), downloads: make(chan struct{}, limits.MaxDownloads), maxEntries: limits.MaxEntries, maxBytes: int(limits.MaxBytes), downloadTimeout: limits.DownloadTimeout}
 	if _, err := rand.Read(relay.key[:]); err != nil {
 		return nil, ErrImageRelayStorage
 	}
@@ -198,9 +261,7 @@ func (r *ImageRelay) Rewrite(raw []byte, scope string) ([]byte, error) {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		for _, img := range staged {
-			if img.reserved > 0 {
-				r.discardLocked(img)
-			}
+			r.releaseStagedLocked(img)
 		}
 	}()
 	totalBytes := 0
@@ -265,17 +326,24 @@ func (r *ImageRelay) Rewrite(raw []byte, scope string) ([]byte, error) {
 		return nil, ErrImageRelayStorage
 	}
 	now := time.Now()
-	r.pruneLocked(now)
+	r.pruneDueLocked(now)
 	for token, img := range images {
 		if existing := r.entries[token]; existing != nil {
 			existing.expires = now.Add(imageRelayTTL)
 			continue
+		}
+		if img.reused != nil {
+			img = img.reused
 		}
 		r.reservedBytes -= img.reserved
 		r.reservedEntries--
 		img.reserved = 0
 		img.expires = now.Add(imageRelayTTL)
 		r.entries[token] = img
+		r.sources[img.sourceKey] = token
+		if r.pending[img.sourceKey] == img {
+			delete(r.pending, img.sourceKey)
+		}
 		r.bytes += img.size
 	}
 	return out, nil
@@ -309,32 +377,105 @@ func (r *ImageRelay) storeImage(raw, scope string) (*relayImage, string, error) 
 	if err != nil {
 		return nil, "", err
 	}
+	// Conversation history frequently repeats the exact base64 payload. A bounded
+	// fingerprint index avoids decoding, disk writes and temporary quota for an
+	// image already being staged or retained. The public token still hashes decoded bytes.
+	// Excluding the declared MIME allows Codex's octet-stream and image aliases
+	// to share a cache entry; an explicit MIME must still match the verified type.
+	fingerprint := sha256.New()
+	_, _ = fingerprint.Write([]byte(scope))
+	_, _ = fingerprint.Write([]byte{0})
+	_, _ = io.CopyBuffer(fingerprint, io.LimitReader(strings.NewReader(payload), int64(len(payload))), make([]byte, 32*1024))
+	var sourceKey [32]byte
+	copy(sourceKey[:], fingerprint.Sum(nil))
 	reservation := base64.StdEncoding.DecodedLen(len(payload)) + 1
 	r.mu.Lock()
-	r.pruneLocked(time.Now())
+	now := time.Now()
+	r.pruneDueLocked(now)
 	if r.closed {
 		r.mu.Unlock()
 		return nil, "", ErrImageRelayStorage
 	}
-	if r.bytes+r.reservedBytes+reservation > imageRelayMaxBytes || len(r.entries)+r.reservedEntries+r.retiredEntries >= imageRelayMaxEntries {
+	if token, ok := r.sources[sourceKey]; ok {
+		if existing := r.entries[token]; existing != nil && existing.pins == 0 && !now.Before(existing.expires) {
+			r.removeLocked(token, existing)
+		}
+		if existing := r.entries[token]; existing != nil {
+			// Pruning may run while the remainder of the request is validated. Pin
+			// the existing file until Rewrite either commits or aborts the batch.
+			existing.pins++
+			cached, token, err := r.finishImageBorrowLocked(existing, declared)
+			r.mu.Unlock()
+			return cached, token, err
+		}
+	}
+	if img := r.pending[sourceKey]; img != nil {
+		// The entry is bounded by a real disk reservation. Borrowers pin the
+		// same file across independently atomic batches; waiting only covers
+		// decoding, never another batch's eventual commit (or our own commit).
+		img.pins++
+		r.mu.Unlock()
+		select {
+		case <-img.ready:
+		case <-r.stop:
+		}
+		r.mu.Lock()
+		cached, token, err := r.finishImageBorrowLocked(img, declared)
+		r.mu.Unlock()
+		return cached, token, err
+	}
+	if int64(r.bytes)+int64(r.reservedBytes)+int64(reservation) > int64(r.maxBytes) || len(r.entries)+r.reservedEntries+r.retiredEntries >= r.maxEntries {
+		// Reclaim expired entries before refusing genuinely new data. Full-map
+		// scans are otherwise limited to the cleanup cadence, not every image.
+		r.pruneLocked(now)
+	}
+	if int64(r.bytes)+int64(r.reservedBytes)+int64(reservation) > int64(r.maxBytes) || len(r.entries)+r.reservedEntries+r.retiredEntries >= r.maxEntries {
 		r.mu.Unlock()
 		return nil, "", ErrImageRelayFull
 	}
 	r.reservedBytes += reservation
 	r.reservedEntries++
+	img := &relayImage{reserved: reservation, sourceKey: sourceKey, pins: 1, ready: make(chan struct{})}
+	r.pending[sourceKey] = img
 	r.mu.Unlock()
-	img := &relayImage{reserved: reservation}
-	success := false
-	defer func() {
-		if !success {
-			r.mu.Lock()
-			r.discardLocked(img)
-			r.mu.Unlock()
-		}
-	}()
+	token, loadErr := r.loadImage(payload, scope, img)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed && loadErr == nil {
+		loadErr = ErrImageRelayStorage
+	}
+	img.token, img.loadErr = token, loadErr
+	close(img.ready)
+	if loadErr != nil {
+		delete(r.pending, sourceKey)
+		r.discardLocked(img)
+	}
+	return r.finishImageBorrowLocked(img, declared)
+}
+
+// The caller owns one pin and holds r.mu. A successful borrow gets a private
+// release handle; invalid MIME declarations cannot poison other borrowers of
+// the same bytes, and a failed/closed load releases only this caller's pin.
+func (r *ImageRelay) finishImageBorrowLocked(img *relayImage, declared string) (*relayImage, string, error) {
+	err := img.loadErr
+	if r.closed {
+		err = ErrImageRelayStorage
+	} else if err == nil && declared != "application/octet-stream" && declared != img.contentType {
+		err = fmt.Errorf("basispoints inline image media type does not match its contents")
+	}
+	if err != nil {
+		r.releaseImagePinLocked(img)
+		return nil, "", err
+	}
+	return &relayImage{path: img.path, size: img.size, contentType: img.contentType, reused: img}, img.token, nil
+}
+
+// Only the producer touches file metadata until ready closes. The producer's
+// pin keeps its reservation alive if Close interrupts other pending borrowers.
+func (r *ImageRelay) loadImage(payload, scope string, img *relayImage) (string, error) {
 	file, err := os.CreateTemp(r.dir, "image-")
 	if err != nil {
-		return nil, "", ErrImageRelayStorage
+		return "", ErrImageRelayStorage
 	}
 	img.path = file.Name()
 	defer func() { _ = file.Close() }()
@@ -346,39 +487,35 @@ func (r *ImageRelay) storeImage(raw, scope string) (*relayImage, string, error) 
 	if err != nil {
 		var corrupt base64.CorruptInputError
 		if errors.As(err, &corrupt) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, "", fmt.Errorf("basispoints inline image contains invalid base64 data")
+			return "", fmt.Errorf("basispoints inline image contains invalid base64 data")
 		}
-		return nil, "", ErrImageRelayStorage
+		return "", ErrImageRelayStorage
 	}
 	if n == 0 {
-		return nil, "", fmt.Errorf("basispoints inline image contains invalid base64 data")
+		return "", fmt.Errorf("basispoints inline image contains invalid base64 data")
 	}
 	if n > imageRelayMaxImageBytes {
-		return nil, "", fmt.Errorf("basispoints inline image exceeds the 20 MiB limit")
+		return "", fmt.Errorf("basispoints inline image exceeds the 20 MiB limit")
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, "", ErrImageRelayStorage
+		return "", ErrImageRelayStorage
 	}
 	dimensions, format, err := image.DecodeConfig(file)
 	if err != nil || dimensions.Width <= 0 || dimensions.Height <= 0 || int64(dimensions.Width)*int64(dimensions.Height) > imageRelayMaxPixels {
-		return nil, "", fmt.Errorf("basispoints inline image is invalid or exceeds 64 megapixels")
+		return "", fmt.Errorf("basispoints inline image is invalid or exceeds 64 megapixels")
 	}
 	detected := "image/" + format
 	switch detected {
 	case "image/png", "image/jpeg", "image/gif", "image/webp":
 	default:
-		return nil, "", fmt.Errorf("basispoints inline images must be PNG, JPEG, GIF or WebP")
+		return "", fmt.Errorf("basispoints inline images must be PNG, JPEG, GIF or WebP")
 	}
 	// Codex emits generic binary data URLs; serve only a verified image MIME.
-	if declared != "application/octet-stream" && detected != declared {
-		return nil, "", fmt.Errorf("basispoints inline image media type does not match its contents")
-	}
 	if err := file.Close(); err != nil {
-		return nil, "", ErrImageRelayStorage
+		return "", ErrImageRelayStorage
 	}
 	img.size, img.contentType = int(n), detected
-	success = true
-	return img, base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
 func (r *ImageRelay) discardLocked(img *relayImage) {
@@ -390,7 +527,44 @@ func (r *ImageRelay) discardLocked(img *relayImage) {
 	img.reserved = 0
 }
 
+func (r *ImageRelay) releaseStagedLocked(img *relayImage) {
+	if img.reused == nil {
+		if img.reserved > 0 {
+			r.discardLocked(img)
+		}
+		return
+	}
+	existing := img.reused
+	img.reused = nil
+	r.releaseImagePinLocked(existing)
+}
+
+func (r *ImageRelay) releaseImagePinLocked(img *relayImage) {
+	img.pins--
+	if img.pins != 0 {
+		return
+	}
+	if img.reserved > 0 {
+		if r.pending[img.sourceKey] == img {
+			delete(r.pending, img.sourceKey)
+		}
+		r.discardLocked(img)
+		return
+	}
+	if !time.Now().Before(img.expires) {
+		if token := r.sources[img.sourceKey]; r.entries[token] == img {
+			r.removeLocked(token, img)
+		}
+	}
+}
+
 func (r *ImageRelay) removeLocked(token string, img *relayImage) {
+	if img.pins > 0 {
+		return
+	}
+	if r.sources[img.sourceKey] == token {
+		delete(r.sources, img.sourceKey)
+	}
 	if img.readers > 0 {
 		img.retired = true
 		r.retiredEntries++
@@ -419,6 +593,13 @@ func (r *ImageRelay) pruneLocked(now time.Time) {
 			r.removeLocked(token, img)
 		}
 	}
+	r.pruneAfter = now.Add(imageRelayCleanupInterval)
+}
+
+func (r *ImageRelay) pruneDueLocked(now time.Time) {
+	if !now.Before(r.pruneAfter) {
+		r.pruneLocked(now)
+	}
 }
 
 func (r *ImageRelay) expire(token string, expected *relayImage) {
@@ -427,6 +608,31 @@ func (r *ImageRelay) expire(token string, expected *relayImage) {
 	if img := r.entries[token]; img == expected && img != nil && !time.Now().Before(img.expires) {
 		r.removeLocked(token, img)
 	}
+}
+
+// HasToken reports whether this instance owns an unexpired image capability. It
+// neither serves bytes nor changes retention, quota or files. An expired pinned
+// image remains unavailable, just as in ServeHTTP.
+func (r *ImageRelay) HasToken(token string) bool {
+	if r == nil || len(token) != 43 {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	img := r.entries[token]
+	return !r.closed && img != nil && time.Now().Before(img.expires)
+}
+
+type relayImageContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r relayImageContextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }
 
 func (r *ImageRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -443,14 +649,6 @@ func (r *ImageRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.NotFound(w, req)
 		return
 	}
-	select {
-	case r.downloads <- struct{}{}:
-		defer func() { <-r.downloads }()
-	default:
-		w.Header().Set("Retry-After", "1")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		return
-	}
 	r.mu.Lock()
 	img := r.entries[token]
 	if img != nil && !time.Now().Before(img.expires) {
@@ -460,6 +658,17 @@ func (r *ImageRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if img == nil || r.closed {
 		r.mu.Unlock()
 		http.NotFound(w, req)
+		return
+	}
+	// An unknown or expired capability must remain a 404 even when downloads
+	// are saturated, so reverse proxies can try the instance that owns it.
+	select {
+	case r.downloads <- struct{}{}:
+		defer func() { <-r.downloads }()
+	default:
+		r.mu.Unlock()
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	file, err := os.Open(img.path)
@@ -475,10 +684,48 @@ func (r *ImageRelay) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		_ = file.Close()
 		r.finishRead(img)
 	}()
+	if req.Context().Err() != nil {
+		w.WriteHeader(http.StatusRequestTimeout)
+		return
+	}
+	// Bound an image download's actual network writes, including the final
+	// buffered flush. A slow reader must not pin one of the limited slots or
+	// retain an expired file indefinitely. This is scoped to this response, not
+	// the server's long-lived Responses streams or subsequent keep-alive calls.
+	controller := http.NewResponseController(w)
+	deadline := time.Now().Add(r.downloadTimeout)
+	if contextDeadline, ok := req.Context().Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
+	}
+	if err := controller.SetWriteDeadline(deadline); err == nil {
+		cancelDone := make(chan struct{})
+		stopCancel := context.AfterFunc(req.Context(), func() {
+			_ = controller.SetWriteDeadline(time.Now())
+			close(cancelDone)
+		})
+		defer func() {
+			// Wait for an already-running cancellation callback before clearing
+			// the deadline; no callback may touch a reused response writer.
+			if !stopCancel() {
+				<-cancelDone
+			}
+			_ = controller.SetWriteDeadline(time.Time{})
+		}()
+	} else if !errors.Is(err, http.ErrNotSupported) {
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	// In-memory/custom writers may not support deadlines. Context checks still
+	// stop further reads, but only a network deadline can interrupt a blocked
+	// Write. Production wrappers must preserve the Unwrap chain.
 	w.Header().Set("Content-Type", img.contentType)
 	w.Header().Set("Content-Length", strconv.Itoa(img.size))
 	w.WriteHeader(http.StatusOK)
 	if req.Method == http.MethodGet {
-		_, _ = io.Copy(w, file)
+		if _, err := io.Copy(w, relayImageContextReader{ctx: req.Context(), reader: file}); err != nil {
+			return
+		}
 	}
+	_ = controller.Flush()
 }

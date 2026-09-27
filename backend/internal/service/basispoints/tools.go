@@ -39,6 +39,10 @@ func (c *ReplayCache) put(scope, id string, item object, clientCall ...object) {
 	if err != nil || len(raw) > 1<<20 {
 		return
 	}
+	var signature string
+	if len(clientCall) == 1 {
+		signature = historyCallFingerprint(clientCall[0])
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.entries == nil {
@@ -50,10 +54,6 @@ func (c *ReplayCache) put(scope, id string, item object, clientCall ...object) {
 		entry, _ := old.Value.(replayEntry)
 		c.bytes -= len(entry.raw)
 		c.order.Remove(old)
-	}
-	var signature string
-	if len(clientCall) == 1 {
-		signature = historyCallFingerprint(clientCall[0])
 	}
 	c.entries[key] = c.order.PushBack(replayEntry{key: key, raw: raw, callFingerprint: signature})
 	c.bytes += len(raw)
@@ -124,16 +124,20 @@ func (c *ReplayCache) getMatching(scope, id, signature string, requireSignature 
 		return nil
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	entry := c.entries[scope+"\x00"+id]
 	if entry == nil {
+		c.mu.Unlock()
 		return nil
 	}
 	cached, ok := entry.Value.(replayEntry)
 	if !ok || (requireSignature && cached.callFingerprint != signature) {
+		c.mu.Unlock()
 		return nil
 	}
 	c.order.MoveToBack(entry)
+	c.mu.Unlock()
+	// Entry bytes are immutable after insertion. Decode after releasing the
+	// process-wide LRU lock so one large history item cannot stall every user.
 	var item object
 	if decode(cached.raw, &item) != nil {
 		return nil
@@ -141,7 +145,16 @@ func (c *ReplayCache) getMatching(scope, id, signature string, requireSignature 
 	return item
 }
 
+const maxToolNamespaceDepth = 16
+
 func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
+	return b.collectToolsAtDepth(value, namespace, 0)
+}
+
+func (b *Bridge) collectToolsAtDepth(value any, namespace string, depth int) ([]any, error) {
+	if depth > maxToolNamespaceDepth {
+		return nil, fmt.Errorf("basispoints client tool namespace depth exceeds %d", maxToolNamespaceDepth)
+	}
 	var catalog []any
 	items, _ := value.([]any)
 	for _, raw := range items {
@@ -158,7 +171,7 @@ func (b *Bridge) collectTools(value any, namespace string) ([]any, error) {
 			if namespace != "" {
 				nestedNamespace = namespace + "." + name
 			}
-			nested, err := b.collectTools(item["tools"], nestedNamespace)
+			nested, err := b.collectToolsAtDepth(item["tools"], nestedNamespace, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -380,6 +393,18 @@ func isTool(item object) bool {
 // translateCall accepts only the declared relay transport and a caller-declared tool.
 // It does not evaluate code or dispatch any Excel operation.
 func (b *Bridge) translateCall(native object) (object, error) {
+	// A separate namespace is part of tool identity, not a display label.
+	// In particular, client.run_officejs and client.update_plan are client
+	// tools and must never be interpreted as the BPS native adapters.
+	if value, exists := native["namespace"]; exists && value != nil {
+		namespace, valid := value.(string)
+		if !valid || strings.TrimSpace(namespace) != namespace {
+			return nil, fmt.Errorf("basispoints returned an invalid tool namespace")
+		}
+		if namespace != "" && namespace != "functions" {
+			return b.translateDirectCatalogCall(native)
+		}
+	}
 	name := text(native["name"])
 	if text(native["type"]) == "function_call" && (name == "update_plan" || name == "functions.update_plan") {
 		return b.translateNativePlan(native)
@@ -438,8 +463,13 @@ func (b *Bridge) translateCall(native object) (object, error) {
 // native tool remains an unsupported-native-tool error.
 func (b *Bridge) translateDirectCatalogCall(native object) (object, error) {
 	name := text(native["name"])
-	info, ok := b.tools[name]
-	if !ok {
+	namespace := text(native["namespace"])
+	key := name
+	if namespace != "" {
+		key = namespace + "." + name
+	}
+	info, ok := b.tools[key]
+	if !ok && namespace == "" {
 		if trimmed := strings.TrimPrefix(name, "functions."); trimmed != name {
 			info, ok = b.tools[trimmed]
 		}
@@ -512,8 +542,8 @@ func (b *Bridge) finishClientToolCall(native object, info tool, envelope object,
 		return nil, fmt.Errorf("basispoints raw transport requires a declared custom tool")
 	}
 	id := text(native["call_id"])
-	if id == "" {
-		return nil, fmt.Errorf("basispoints tool call is missing call_id")
+	if id == "" || strings.TrimSpace(id) != id {
+		return nil, fmt.Errorf("basispoints tool call is missing a valid call_id")
 	}
 	itemID := text(native["id"])
 	if itemID == "" {
@@ -584,7 +614,37 @@ func (b *Bridge) translateResponse(response object) error {
 	if response == nil {
 		return nil
 	}
-	output, _ := response["output"].([]any)
+	output, ok := response["output"].([]any)
+	if !ok {
+		return fmt.Errorf("basispoints completed response is missing its output array")
+	}
+	// Validate identities before translating/caching or exposing any tool call.
+	// Duplicate IDs make the delta stream disagree with the final output and
+	// can dispatch a tool twice or associate its result with another call.
+	callIDs, itemIDs := make(map[string]bool), make(map[string]bool)
+	for _, raw := range output {
+		item, valid := raw.(object)
+		if !valid || item == nil {
+			return fmt.Errorf("basispoints completed response contains an invalid output item")
+		}
+		if id := text(item["id"]); id != "" {
+			if itemIDs[id] {
+				return fmt.Errorf("basispoints completed response contains duplicate output item IDs")
+			}
+			itemIDs[id] = true
+		}
+		if isTool(item) {
+			id := text(item["call_id"])
+			if id == "" || strings.TrimSpace(id) != id || callIDs[id] {
+				return fmt.Errorf("basispoints completed response contains missing or duplicate tool call IDs")
+			}
+			if len(callIDs) >= 1024 {
+				return fmt.Errorf("basispoints response contains too many tool items")
+			}
+			callIDs[id] = true
+		}
+	}
+	translatedIDs := make(map[string]bool, len(output))
 	for i, raw := range output {
 		item, _ := raw.(object)
 		if isTool(item) {
@@ -593,6 +653,16 @@ func (b *Bridge) translateResponse(response object) error {
 				return err
 			}
 			output[i] = translated
+			item = translated
+		}
+		// Custom calls and missing native IDs acquire client-facing IDs during
+		// translation. Check that final identity space before emitting tools;
+		// otherwise emitTool would silently suppress a colliding callable item.
+		if id := text(item["id"]); id != "" {
+			if translatedIDs[id] {
+				return fmt.Errorf("basispoints completed response contains duplicate translated output item IDs")
+			}
+			translatedIDs[id] = true
 		}
 	}
 	response["reasoning"] = object{"effort": b.Effort}

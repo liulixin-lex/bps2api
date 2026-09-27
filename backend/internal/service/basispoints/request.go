@@ -10,6 +10,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/tidwall/gjson"
 )
 
 const ResponsesURL = "https://bps.openai.com/basispoints/api/responses"
@@ -208,4 +210,46 @@ func Prepare(raw []byte, scope string, replay *ReplayCache) ([]byte, *Bridge, er
 	}
 	body, err := json.Marshal(output)
 	return body, b, err
+}
+
+// IgnoredParameterNames provides bounded, value-free diagnostics for controls
+// the BPS adapter cannot enforce. It is not evidence that the requested limit
+// was honored. These also cannot be fixed by blindly selecting Codex OAuth,
+// whose request transform removes most of the same parameters.
+func IgnoredParameterNames(body []byte) []string {
+	if !gjson.ValidBytes(body) {
+		return nil
+	}
+	fields := gjson.ParseBytes(body).Map()
+	var names []string
+	for _, name := range []string{"max_output_tokens", "max_completion_tokens", "temperature", "top_p", "frequency_penalty", "presence_penalty", "truncation", "stop_sequences", "store", "background"} {
+		value := fields[name]
+		if !value.Exists() || value.Type == gjson.Null {
+			continue
+		}
+		switch name {
+		case "frequency_penalty", "presence_penalty":
+			if value.Type == gjson.Number && value.Float() == 0 {
+				continue
+			}
+		case "temperature", "top_p":
+			if value.Type == gjson.Number && value.Float() == 1 {
+				continue
+			}
+		case "truncation":
+			if value.String() == "" || value.String() == "disabled" {
+				continue
+			}
+		case "store", "background":
+			if !value.Bool() {
+				continue
+			}
+		case "stop_sequences":
+			if value.IsArray() && len(value.Array()) == 0 {
+				continue
+			}
+		}
+		names = append(names, name)
+	}
+	return names
 }

@@ -1030,6 +1030,7 @@ type GatewayConfig struct {
 	// ImageConcurrency: 图片生成独立并发限制配置（默认关闭）
 	ImageConcurrency    ImageConcurrencyConfig    `mapstructure:"image_concurrency"`
 	ImageRelayAdmission ImageRelayAdmissionConfig `mapstructure:"image_relay_admission"`
+	ImageRelayCache     ImageRelayCacheConfig     `mapstructure:"image_relay_cache"`
 	ExcelBPSTimeouts    ExcelBPSTimeoutConfig     `mapstructure:"excel_bps_timeouts"`
 
 	// HTTP 上游连接池配置（性能优化：支持高并发场景调优）
@@ -2518,6 +2519,10 @@ func setDefaults() {
 	viper.SetDefault("gateway.image_relay_admission.processing_budget_bytes", int64(1<<30))
 	viper.SetDefault("gateway.image_relay_admission.max_concurrent_requests", 128)
 	viper.SetDefault("gateway.image_relay_admission.body_read_timeout_seconds", 60)
+	viper.SetDefault("gateway.image_relay_cache.max_entries", 512)
+	viper.SetDefault("gateway.image_relay_cache.max_bytes", int64(1<<30))
+	viper.SetDefault("gateway.image_relay_cache.max_downloads", 32)
+	viper.SetDefault("gateway.image_relay_cache.download_timeout_seconds", 120)
 	viper.SetDefault("gateway.image_concurrency.max_concurrent_requests", 0)
 	viper.SetDefault("gateway.image_concurrency.overflow_mode", ImageConcurrencyOverflowModeReject)
 	viper.SetDefault("gateway.image_concurrency.wait_timeout_seconds", 30)
@@ -3375,6 +3380,9 @@ func (c *Config) Validate() error {
 		}
 	}
 	if err := c.Gateway.ImageRelayAdmission.Validate(); err != nil {
+		return err
+	}
+	if err := c.Gateway.ImageRelayCache.Validate(); err != nil {
 		return err
 	}
 	if err := c.Gateway.ExcelBPSTimeouts.Validate(); err != nil {

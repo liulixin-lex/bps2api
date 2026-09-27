@@ -89,23 +89,13 @@ func (w *excelBPSChatWriter) WriteString(value string) (int, error) {
 			w.pending = ""
 			return len(value), nil
 		}
-		var chunks []apicompat.ChatCompletionsChunk
-		// Some providers return text only in the terminal response. Emit it
-		// once before the finish chunk, but never repeat streamed text.
-		if (event.Type == "response.completed" || event.Type == "response.incomplete") && event.Response != nil && !w.state.SawText {
-			for _, item := range event.Response.Output {
-				if item.Type != "message" {
-					continue
-				}
-				for _, part := range item.Content {
-					if part.Type == "output_text" && part.Text != "" {
-						delta := apicompat.ResponsesStreamEvent{Type: "response.output_text.delta", Delta: part.Text}
-						chunks = append(chunks, apicompat.ResponsesEventToChatChunks(&delta, w.state)...)
-					}
-				}
-			}
+		chunks, err := apicompat.ResponsesEventToChatChunksChecked(&event, w.state)
+		if err != nil {
+			// Drop unprocessed frames before the owner sends the explicit failure.
+			// The converter retains its sticky error for later normal events.
+			w.pending = ""
+			return 0, err
 		}
-		chunks = append(chunks, apicompat.ResponsesEventToChatChunks(&event, w.state)...)
 		for _, chunk := range chunks {
 			encoded, err := apicompat.ChatChunkToSSE(chunk)
 			if err != nil {
@@ -132,10 +122,11 @@ func (w *excelBPSChatWriter) WriteString(value string) (int, error) {
 
 func writeExcelBPSStreamFailure(c *gin.Context, chat *excelBPSChatRequest, output io.StringWriter, status int, code, message string) {
 	if chat == nil {
-		writeOpenAICompactSSEFailureMessage(c, status, code, message)
+		writeOpenAICompactSSEFailureMessageWithType(c, status, code, message, excelBPSErrorType(status))
 		return
 	}
-	event, _ := json.Marshal(gin.H{"type": "response.failed", "response": gin.H{"status": "failed", "error": gin.H{"type": "server_error", "code": code, "message": message}}})
+	MarkOpsStreamError(c, code, message, status)
+	event, _ := json.Marshal(gin.H{"type": "response.failed", "response": gin.H{"status": "failed", "error": gin.H{"type": excelBPSErrorType(status), "code": code, "message": message}}})
 	_, _ = output.WriteString("data: " + string(event) + "\n\n")
 	c.Writer.Flush()
 }

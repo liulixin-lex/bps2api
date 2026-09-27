@@ -3,6 +3,7 @@ package basispoints
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -58,19 +59,37 @@ func schemaAcceptsSourceString(schema, root object, depth int) bool {
 	if depth > 16 {
 		return false
 	}
+	// A nested resource changes local reference scope. Explicit string branches
+	// remain recognizable, but descendants must not resolve against the outer
+	// document after anyOf/oneOf traversal has hidden that resource boundary.
+	if schema["$id"] != nil {
+		root = nil
+	}
 	if ref, ok := schema["$ref"].(string); ok {
 		// No network, files or dynamic references; cycles stop at the depth cap.
 		if !strings.HasPrefix(ref, "#/") || schema["$id"] != nil {
 			return false
 		}
 		var node any = root
-		for _, component := range strings.Split(ref[2:], "/") {
+		for index, component := range strings.Split(ref[2:], "/") {
 			component = strings.ReplaceAll(strings.ReplaceAll(component, "~1", "/"), "~0", "~")
-			fields, ok := node.(object)
-			if !ok || (fields["$id"] != nil && depth > 0) {
+			switch fields := node.(type) {
+			case object:
+				// The document root may have an ID. Only a nested resource ID
+				// changes resolution scope and requires a full schema resolver.
+				if fields["$id"] != nil && index > 0 {
+					return false
+				}
+				node = fields[component]
+			case []any:
+				position, err := strconv.Atoi(component)
+				if err != nil || position < 0 || position >= len(fields) || strconv.Itoa(position) != component {
+					return false
+				}
+				node = fields[position]
+			default:
 				return false
 			}
-			node = fields[component]
 		}
 		child, _ := node.(object)
 		return schemaAcceptsSourceString(child, root, depth+1)
