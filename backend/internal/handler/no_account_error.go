@@ -149,6 +149,11 @@ func classifyNoAccountErrorFromGin(
 		ctx = c.Request.Context()
 	}
 	classification := classifyNoAccountError(ctx, diag, apiKey, routingModel, displayModel, platform)
+	if c != nil && classification.Status == http.StatusServiceUnavailable && c.Writer.Header().Get("Retry-After") == "" {
+		// Empty/exhausted pools cannot recover through an immediate tight loop.
+		// Preserve the 503 and give clients an explicit bounded backoff hint.
+		c.Header("Retry-After", "5")
+	}
 	if classification.ModelNotFound {
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalModelConfiguration)
 	}

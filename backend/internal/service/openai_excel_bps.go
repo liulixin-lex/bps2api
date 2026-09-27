@@ -252,6 +252,23 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			Message: upstreamMessage, Detail: upstreamDetail, UpstreamResponseBody: upstreamDetail,
 		})
 		code := gjson.GetBytes(raw, "error.code").String()
+		// Only an explicit transient HTTP rejection, before any downstream
+		// bytes, may be retried once. Never replay network failures, permission
+		// errors, rate limits, or partially delivered streams.
+		if delay, retry := excelBPSHTTPRetryDelay(resp.StatusCode, resp.Header.Get("Retry-After"), time.Now()); retry && attempt == 0 && !c.Writer.Written() && ctx.Err() == nil {
+			_ = resp.Body.Close()
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+			return s.forwardExcelBPSAttempt(ctx, c, account, originalBody, start, timeouts, attempt+1)
+		}
+		if retryAfter := excelBPSRetryAfterHeader(resp.Header.Get("Retry-After")); retryAfter != "" && !c.Writer.Written() {
+			c.Header("Retry-After", retryAfter)
+		}
 		if code == "basispoints_model_access_changed" {
 			return fail(resp.StatusCode, code, "This model is not available on the account's Excel BPS endpoint")
 		}
@@ -308,14 +325,16 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			payload := []byte(strings.TrimPrefix(line, "data: "))
 			kind := gjson.GetBytes(payload, "type").String()
 			protocolMessage := gjson.GetBytes(payload, "response.error.message").String()
-			// Only a malformed JSON tool envelope is eligible. Unknown tools,
-			// structured-output validation and arbitrary source text stay errors.
+			// Regenerate a locally rejected envelope once, before any output.
+			// Raw source with a missing CUSTOM/FUNCTION_CODE marker is corrected
+			// by the model, never inferred, evaluated or dispatched by the gateway.
+			// Unknown tools, batches and structured-output failures stay errors.
 			correctable := strings.HasPrefix(protocolMessage, "basispoints tool transport code must contain one JSON client-tool envelope;") &&
-				(strings.Contains(protocolMessage, "format=json_object;") || strings.Contains(protocolMessage, "format=json_string;")) &&
+				(strings.Contains(protocolMessage, "format=json_object;") || strings.Contains(protocolMessage, "format=json_string;") || strings.Contains(protocolMessage, "format=text_or_code;") || strings.Contains(protocolMessage, "format=markdown;")) &&
 				strings.Contains(protocolMessage, "json_failure=") && !strings.Contains(protocolMessage, "json_failure=trailing_data")
 			if correctable && kind == "response.failed" && gjson.GetBytes(payload, "response.error.code").String() == "basispoints_protocol_error" && attempt == 0 && !outputCommitted && ctx.Err() == nil {
 				instructions := gjson.GetBytes(originalBody, "instructions").String()
-				instructions += "\nTransport correction: the previous tool response was rejected before any client output or tool dispatch. Follow the exact catalog transport. Use the declared FUNCTION_CODE or CUSTOM raw transport for source text. For ordinary FUNCTION, serialize one valid JSON envelope with escaped strings. Never invent tool names or execute wrapper code."
+				instructions += "\nTransport correction: the previous tool response was rejected before any client output or tool dispatch. Follow the exact catalog transport. For CUSTOM raw input, summary MUST be codex2api.custom/CATALOG_NAME. For a declared FUNCTION_CODE tool, summary MUST be codex2api.function_code/CATALOG_NAME and extended_summary MUST contain the other arguments as JSON. Use the exact catalog name including its namespace. For ordinary FUNCTION, serialize one valid JSON envelope with escaped strings. Do not repeat the rejected wrapper or use a prose summary for raw source. Never invent tool names or execute wrapper code."
 				corrected, correctionErr := sjson.SetBytes(originalBody, "instructions", instructions)
 				if correctionErr == nil {
 					scanner.Close()

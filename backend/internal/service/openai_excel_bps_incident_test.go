@@ -44,6 +44,8 @@ func TestIncidentBPSProtocolRecoveryBoundaries(t *testing.T) {
 	}{
 		{"recover stream", metadata + bad, good, true, true, 2},
 		{"recover JSON", metadata + bad, good, false, true, 2},
+		{"recover missing raw marker", metadata + incidentBPSToolResponse("resp_rejected", "const r = await tools.exec_command({cmd: 'true'}); text(r);"), good, true, true, 2},
+		{"no source regeneration after text", metadata + textDelta + incidentBPSToolResponse("resp_rejected", "text(await tools.exec_command({cmd: 'true'}));"), good, true, false, 1},
 		{"one retry maximum", metadata + bad, bad, true, false, 2},
 		{"no retry after text", metadata + textDelta + bad, good, true, false, 1},
 		{"no retry after buffered text", textDelta + bad, good, false, false, 1},

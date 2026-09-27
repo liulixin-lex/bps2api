@@ -2509,7 +2509,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.cn_providers.balance_threshold", 0.5)
 	viper.SetDefault("gateway.cn_providers.balance_check_interval_minutes", 10)
 	viper.SetDefault("gateway.image_concurrency.enabled", false)
-	viper.SetDefault("gateway.image_relay_admission.decode_max_concurrent", 1)
+	viper.SetDefault("gateway.image_relay_admission.decode_max_concurrent", 4)
 	viper.SetDefault("gateway.image_relay_admission.decode_wait_milliseconds", 250)
 	viper.SetDefault("gateway.excel_bps_timeouts.first_output_seconds", 0)
 	viper.SetDefault("gateway.excel_bps_timeouts.idle_seconds", 0)
