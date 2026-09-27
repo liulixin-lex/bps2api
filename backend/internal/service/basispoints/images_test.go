@@ -8,7 +8,7 @@ import (
 )
 
 func TestHTTPSImagesPreserveURLsAndText(t *testing.T) {
-	for _, detail := range []string{"", "auto", "low", "high"} {
+	for _, detail := range []string{"", "auto", "low", "high", "original"} {
 		image := object{"type": "input_image", "image_url": "https://images.example/photo.png?signature=unchanged%2Fvalue&expires=123"}
 		if detail != "" {
 			image["detail"] = detail
@@ -35,7 +35,9 @@ func TestUnsupportedImageFormsReturnActionableErrors(t *testing.T) {
 		"ambiguous URL object": {"image_url": object{"url": "https://images.example/photo.png", "file_id": "file-private"}},
 		"file ID":              {"file_id": "file-private"},
 		"mixed file ID":        {"image_url": "https://images.example/photo.png", "file_id": "file-private"},
-		"original detail":      {"image_url": "https://images.example/photo.png", "detail": "original"},
+		"unknown detail":       {"image_url": "https://images.example/photo.png", "detail": "ultra"},
+		"numeric detail":       {"image_url": "https://images.example/photo.png", "detail": 123},
+		"object detail":        {"image_url": "https://images.example/photo.png", "detail": object{"value": "original"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			image["type"] = "input_image"
