@@ -26,12 +26,12 @@ func (p *literalParser) quoted() (string, error) {
 	quote := p.source[p.pos]
 	p.pos++
 	var out strings.Builder
-	out.WriteByte('"')
+	_ = out.WriteByte('"')
 	for p.pos < len(p.source) {
 		c := p.source[p.pos]
 		p.pos++
 		if c == quote {
-			out.WriteByte('"')
+			_ = out.WriteByte('"')
 			var decoded string
 			err := json.Unmarshal([]byte(out.String()), &decoded)
 			return decoded, err
@@ -40,12 +40,12 @@ func (p *literalParser) quoted() (string, error) {
 			return "", fmt.Errorf("control character in literal")
 		}
 		if c == '"' {
-			out.WriteByte(92)
-			out.WriteByte('"')
+			_ = out.WriteByte(92)
+			_ = out.WriteByte('"')
 			continue
 		}
 		if c != 92 {
-			out.WriteByte(c)
+			_ = out.WriteByte(c)
 			continue
 		}
 		if p.pos == len(p.source) {
@@ -55,13 +55,13 @@ func (p *literalParser) quoted() (string, error) {
 		p.pos++
 		switch escape {
 		case 39:
-			out.WriteByte(39)
+			_ = out.WriteByte(39)
 		case '"':
-			out.WriteByte(92)
-			out.WriteByte('"')
+			_ = out.WriteByte(92)
+			_ = out.WriteByte('"')
 		case 92, '/', 'b', 'f', 'n', 'r', 't', 'u':
-			out.WriteByte(92)
-			out.WriteByte(escape)
+			_ = out.WriteByte(92)
+			_ = out.WriteByte(escape)
 		default:
 			return "", fmt.Errorf("unsupported literal escape")
 		}

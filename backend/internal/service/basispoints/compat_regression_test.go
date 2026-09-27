@@ -150,7 +150,10 @@ func TestCompatImageAliasesUseAdmissionAndRelay(t *testing.T) {
 		if err := decode(out, &rewritten); err != nil {
 			t.Fatal(err)
 		}
-		part := rewritten["input"].([]any)[0].(object)["content"].([]any)[0].(object)
+		items := mustTestValue[[]any](t, rewritten["input"])
+		item := mustTestValue[object](t, items[0])
+		parts := mustTestValue[[]any](t, item["content"])
+		part := mustTestValue[object](t, parts[0])
 		if part["type"] != "input_image" || part["detail"] != "high" {
 			t.Fatal("image semantics lost")
 		}
@@ -179,7 +182,7 @@ func TestCompatLiteralPreservesEscapesAndLargeNumbers(t *testing.T) {
 	if !ok {
 		t.Fatal("literal rejected")
 	}
-	args := envelope["arguments"].(object)
+	args := mustTestValue[object](t, envelope["arguments"])
 	if args["cmd"] != "say \"hello\"\npath\\next\tend" || args["n"] != json.Number("9007199254740993") {
 		t.Fatalf("literal changed: %#v", args)
 	}
