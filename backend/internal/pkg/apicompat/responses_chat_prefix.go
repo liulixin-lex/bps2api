@@ -45,10 +45,16 @@ func chatTextPartOf(event *ResponsesStreamEvent, state *ResponsesEventToChatStat
 	id := event.ItemID
 	if id != "" {
 		if previous, exists := state.textPartAliases[part]; !exists {
+			if !state.reserveStreamMetadata(1, len(id)) {
+				return chatTextPart{}
+			}
 			state.textPartAliases[part] = id
 		} else if previous != id {
 			// Reused indices are ambiguous. Keep explicit IDs authoritative,
 			// but never guess their identity for a later ID-less snapshot.
+			if !state.reserveStreamMetadata(0, -len(previous)) {
+				return chatTextPart{}
+			}
 			state.textPartAliases[part] = ""
 		}
 	} else if previous := state.textPartAliases[part]; previous != "" {
@@ -69,12 +75,18 @@ func resToChatRecoverText(text string, event *ResponsesStreamEvent, state *Respo
 		}
 	}
 	key := chatTextPartOf(event, state)
+	if state.streamErr != nil {
+		return nil
+	}
 	prefix, known := state.textPrefixes[key]
 	if !known && event.ItemID != "" {
 		// Older compatible deltas omit item_id. In that case output/content indices
 		// are the available identity; use that exact entry instead of a global flag.
 		fallback := chatTextPart{outputIndex: event.OutputIndex, contentIndex: event.ContentIndex}
 		if prior, ok := state.textPrefixes[fallback]; ok {
+			if !state.reserveStreamMetadata(0, len(key.itemID)) {
+				return nil
+			}
 			prefix, known = prior, true
 			state.textPrefixes[key] = prior
 			delete(state.textPrefixes, fallback)
@@ -83,6 +95,9 @@ func resToChatRecoverText(text string, event *ResponsesStreamEvent, state *Respo
 	if !known {
 		// Output/content indices remain the protocol identity when item_id is
 		// omitted; different parts must not be suppressed by one global SawText.
+		if !state.reserveStreamMetadata(1, len(key.itemID)) {
+			return nil
+		}
 		prefix = &chatStreamPrefix{}
 		state.textPrefixes[key] = prefix
 	}

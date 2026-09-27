@@ -62,7 +62,7 @@ Recommended next rollout is a small canary, then measured increments. A possible
 
 Do not load-balance ephemeral image capabilities across arbitrary replicas. Token ownership and metadata are process-local: retain instance affinity and drain the old owner until tokens expire, or design shared TTL storage/metadata plus ownership routing first. Old containers cannot simply be stopped while they still own live images; confirm fallback retention and worker/database activity before retiring them.
 
-Outstanding scale work: avoid duplicate temporary reservations for simultaneous cold uploads of the same image; assess O(n) full-cache cleanup at unusually large configured entry counts; add tenant fairness, account/model capability-aware routing, and observable admission/queue metrics. Network deadlines rely on ResponseWriter wrappers preserving Unwrap; a custom blocking writer without deadline support cannot be preempted safely by context checks alone.
+Outstanding scale work: assess O(n) full-cache cleanup at unusually large configured entry counts; add tenant fairness, account/model capability-aware routing, and observable admission/queue metrics. Network deadlines rely on ResponseWriter wrappers preserving Unwrap; a custom blocking writer without deadline support cannot be preempted safely by context checks alone.
 
 ## Production error interpretation
 
@@ -71,3 +71,20 @@ Read-only inspection after the v0.0.11 cutover still found model-access 403, ups
 ## Acceptance and rollback
 
 The original source stays byte-preserved. The delivery uses the same four roles: MODIFIED_FILE.tar, DIFF_FILE.patch, VERIFICATION.txt and executable ROLLBACK.sh, with the baseline archive alongside. Matching baseline/candidate/restored regression commands, fixture hashes, literal outputs, archive hashes and a tested rollback are required before final delivery. Production remains unchanged by this audit.
+
+
+## Follow-up review of the accepted candidate
+
+Starting from accepted commit 5163e2ea0, a second review reproduced additional defects and kept changes on the same local candidate branch:
+
+- Simultaneous cold uploads of identical scoped payloads, including verified PNG/octet-stream aliases, competed for separate quota before publication. A bounded pending-image map now shares one reservation and validated file with per-batch references. Abort/commit/Close paths retain atomic batch semantics; different scopes remain separate.
+- Completed tool IDs were checked before custom-tool normalization but could collide after it. Final translated IDs are now checked before any callable output is emitted, preventing silent loss or ambiguous execution.
+- A nested schema resource identifier could be hidden by anyOf/oneOf traversal and resolve a numeric source against an outer string definition. Outer reference resolution now stops at that resource boundary; explicit string branches remain supported.
+- Buffered Responses/Chat recovery consumed deltas but missed authoritative text/summary done snapshots. It now appends only matching suffixes, accepts duplicate completion idempotently, and rejects conflicting completion or post-completion text. Retained item IDs share the 16 MiB aggregate budget with text.
+- BPS HTTP failures incorrectly used invalid_request_error for all statuses, while failed Chat streams could omit the Ops failure marker. Gateway-owned errors now distinguish authentication, permission, not-found, rate-limit, service-unavailable and server failures. JSON, Responses SSE and Chat SSE preserve the same classification. Existing sanitized codes/messages and bounded retry decisions remain unchanged; a missing 503 Retry-After gets the same one-second hint used by image admission.
+
+BPS and direct Responses-to-Chat streams now use a checked converter with aggregate bounds of 8,192 retained metadata entries, 1 MiB of identity strings and 1,024 tool registrations per response. Tool argument text uses bounded digest state rather than consuming the identity budget. Exceeding a bound ends with an explicit failure, never identity eviction, replay, duplicate output or a synthetic success finish. Gateway integration distinguishes these upstream failures from client disconnects and preserves already delivered text. Other provider adapters retain their existing converter API in this change.
+
+The status distinction is informed by the official OpenAI error-code guide, reviewed on 2026-09-27: https://developers.openai.com/api/docs/guides/error-codes . Its public API documentation does not establish a private BPS endpoint contract or guarantee recovery from quota or model-access failures.
+
+Follow-up evidence is retained separately and included in the canonical verification ledger. Previous accepted artifacts remain archived; failures encountered during baseline reproduction or verification are preserved rather than replaced with pass claims. Runtime packaging and isolated startup checks, where completed, are distinct from deployment to production.

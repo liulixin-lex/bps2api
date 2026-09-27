@@ -190,7 +190,10 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 		if committed {
 			writeExcelBPSStreamFailure(c, chat, downstream, status, code, message)
 		} else {
-			c.JSON(status, gin.H{"error": gin.H{"type": "invalid_request_error", "code": code, "message": message}})
+			if status == http.StatusServiceUnavailable && c.Writer.Header().Get("Retry-After") == "" {
+				c.Header("Retry-After", "1")
+			}
+			c.JSON(status, gin.H{"error": gin.H{"type": excelBPSErrorType(status), "code": code, "message": message}})
 		}
 		return nil, fmt.Errorf("excel BPS: %s", code)
 	}
@@ -389,6 +392,29 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	if !stream {
 		bufferedText = newExcelBPSBufferedOutput()
 	}
+	// Converter resource failures are upstream protocol failures, not client
+	// disconnects. They must never trigger replay or a successful terminal.
+	downstreamFailure := func(writeErr error) (*OpenAIForwardResult, error) {
+		result.Duration = time.Since(start)
+		if !errors.Is(writeErr, apicompat.ErrChatStreamMetadataLimit) {
+			result.ClientDisconnect = true
+			return result, writeErr
+		}
+		result.streamReadIncomplete = true
+		result.UpstreamTerminalEvent = "response.failed"
+		compactCommitted := StopOpenAICompactSSEKeepaliveCommitted(c)
+		MarkResponseCommitted(c)
+		const code = "basispoints_response_metadata_limit"
+		const message = "Excel BPS response metadata exceeds the stream resource limit; request was not replayed"
+		MarkOpsStreamError(c, code, message, http.StatusBadGateway)
+		if compactCommitted || c.Writer.Written() {
+			writeExcelBPSStreamFailure(c, chat, downstream, http.StatusBadGateway, code, message)
+		} else {
+			c.Header("Content-Type", "application/json")
+			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": excelBPSErrorType(http.StatusBadGateway), "code": code, "message": message}})
+		}
+		return result, fmt.Errorf("excel BPS Chat conversion failed: %w", writeErr)
+	}
 	var completed []byte
 	terminal := ""
 	terminalCode := "basispoints_upstream_error"
@@ -434,7 +460,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 				outputCommitted = true
 			}
 			s.parseSSEUsageBytes(payload, &result.Usage)
-			if bufferedText != nil && (kind == "response.output_text.delta" || kind == "response.reasoning_summary_text.delta") {
+			if bufferedText != nil && (kind == "response.output_text.delta" || kind == "response.reasoning_summary_text.delta" || kind == "response.output_text.done" || kind == "response.reasoning_summary_text.done") {
 				var event apicompat.ResponsesStreamEvent
 				if err = json.Unmarshal(payload, &event); err == nil {
 					err = bufferedText.Observe(&event)
@@ -490,16 +516,12 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			}
 			if pending.Len() > 0 {
 				if _, err = downstream.WriteString(pending.String()); err != nil {
-					result.ClientDisconnect = true
-					result.Duration = time.Since(start)
-					return result, err
+					return downstreamFailure(err)
 				}
 				pending.Reset()
 			}
 			if _, err = downstream.WriteString(line); err != nil {
-				result.ClientDisconnect = true
-				result.Duration = time.Since(start)
-				return result, err
+				return downstreamFailure(err)
 			}
 			if line == "\n" || line == "" {
 				c.Writer.Flush()
@@ -538,8 +560,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	// timeout: metadata already received is followed by one terminal SSE error.
 	if stream && pending.Len() > 0 && !errors.Is(ctx.Err(), context.Canceled) {
 		if _, writeErr := downstream.WriteString(pending.String()); writeErr != nil {
-			result.ClientDisconnect = true
-			return result, writeErr
+			return downstreamFailure(writeErr)
 		}
 		pending.Reset()
 	}

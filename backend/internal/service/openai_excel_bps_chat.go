@@ -89,7 +89,13 @@ func (w *excelBPSChatWriter) WriteString(value string) (int, error) {
 			w.pending = ""
 			return len(value), nil
 		}
-		chunks := apicompat.ResponsesEventToChatChunks(&event, w.state)
+		chunks, err := apicompat.ResponsesEventToChatChunksChecked(&event, w.state)
+		if err != nil {
+			// Drop unprocessed frames before the owner sends the explicit failure.
+			// The converter retains its sticky error for later normal events.
+			w.pending = ""
+			return 0, err
+		}
 		for _, chunk := range chunks {
 			encoded, err := apicompat.ChatChunkToSSE(chunk)
 			if err != nil {
@@ -116,10 +122,11 @@ func (w *excelBPSChatWriter) WriteString(value string) (int, error) {
 
 func writeExcelBPSStreamFailure(c *gin.Context, chat *excelBPSChatRequest, output io.StringWriter, status int, code, message string) {
 	if chat == nil {
-		writeOpenAICompactSSEFailureMessage(c, status, code, message)
+		writeOpenAICompactSSEFailureMessageWithType(c, status, code, message, excelBPSErrorType(status))
 		return
 	}
-	event, _ := json.Marshal(gin.H{"type": "response.failed", "response": gin.H{"status": "failed", "error": gin.H{"type": "server_error", "code": code, "message": message}}})
+	MarkOpsStreamError(c, code, message, status)
+	event, _ := json.Marshal(gin.H{"type": "response.failed", "response": gin.H{"status": "failed", "error": gin.H{"type": excelBPSErrorType(status), "code": code, "message": message}}})
 	_, _ = output.WriteString("data: " + string(event) + "\n\n")
 	c.Writer.Flush()
 }

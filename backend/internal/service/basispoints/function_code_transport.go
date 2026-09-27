@@ -59,6 +59,12 @@ func schemaAcceptsSourceString(schema, root object, depth int) bool {
 	if depth > 16 {
 		return false
 	}
+	// A nested resource changes local reference scope. Explicit string branches
+	// remain recognizable, but descendants must not resolve against the outer
+	// document after anyOf/oneOf traversal has hidden that resource boundary.
+	if schema["$id"] != nil {
+		root = nil
+	}
 	if ref, ok := schema["$ref"].(string); ok {
 		// No network, files or dynamic references; cycles stop at the depth cap.
 		if !strings.HasPrefix(ref, "#/") || schema["$id"] != nil {

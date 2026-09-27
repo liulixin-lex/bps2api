@@ -644,6 +644,7 @@ func (b *Bridge) translateResponse(response object) error {
 			callIDs[id] = true
 		}
 	}
+	translatedIDs := make(map[string]bool, len(output))
 	for i, raw := range output {
 		item, _ := raw.(object)
 		if isTool(item) {
@@ -652,6 +653,16 @@ func (b *Bridge) translateResponse(response object) error {
 				return err
 			}
 			output[i] = translated
+			item = translated
+		}
+		// Custom calls and missing native IDs acquire client-facing IDs during
+		// translation. Check that final identity space before emitting tools;
+		// otherwise emitTool would silently suppress a colliding callable item.
+		if id := text(item["id"]); id != "" {
+			if translatedIDs[id] {
+				return fmt.Errorf("basispoints completed response contains duplicate translated output item IDs")
+			}
+			translatedIDs[id] = true
 		}
 	}
 	response["reasoning"] = object{"effort": b.Effort}

@@ -99,6 +99,7 @@ type ImageRelay struct {
 	mu              sync.Mutex
 	entries         map[string]*relayImage
 	sources         map[[32]byte]string
+	pending         map[[32]byte]*relayImage
 	bytes           int
 	reservedBytes   int
 	reservedEntries int
@@ -126,6 +127,9 @@ type relayImage struct {
 	sourceKey   [32]byte
 	pins        int
 	reused      *relayImage
+	ready       chan struct{}
+	token       string
+	loadErr     error
 }
 
 func ValidateImageRelayOrigin(baseURL string) error {
@@ -147,7 +151,7 @@ func NewImageRelay(baseURL, storageRoot string, options ...ImageRelayOptions) (*
 	if err != nil {
 		return nil, err
 	}
-	relay := &ImageRelay{baseURL: strings.TrimRight(baseURL, "/"), entries: make(map[string]*relayImage), sources: make(map[[32]byte]string), root: storageRoot, stop: make(chan struct{}), done: make(chan struct{}), downloads: make(chan struct{}, limits.MaxDownloads), maxEntries: limits.MaxEntries, maxBytes: int(limits.MaxBytes), downloadTimeout: limits.DownloadTimeout}
+	relay := &ImageRelay{baseURL: strings.TrimRight(baseURL, "/"), entries: make(map[string]*relayImage), sources: make(map[[32]byte]string), pending: make(map[[32]byte]*relayImage), root: storageRoot, stop: make(chan struct{}), done: make(chan struct{}), downloads: make(chan struct{}, limits.MaxDownloads), maxEntries: limits.MaxEntries, maxBytes: int(limits.MaxBytes), downloadTimeout: limits.DownloadTimeout}
 	if _, err := rand.Read(relay.key[:]); err != nil {
 		return nil, ErrImageRelayStorage
 	}
@@ -328,12 +332,18 @@ func (r *ImageRelay) Rewrite(raw []byte, scope string) ([]byte, error) {
 			existing.expires = now.Add(imageRelayTTL)
 			continue
 		}
+		if img.reused != nil {
+			img = img.reused
+		}
 		r.reservedBytes -= img.reserved
 		r.reservedEntries--
 		img.reserved = 0
 		img.expires = now.Add(imageRelayTTL)
 		r.entries[token] = img
 		r.sources[img.sourceKey] = token
+		if r.pending[img.sourceKey] == img {
+			delete(r.pending, img.sourceKey)
+		}
 		r.bytes += img.size
 	}
 	return out, nil
@@ -369,7 +379,7 @@ func (r *ImageRelay) storeImage(raw, scope string) (*relayImage, string, error) 
 	}
 	// Conversation history frequently repeats the exact base64 payload. A bounded
 	// fingerprint index avoids decoding, disk writes and temporary quota for an
-	// image that is already retained. The public token still hashes decoded bytes.
+	// image already being staged or retained. The public token still hashes decoded bytes.
 	// Excluding the declared MIME allows Codex's octet-stream and image aliases
 	// to share a cache entry; an explicit MIME must still match the verified type.
 	fingerprint := sha256.New()
@@ -391,17 +401,28 @@ func (r *ImageRelay) storeImage(raw, scope string) (*relayImage, string, error) 
 			r.removeLocked(token, existing)
 		}
 		if existing := r.entries[token]; existing != nil {
-			if declared != "application/octet-stream" && declared != existing.contentType {
-				r.mu.Unlock()
-				return nil, "", fmt.Errorf("basispoints inline image media type does not match its contents")
-			}
 			// Pruning may run while the remainder of the request is validated. Pin
 			// the existing file until Rewrite either commits or aborts the batch.
 			existing.pins++
-			cached := &relayImage{path: existing.path, size: existing.size, contentType: existing.contentType, reused: existing}
+			cached, token, err := r.finishImageBorrowLocked(existing, declared)
 			r.mu.Unlock()
-			return cached, token, nil
+			return cached, token, err
 		}
+	}
+	if img := r.pending[sourceKey]; img != nil {
+		// The entry is bounded by a real disk reservation. Borrowers pin the
+		// same file across independently atomic batches; waiting only covers
+		// decoding, never another batch's eventual commit (or our own commit).
+		img.pins++
+		r.mu.Unlock()
+		select {
+		case <-img.ready:
+		case <-r.stop:
+		}
+		r.mu.Lock()
+		cached, token, err := r.finishImageBorrowLocked(img, declared)
+		r.mu.Unlock()
+		return cached, token, err
 	}
 	if int64(r.bytes)+int64(r.reservedBytes)+int64(reservation) > int64(r.maxBytes) || len(r.entries)+r.reservedEntries+r.retiredEntries >= r.maxEntries {
 		// Reclaim expired entries before refusing genuinely new data. Full-map
@@ -414,19 +435,47 @@ func (r *ImageRelay) storeImage(raw, scope string) (*relayImage, string, error) 
 	}
 	r.reservedBytes += reservation
 	r.reservedEntries++
+	img := &relayImage{reserved: reservation, sourceKey: sourceKey, pins: 1, ready: make(chan struct{})}
+	r.pending[sourceKey] = img
 	r.mu.Unlock()
-	img := &relayImage{reserved: reservation, sourceKey: sourceKey}
-	success := false
-	defer func() {
-		if !success {
-			r.mu.Lock()
-			r.discardLocked(img)
-			r.mu.Unlock()
-		}
-	}()
+	token, loadErr := r.loadImage(payload, scope, img)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed && loadErr == nil {
+		loadErr = ErrImageRelayStorage
+	}
+	img.token, img.loadErr = token, loadErr
+	close(img.ready)
+	if loadErr != nil {
+		delete(r.pending, sourceKey)
+		r.discardLocked(img)
+	}
+	return r.finishImageBorrowLocked(img, declared)
+}
+
+// The caller owns one pin and holds r.mu. A successful borrow gets a private
+// release handle; invalid MIME declarations cannot poison other borrowers of
+// the same bytes, and a failed/closed load releases only this caller's pin.
+func (r *ImageRelay) finishImageBorrowLocked(img *relayImage, declared string) (*relayImage, string, error) {
+	err := img.loadErr
+	if r.closed {
+		err = ErrImageRelayStorage
+	} else if err == nil && declared != "application/octet-stream" && declared != img.contentType {
+		err = fmt.Errorf("basispoints inline image media type does not match its contents")
+	}
+	if err != nil {
+		r.releaseImagePinLocked(img)
+		return nil, "", err
+	}
+	return &relayImage{path: img.path, size: img.size, contentType: img.contentType, reused: img}, img.token, nil
+}
+
+// Only the producer touches file metadata until ready closes. The producer's
+// pin keeps its reservation alive if Close interrupts other pending borrowers.
+func (r *ImageRelay) loadImage(payload, scope string, img *relayImage) (string, error) {
 	file, err := os.CreateTemp(r.dir, "image-")
 	if err != nil {
-		return nil, "", ErrImageRelayStorage
+		return "", ErrImageRelayStorage
 	}
 	img.path = file.Name()
 	defer func() { _ = file.Close() }()
@@ -438,39 +487,35 @@ func (r *ImageRelay) storeImage(raw, scope string) (*relayImage, string, error) 
 	if err != nil {
 		var corrupt base64.CorruptInputError
 		if errors.As(err, &corrupt) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, "", fmt.Errorf("basispoints inline image contains invalid base64 data")
+			return "", fmt.Errorf("basispoints inline image contains invalid base64 data")
 		}
-		return nil, "", ErrImageRelayStorage
+		return "", ErrImageRelayStorage
 	}
 	if n == 0 {
-		return nil, "", fmt.Errorf("basispoints inline image contains invalid base64 data")
+		return "", fmt.Errorf("basispoints inline image contains invalid base64 data")
 	}
 	if n > imageRelayMaxImageBytes {
-		return nil, "", fmt.Errorf("basispoints inline image exceeds the 20 MiB limit")
+		return "", fmt.Errorf("basispoints inline image exceeds the 20 MiB limit")
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, "", ErrImageRelayStorage
+		return "", ErrImageRelayStorage
 	}
 	dimensions, format, err := image.DecodeConfig(file)
 	if err != nil || dimensions.Width <= 0 || dimensions.Height <= 0 || int64(dimensions.Width)*int64(dimensions.Height) > imageRelayMaxPixels {
-		return nil, "", fmt.Errorf("basispoints inline image is invalid or exceeds 64 megapixels")
+		return "", fmt.Errorf("basispoints inline image is invalid or exceeds 64 megapixels")
 	}
 	detected := "image/" + format
 	switch detected {
 	case "image/png", "image/jpeg", "image/gif", "image/webp":
 	default:
-		return nil, "", fmt.Errorf("basispoints inline images must be PNG, JPEG, GIF or WebP")
+		return "", fmt.Errorf("basispoints inline images must be PNG, JPEG, GIF or WebP")
 	}
 	// Codex emits generic binary data URLs; serve only a verified image MIME.
-	if declared != "application/octet-stream" && detected != declared {
-		return nil, "", fmt.Errorf("basispoints inline image media type does not match its contents")
-	}
 	if err := file.Close(); err != nil {
-		return nil, "", ErrImageRelayStorage
+		return "", ErrImageRelayStorage
 	}
 	img.size, img.contentType = int(n), detected
-	success = true
-	return img, base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
 func (r *ImageRelay) discardLocked(img *relayImage) {
@@ -491,10 +536,24 @@ func (r *ImageRelay) releaseStagedLocked(img *relayImage) {
 	}
 	existing := img.reused
 	img.reused = nil
-	existing.pins--
-	if existing.pins == 0 && !time.Now().Before(existing.expires) {
-		if token := r.sources[existing.sourceKey]; r.entries[token] == existing {
-			r.removeLocked(token, existing)
+	r.releaseImagePinLocked(existing)
+}
+
+func (r *ImageRelay) releaseImagePinLocked(img *relayImage) {
+	img.pins--
+	if img.pins != 0 {
+		return
+	}
+	if img.reserved > 0 {
+		if r.pending[img.sourceKey] == img {
+			delete(r.pending, img.sourceKey)
+		}
+		r.discardLocked(img)
+		return
+	}
+	if !time.Now().Before(img.expires) {
+		if token := r.sources[img.sourceKey]; r.entries[token] == img {
+			r.removeLocked(token, img)
 		}
 	}
 }

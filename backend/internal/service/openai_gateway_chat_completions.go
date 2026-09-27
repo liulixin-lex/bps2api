@@ -807,6 +807,7 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			Stream:                        true,
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
+			streamReadIncomplete:          errors.Is(streamNonFailoverErr, apicompat.ErrChatStreamMetadataLimit),
 		}
 		if searchCount > 0 {
 			out.SearchCount = searchCount
@@ -926,7 +927,29 @@ func (s *OpenAIGatewayService) handleChatStreamingResponse(
 			return true
 		}
 
-		chunks := apicompat.ResponsesEventToChatChunks(&event, state)
+		chunks, conversionErr := apicompat.ResponsesEventToChatChunksChecked(&event, state)
+		if conversionErr != nil {
+			// An exhausted converter cannot safely forget earlier part identities.
+			// End this response explicitly; never replay it or synthesize success.
+			pendingSSE = nil
+			streamNonFailoverErr = fmt.Errorf("upstream Chat stream conversion failed: %w", conversionErr)
+			if !clientDisconnected {
+				payload, _ := json.Marshal(gin.H{"error": gin.H{
+					"type": "upstream_error", "code": "response_metadata_limit",
+					"message": "Upstream stream exceeded safe metadata limits",
+				}})
+				MarkResponseCommitted(c)
+				if !c.Writer.Written() {
+					c.Data(http.StatusBadGateway, "application/json", payload)
+				} else {
+					if _, err := fmt.Fprintf(c.Writer, "data: %s\n\ndata: [DONE]\n\n", payload); err != nil {
+						clientDisconnected = true
+					}
+					c.Writer.Flush()
+				}
+			}
+			return true
+		}
 		if !clientDisconnected {
 			for _, chunk := range chunks {
 				refusalDetector.ObserveChatChunk(chunk)
