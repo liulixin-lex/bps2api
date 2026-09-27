@@ -98,11 +98,13 @@ func TestImageRelayReclaimsCrashedSessionDirectories(t *testing.T) {
 func TestImageRelayDownloadConcurrencyIsBounded(t *testing.T) {
 	r, err := newTestImageRelay(t, "https://images.example")
 	require.NoError(t, err)
+	out, err := r.Rewrite(relayTestRequest(t, relayTestPNG(t)), "scope")
+	require.NoError(t, err)
 	for i := 0; i < cap(r.downloads); i++ {
 		r.downloads <- struct{}{}
 	}
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "https://images.example"+ImageRelayPath+strings.Repeat("a", 43), nil))
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, relayTestURL(t, out), nil))
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 	require.Equal(t, "1", w.Header().Get("Retry-After"))
 }

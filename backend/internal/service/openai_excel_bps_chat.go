@@ -89,23 +89,7 @@ func (w *excelBPSChatWriter) WriteString(value string) (int, error) {
 			w.pending = ""
 			return len(value), nil
 		}
-		var chunks []apicompat.ChatCompletionsChunk
-		// Some providers return text only in the terminal response. Emit it
-		// once before the finish chunk, but never repeat streamed text.
-		if (event.Type == "response.completed" || event.Type == "response.incomplete") && event.Response != nil && !w.state.SawText {
-			for _, item := range event.Response.Output {
-				if item.Type != "message" {
-					continue
-				}
-				for _, part := range item.Content {
-					if part.Type == "output_text" && part.Text != "" {
-						delta := apicompat.ResponsesStreamEvent{Type: "response.output_text.delta", Delta: part.Text}
-						chunks = append(chunks, apicompat.ResponsesEventToChatChunks(&delta, w.state)...)
-					}
-				}
-			}
-		}
-		chunks = append(chunks, apicompat.ResponsesEventToChatChunks(&event, w.state)...)
+		chunks := apicompat.ResponsesEventToChatChunks(&event, w.state)
 		for _, chunk := range chunks {
 			encoded, err := apicompat.ChatChunkToSSE(chunk)
 			if err != nil {

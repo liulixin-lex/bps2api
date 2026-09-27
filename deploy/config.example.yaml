@@ -533,6 +533,12 @@ gateway:
   # Image relay ingress protection, shared across HTTP gateway aliases.
   # Only active when excel_bps_image_relay_enabled is true. Process-local;
   # budgets are conservative reservations, not an RSS or global cluster limit.
+  # Retained image files expire after 30 minutes. Tune with measured disk/IO headroom.
+  image_relay_cache:
+    max_entries: 512
+    max_bytes: 1073741824
+    max_downloads: 32
+    download_timeout_seconds: 120
   image_relay_admission:
     decode_max_concurrent: 4
     decode_wait_milliseconds: 250 # bounded wait before reading any body

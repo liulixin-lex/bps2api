@@ -207,6 +207,7 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 			bpsImageAdmissionError(c, 413, "basispoints_image_body_too_large", "Request body exceeds the image relay ingress limit")
 			return
 		}
+		largeTextBody := false
 		reject := func(reason string, decoded, requested int64) {
 			db, dn := decode.snapshot()
 			pb, pn := processing.snapshot()
@@ -216,7 +217,11 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 				zap.Int64("requested_bytes", requested), zap.Int64("decode_bytes", db), zap.Int("decode_active", dn),
 				zap.Int64("processing_bytes", pb), zap.Int("processing_active", pn),
 				zap.Int64("processing_limit_bytes", processingLimit), zap.Int("active_limit", activeLimit))
-			bpsImageAdmissionError(c, 503, "basispoints_image_request_busy", "Image relay request capacity is busy; retry later")
+			if largeTextBody {
+				bpsImageAdmissionError(c, 503, "gateway_body_capacity_busy", "Large request body capacity is busy; retry later")
+			} else {
+				bpsImageAdmissionError(c, 503, "basispoints_image_request_busy", "Image relay request capacity is busy; retry later")
+			}
 		}
 		// Bound waiting uploads independently. Image saturation must not reject
 		// text/tool requests before we can inspect their bounded decoded body.
@@ -260,10 +265,12 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 			return
 		}
 		decoded := int64(len(body))
-		// Most Responses calls do not contain inline images. Keep their body
-		// intact, but release the decode/ingress leases before handing off so
-		// ordinary text traffic never consumes the image processing capacity.
-		if !bpsImageRequestNeedsRelay(body) {
+		// Small text/tool requests retain their independent headroom. Large
+		// histories still occupy memory while waiting for the scheduler/upstream,
+		// even when they contain only text, HTTPS images or file references.
+		needsRelay := bpsImageRequestNeedsRelay(body)
+		largeTextBody = !needsRelay && decoded >= int64(bpsImageMinBodyBytes)
+		if !needsRelay && !largeTextBody {
 			c.Request.Body = httputil.NewPrereadBody(body)
 			c.Request.ContentLength = decoded
 			c.Request.Header.Del("Content-Encoding")

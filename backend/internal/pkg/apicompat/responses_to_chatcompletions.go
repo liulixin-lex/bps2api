@@ -126,7 +126,9 @@ type ResponsesEventToChatState struct {
 	Finalized              bool        // true after finish chunk has been emitted
 	NextToolCallIndex      int         // next sequential tool_call index to assign
 	OutputIndexToToolIndex map[int]int // Responses output_index → Chat tool_calls index
-	OutputIndexToArguments map[int]string
+	argumentPrefixes       map[int]*chatStreamPrefix
+	textPrefixes           map[chatTextPart]*chatStreamPrefix
+	textPartAliases        map[responsesTextPart]string
 	IncludeUsage           bool
 	Usage                  *ChatUsage
 }
@@ -137,18 +139,25 @@ func NewResponsesEventToChatState() *ResponsesEventToChatState {
 		ID:                     generateChatCmplID(),
 		Created:                time.Now().Unix(),
 		OutputIndexToToolIndex: make(map[int]int),
-		OutputIndexToArguments: make(map[int]string),
+		argumentPrefixes:       make(map[int]*chatStreamPrefix),
+		textPrefixes:           make(map[chatTextPart]*chatStreamPrefix),
+		textPartAliases:        make(map[responsesTextPart]string),
 	}
 }
 
 // ResponsesEventToChatChunks converts a single Responses SSE event into zero
 // or more Chat Completions chunks, updating state as it goes.
 func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	if state.Finalized {
+		return nil
+	}
 	switch evt.Type {
 	case "response.created":
 		return resToChatHandleCreated(evt, state)
 	case "response.output_text.delta":
 		return resToChatHandleTextDelta(evt, state)
+	case "response.output_text.done":
+		return resToChatRecoverText(evt.Text, evt, state)
 	case "response.output_item.added":
 		return resToChatHandleOutputItemAdded(evt, state)
 	case "response.function_call_arguments.delta",
@@ -244,6 +253,20 @@ func resToChatHandleTextDelta(evt *ResponsesStreamEvent, state *ResponsesEventTo
 		return nil
 	}
 	state.SawText = true
+	key := chatTextPartOf(evt, state)
+	prefix := state.textPrefixes[key]
+	if prefix == nil && key.itemID != "" {
+		fallback := chatTextPart{outputIndex: evt.OutputIndex, contentIndex: evt.ContentIndex}
+		if prior := state.textPrefixes[fallback]; prior != nil {
+			prefix = prior
+			delete(state.textPrefixes, fallback)
+		}
+	}
+	if prefix == nil {
+		prefix = &chatStreamPrefix{}
+	}
+	state.textPrefixes[key] = prefix
+	prefix.append(evt.Delta)
 	content := evt.Delta
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{Content: &content})}
 }
@@ -281,7 +304,12 @@ func resToChatHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 	if !ok {
 		return nil
 	}
-	state.OutputIndexToArguments[evt.OutputIndex] += evt.Delta
+	prefix := state.argumentPrefixes[evt.OutputIndex]
+	if prefix == nil {
+		prefix = &chatStreamPrefix{}
+		state.argumentPrefixes[evt.OutputIndex] = prefix
+	}
+	prefix.append(evt.Delta)
 
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{
 		ToolCalls: []ChatToolCall{{
@@ -303,13 +331,16 @@ func resToChatHandleFuncArgsDone(evt *ResponsesStreamEvent, state *ResponsesEven
 	if evt.Type == "response.custom_tool_call_input.done" {
 		completed = evt.Input
 	}
-	current := state.OutputIndexToArguments[evt.OutputIndex]
-	if completed == "" || !strings.HasPrefix(completed, current) || completed == current {
+	prefix := state.argumentPrefixes[evt.OutputIndex]
+	if prefix == nil {
+		prefix = &chatStreamPrefix{}
+		state.argumentPrefixes[evt.OutputIndex] = prefix
+	}
+	remainder, matches := prefix.remainder(completed)
+	if !matches || remainder == "" {
 		return nil
 	}
-
-	remainder := completed[len(current):]
-	state.OutputIndexToArguments[evt.OutputIndex] = completed
+	prefix.append(remainder)
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{
 		ToolCalls: []ChatToolCall{{
 			Index: &idx,
@@ -329,6 +360,7 @@ func resToChatHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 }
 
 func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
+	chunks := resToChatRecoverTerminalText(evt, state)
 	state.Finalized = true
 	finishReason := "stop"
 
@@ -362,7 +394,6 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 		finishReason = "tool_calls"
 	}
 
-	var chunks []ChatCompletionsChunk
 	chunks = append(chunks, makeChatFinishChunk(state, finishReason))
 
 	if state.IncludeUsage && state.Usage != nil {
