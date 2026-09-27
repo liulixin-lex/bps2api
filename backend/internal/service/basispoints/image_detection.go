@@ -29,8 +29,13 @@ func RequestHasInlineImages(raw []byte) bool {
 				continue
 			}
 			field.ForEach(func(_, part gjson.Result) bool {
-				rawURL := imageRelayJSONField(part, "image_url").Str
-				if imageRelayJSONField(part, "type").Str == "input_image" && len(rawURL) >= len("data:") && strings.EqualFold(rawURL[:len("data:")], "data:") {
+				kind := imageRelayJSONField(part, "type").Str
+				reference := imageRelayJSONField(part, "image_url")
+				rawURL := reference.Str
+				if reference.IsObject() {
+					rawURL = imageRelayJSONField(reference, "url").Str
+				}
+				if (kind == "input_image" || kind == "image_url") && len(rawURL) >= len("data:") && strings.EqualFold(rawURL[:len("data:")], "data:") {
 					found = true
 				}
 				return !found

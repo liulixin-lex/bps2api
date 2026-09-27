@@ -43,15 +43,17 @@ func TestIncidentBPSProtocolRecoveryBoundaries(t *testing.T) {
 		calls               int
 	}{
 		{"recover stream", metadata + bad, good, true, true, 2},
+		{"recover production sized initialization", incidentBPSFrame("response.created", map[string]any{"response": map[string]any{"id": "resp_rejected", "instructions": strings.Repeat("x", 95<<10)}}) + incidentBPSFrame("response.in_progress", map[string]any{"response": map[string]any{"id": "resp_rejected", "instructions": strings.Repeat("x", 95<<10)}}) + bad, good, true, true, 2},
+		{"recover after buffered reasoning", metadata + incidentBPSFrame("response.output_item.added", map[string]any{"item": map[string]any{"type": "reasoning", "id": "reason_hidden"}}) + bad, good, true, true, 2},
 		{"recover JSON", metadata + bad, good, false, true, 2},
 		{"recover missing raw marker", metadata + incidentBPSToolResponse("resp_rejected", "const r = await tools.exec_command({cmd: 'true'}); text(r);"), good, true, true, 2},
 		{"no source regeneration after text", metadata + textDelta + incidentBPSToolResponse("resp_rejected", "text(await tools.exec_command({cmd: 'true'}));"), good, true, false, 1},
 		{"one retry maximum", metadata + bad, bad, true, false, 2},
 		{"no retry after text", metadata + textDelta + bad, good, true, false, 1},
-		{"no retry after buffered text", textDelta + bad, good, false, false, 1},
+		{"recover before buffered text is delivered", textDelta + bad, good, false, true, 2},
 		{"no retry for provider failure", providerFailure, good, true, false, 1},
 		{"provider JSON attribution", providerFailure, good, false, false, 1},
-		{"no retry on metadata overflow", incidentBPSFrame("response.created", map[string]any{"padding": strings.Repeat("x", 70<<10)}) + bad, good, true, false, 1},
+		{"no retry on metadata overflow", incidentBPSFrame("response.created", map[string]any{"padding": strings.Repeat("x", 270<<10)}) + bad, good, true, false, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			first := &passthroughCloseTrackingReadCloser{Reader: strings.NewReader(tc.first)}

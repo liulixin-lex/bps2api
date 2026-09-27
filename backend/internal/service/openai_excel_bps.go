@@ -325,13 +325,9 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			payload := []byte(strings.TrimPrefix(line, "data: "))
 			kind := gjson.GetBytes(payload, "type").String()
 			protocolMessage := gjson.GetBytes(payload, "response.error.message").String()
-			// Regenerate a locally rejected envelope once, before any output.
-			// Raw source with a missing CUSTOM/FUNCTION_CODE marker is corrected
-			// by the model, never inferred, evaluated or dispatched by the gateway.
-			// Unknown tools, batches and structured-output failures stay errors.
-			correctable := strings.HasPrefix(protocolMessage, "basispoints tool transport code must contain one JSON client-tool envelope;") &&
-				(strings.Contains(protocolMessage, "format=json_object;") || strings.Contains(protocolMessage, "format=json_string;") || strings.Contains(protocolMessage, "format=text_or_code;") || strings.Contains(protocolMessage, "format=markdown;")) &&
-				strings.Contains(protocolMessage, "json_failure=") && !strings.Contains(protocolMessage, "json_failure=trailing_data")
+			// Retry only a local transport failure before any client output.
+			// No client tool has been dispatched; provider refusals are separate.
+			correctable := excelBPSCorrectableProtocolError(protocolMessage)
 			if correctable && kind == "response.failed" && gjson.GetBytes(payload, "response.error.code").String() == "basispoints_protocol_error" && attempt == 0 && !outputCommitted && ctx.Err() == nil {
 				instructions := gjson.GetBytes(originalBody, "instructions").String()
 				instructions += "\nTransport correction: the previous tool response was rejected before any client output or tool dispatch. Follow the exact catalog transport. For CUSTOM raw input, summary MUST be codex2api.custom/CATALOG_NAME. For a declared FUNCTION_CODE tool, summary MUST be codex2api.function_code/CATALOG_NAME and extended_summary MUST contain the other arguments as JSON. Use the exact catalog name including its namespace. For ordinary FUNCTION, serialize one valid JSON envelope with escaped strings. Do not repeat the rejected wrapper or use a prose summary for raw source. Never invent tool names or execute wrapper code."
@@ -349,7 +345,14 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 					return s.forwardExcelBPSAttempt(ctx, c, account, corrected, start, timeouts, attempt+1)
 				}
 			}
-			if openAIStreamDataStartsClientOutput(string(payload), kind) || openAIStreamEventTypeIsTerminal(kind) {
+			clientOutput := openAIStreamDataStartsClientOutput(string(payload), kind)
+			// Reasoning metadata may precede an invalid native call. Keep it in
+			// the existing bounded buffer until actual text/tool output starts.
+			if strings.HasPrefix(kind, "response.reasoning") || ((kind == "response.output_item.added" || kind == "response.output_item.done") && gjson.GetBytes(payload, "item.type").String() == "reasoning") {
+				clientOutput = false
+			}
+			// Non-streaming responses have delivered nothing until terminal.
+			if (stream && clientOutput) || openAIStreamEventTypeIsTerminal(kind) {
 				outputCommitted = true
 			}
 			s.parseSSEUsageBytes(payload, &result.Usage)
@@ -383,7 +386,10 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 				if _, err = pending.WriteString(line + "\n"); err != nil {
 					return result, err
 				}
-				if pending.Len() < 64<<10 {
+				// Production response.created/in_progress events each carry ~95 KiB
+				// of provider metadata. A 64 KiB cap disabled correction before
+				// any text or tool output. Keep both events within a bounded cap.
+				if pending.Len() < 256<<10 {
 					continue
 				}
 				// Bound metadata memory and permanently disarm recovery when flushed.

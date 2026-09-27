@@ -268,6 +268,13 @@ func (b *Bridge) rebuildNativeHistoryCall(item object) (object, error) {
 		"extended_summary": "The supplied client history contains this tool call; consume its recorded result without repeating it.",
 		"destructive":      false, "references": []any{},
 	}
+	// Rebuilt history must teach the same transport as the current catalog.
+	// A JSON wrapper around custom source causes subsequent quote/marker errors.
+	if text(item["type"]) == "custom_tool_call" {
+		outer["summary"] = customTransportPrefix + name
+		outer["code"] = envelope["input"]
+		outer["extended_summary"] = "{}"
+	}
 	if info, ok := b.tools[name]; ok && text(item["type"]) == "function_call" && supportsFunctionCodeTransport(name, info.Kind, info.Parameters) {
 		args, _ := envelope["arguments"].(object)
 		field := functionCodeTransportField(info.Parameters)

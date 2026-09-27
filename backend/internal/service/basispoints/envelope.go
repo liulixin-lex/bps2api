@@ -156,7 +156,7 @@ func decodeTransportEnvelope(value any) (object, error) {
 var catalogInvocation = regexp.MustCompile(`^(?:(?:return\s+)?await\s+|return\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*\(`)
 
 // recoverTransportEnvelope accepts one complete catalog invocation whose sole
-// argument is a JSON literal. It never evaluates code or extracts an object from
+// argument is a bounded JSON/JavaScript data literal. It never evaluates code or extracts an object from
 // a program, batch, incomplete call or trailing text. The callee selects the tool;
 // fields named name/arguments inside the literal remain ordinary tool arguments.
 func recoverTransportEnvelope(value any, catalog map[string]tool) (object, bool) {
@@ -211,10 +211,19 @@ func recoverTransportEnvelope(value any, catalog map[string]tool) (object, bool)
 	decoder := json.NewDecoder(strings.NewReader(argument))
 	decoder.UseNumber()
 	var literal any
-	if decoder.Decode(&literal) != nil {
-		return nil, false
+	offset := int64(0)
+	if decoder.Decode(&literal) == nil {
+		offset = decoder.InputOffset()
+	} else {
+		parser := literalParser{source: argument}
+		var err error
+		literal, err = parser.value(0)
+		if err != nil {
+			return nil, false
+		}
+		offset = int64(parser.pos)
 	}
-	tail := strings.TrimSpace(argument[decoder.InputOffset():])
+	tail := strings.TrimSpace(argument[offset:])
 	if !strings.HasPrefix(tail, ")") {
 		return nil, false
 	}

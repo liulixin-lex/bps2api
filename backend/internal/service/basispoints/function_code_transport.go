@@ -12,10 +12,14 @@ const functionCodeTransportPrefix = "codex2api.function_code/"
 // Executable text stays in a single native string rather than nested JSON.
 // A declared code field takes precedence; command fields must be unambiguous.
 func supportsFunctionCodeTransport(name, kind string, parameters any) bool {
-	if kind != "function" || name == "" || strings.ContainsAny(name, "/\\") || strings.IndexFunc(name, unicode.IsSpace) >= 0 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+	if kind != "function" || !validSourceTransportName(name) {
 		return false
 	}
 	return functionCodeTransportField(parameters) != ""
+}
+
+func validSourceTransportName(name string) bool {
+	return name != "" && !strings.ContainsAny(name, "/\\") && strings.IndexFunc(name, unicode.IsSpace) < 0 && strings.IndexFunc(name, unicode.IsControl) < 0
 }
 
 func functionCodeTransportField(parameters any) string {
@@ -26,7 +30,7 @@ func functionCodeTransportField(parameters any) string {
 	properties, _ := schema["properties"].(object)
 	isString := func(name string) bool {
 		field, _ := properties[name].(object)
-		return field["type"] == "string"
+		return schemaAcceptsSourceString(field, 0)
 	}
 	if isString("code") {
 		return "code"
@@ -40,7 +44,40 @@ func functionCodeTransportField(parameters any) string {
 			selected = name
 		}
 	}
+	// Some Responses clients wrap a raw custom tool as a function whose
+	// declared input is a string. Preserve that exact contract and payload.
+	if selected == "" && isString("input") {
+		return "input"
+	}
 	return selected
+}
+
+// Nullable string contracts remain valid when the supplied source is a string.
+// Only explicit string branches qualify; untyped or reference-only schemas do not.
+func schemaAcceptsSourceString(schema object, depth int) bool {
+	if depth > 4 {
+		return false
+	}
+	if schema["type"] == "string" {
+		return true
+	}
+	if types, ok := schema["type"].([]any); ok {
+		for _, kind := range types {
+			if kind == "string" {
+				return true
+			}
+		}
+	}
+	for _, keyword := range []string{"anyOf", "oneOf"} {
+		branches, _ := schema[keyword].([]any)
+		for _, branch := range branches {
+			child, _ := branch.(object)
+			if schemaAcceptsSourceString(child, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Keep executable text in the native code string. extended_summary carries only
@@ -53,7 +90,7 @@ func (b *Bridge) functionCodeTransportEnvelope(arguments object) (object, bool, 
 	}
 	name := strings.TrimPrefix(summary, functionCodeTransportPrefix)
 	info, allowed := b.tools[name]
-	if !allowed || !supportsFunctionCodeTransport(name, info.Kind, info.Parameters) {
+	if !validSourceTransportName(name) || !allowed || (info.Kind != "custom" && !supportsFunctionCodeTransport(name, info.Kind, info.Parameters)) {
 		return nil, true, fmt.Errorf("basispoints function code transport requires an exact catalog function with a declared string source parameter")
 	}
 	code, codeOK := arguments["code"].(string)
@@ -67,6 +104,15 @@ func (b *Bridge) functionCodeTransportEnvelope(arguments object) (object, bool, 
 	var args object
 	if decode([]byte(metadata), &args) != nil || args == nil {
 		return nil, true, fmt.Errorf("basispoints function code transport extended_summary must contain one JSON object")
+	}
+	// The marker identifies an exact registered tool, so a custom tool's raw
+	// source is unambiguous even if the model chose the function-code spelling.
+	// Nonempty metadata must never disappear during this lossless normalization.
+	if info.Kind == "custom" {
+		if len(args) != 0 {
+			return nil, true, fmt.Errorf("basispoints custom source transport cannot discard function metadata")
+		}
+		return object{"name": name, "input": code}, true, nil
 	}
 	field := functionCodeTransportField(info.Parameters)
 	if _, exists := args[field]; exists {

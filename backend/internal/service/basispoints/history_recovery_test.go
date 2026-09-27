@@ -35,17 +35,17 @@ func TestHistoryRecoveryPreservesCompleteCallsWithoutCurrentCatalog(t *testing.T
 				}
 			}
 			var envelope object
-			if err := decode([]byte(text(outer["code"])), &envelope); err != nil {
-				t.Fatal(err)
-			}
-			if envelope["name"] != "old.tools.execute" {
-				t.Fatalf("namespace lost: %+v", envelope)
-			}
 			if kind == "custom_tool_call" {
-				if envelope["input"] != call["input"] {
-					t.Fatal("custom input changed")
+				if outer["summary"] != customTransportPrefix+"old.tools.execute" || outer["code"] != call["input"] || outer["extended_summary"] != "{}" {
+					t.Fatal("custom input, namespace or declared raw transport changed")
 				}
 			} else {
+				if err := decode([]byte(text(outer["code"])), &envelope); err != nil {
+					t.Fatal(err)
+				}
+				if envelope["name"] != "old.tools.execute" {
+					t.Fatalf("namespace lost: %+v", envelope)
+				}
 				var want object
 				if err := decode([]byte(text(call["arguments"])), &want); err != nil {
 					t.Fatal(err)
