@@ -456,11 +456,28 @@ func (b *Bridge) translateDirectCatalogCall(native object) (object, error) {
 		}
 		envelope = object{"name": info.Name, "arguments": native["arguments"]}
 	case "custom":
-		if kind != "custom_tool_call" {
+		var input string
+		var valid bool
+		switch kind {
+		case "custom_tool_call":
+			input, valid = customToolInput(native["input"])
+		case "function_call":
+			// A model may use the function shape for an exact catalog custom
+			// tool. Recover only its single explicit input field, never infer
+			// source from arbitrary arguments or serialize an object as code.
+			arguments, ok := native["arguments"].(object)
+			if !ok {
+				if err := decode([]byte(text(native["arguments"])), &arguments); err != nil {
+					return nil, fmt.Errorf("basispoints direct custom function wrapper requires one string input")
+				}
+			}
+			if len(arguments) == 1 {
+				input, valid = arguments["input"].(string)
+			}
+		default:
 			return nil, fmt.Errorf("basispoints returned client custom tool %q as a %q; no tool was executed", info.Name, kind)
 		}
-		input, ok := native["input"].(string)
-		if !ok {
+		if !valid {
 			return nil, fmt.Errorf("basispoints direct custom tool input must be a string")
 		}
 		envelope = object{"name": info.Name, "input": input}
@@ -517,7 +534,7 @@ func (b *Bridge) finishClientToolCall(native object, info tool, envelope object,
 				value, found = candidate, true
 			}
 		}
-		input, ok := value.(string)
+		input, ok := customToolInput(value)
 		if !ok {
 			return nil, fmt.Errorf("basispoints custom tool input must be a string")
 		}
@@ -546,6 +563,21 @@ func (b *Bridge) finishClientToolCall(native object, info tool, envelope object,
 		result["encrypted_function_args"] = []string{}
 	}
 	return result, nil
+}
+
+// customToolInput unwraps one unambiguous function-style input object. Strings
+// are always opaque, including strings that themselves contain JSON. Additional
+// fields, nested wrappers and guessed source fields would lose intent and remain
+// errors. No source is interpreted or executed here.
+func customToolInput(value any) (string, bool) {
+	if input, ok := value.(string); ok {
+		return input, true
+	}
+	if wrapped, ok := value.(object); ok && len(wrapped) == 1 {
+		input, valid := wrapped["input"].(string)
+		return input, valid
+	}
+	return "", false
 }
 
 func (b *Bridge) translateResponse(response object) error {

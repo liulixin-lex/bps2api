@@ -140,7 +140,7 @@ func Prepare(raw []byte, scope string, replay *ReplayCache) ([]byte, *Bridge, er
 	if instructions := text(source["instructions"]); instructions != "" {
 		prologue = append(prologue, message("developer", instructions))
 	}
-	protocol := "This request comes from an external Responses client. Return assistant text. Do not call Excel, Office, workbook or connector tools."
+	protocol := "This request comes from an external Responses client. No client tools were declared. Return assistant text only. Do not call run_officejs, skills, Excel, Office, workbook, connector or any other native tools."
 	if len(catalog) > 0 {
 		protocol = "This request comes from an external Responses client. Use only the client tools in the catalog below. " +
 			"There is no live Excel workbook for this request. The proxy intercepts run_officejs as a transport and never executes Office code. " +
