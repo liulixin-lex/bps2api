@@ -1773,19 +1773,7 @@
             <span :class="['pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition', excelBPSEnabled ? 'translate-x-5' : 'translate-x-0']" />
           </button>
         </div>
-        <div v-if="excelBPSEnabled" class="mt-3 space-y-3">
-          <label class="flex items-center gap-2 text-sm">
-            <input v-model="excelBPSAllModels" type="checkbox" data-testid="excel-bps-all-models" />
-            <span>{{ t('admin.accounts.openai.excelBPSAllModels') }}</span>
-          </label>
-          <div v-if="!excelBPSAllModels" data-testid="excel-bps-model-selection">
-            <label class="input-label">{{ t('admin.accounts.openai.excelBPSModels') }}</label>
-            <ModelWhitelistSelector v-model="excelBPSModels" platform="openai" />
-            <button type="button" class="btn btn-secondary" data-testid="excel-bps-astra-only"
-              @click="excelBPSModels = ['gpt-6-astra']">{{ t('admin.accounts.openai.excelBPSAstraOnly') }}</button>
-            <p class="input-hint">{{ t('admin.accounts.openai.excelBPSModelsHint') }}</p>
-          </div>
-        </div>
+        <p v-if="excelBPSEnabled" data-testid="excel-bps-channel-policy" class="mt-3 input-hint">{{ t('admin.accounts.openai.excelBPSModelsHint') }}</p>
         <p v-if="excelBPSEnabled" class="mt-2 text-xs text-amber-600 dark:text-amber-400">{{ t('admin.accounts.openai.excelBPSNotice') }}</p>
         <div v-if="excelBPSEnabled && excelBPSPausedOn403At" data-testid="excel-bps-paused"
           class="mt-3 flex items-center justify-between gap-3 border-l-2 border-amber-500 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">

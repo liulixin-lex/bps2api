@@ -1204,9 +1204,9 @@ func TestBuildSchedulerMetadataAccount_KeepsExcelBPSModelSelection(t *testing.T)
 		astra, sol bool
 	}{
 		{"legacy", false, nil, true, true},
-		{"astra only", true, []string{"gpt-6-astra"}, true, false},
-		{"empty", true, []string{}, false, false},
-		{"null stays scoped", true, nil, false, false},
+		{"legacy astra metadata", true, []string{"gpt-6-astra"}, true, true},
+		{"empty legacy metadata", true, []string{}, true, true},
+		{"null legacy metadata", true, nil, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			account := service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Extra: map[string]any{"openai_excel_bps": true}}
@@ -1220,5 +1220,21 @@ func TestBuildSchedulerMetadataAccount_KeepsExcelBPSModelSelection(t *testing.T)
 			require.Equal(t, tc.astra, restored.IsExcelBPSEnabledForModel("gpt-6-astra"))
 			require.Equal(t, tc.sol, restored.IsExcelBPSEnabledForModel("gpt-6-sol"))
 		})
+	}
+}
+
+func TestBuildSchedulerMetadataAccountPreservesBPSPauseForScheduling(t *testing.T) {
+	for _, paused := range []any{"2026-09-27T00:00:00Z", nil} {
+		account := service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth,
+			Status: service.StatusActive, Schedulable: true,
+			Extra: map[string]any{"openai_excel_bps": true, service.OpenAIExcelBPSPausedOn403AtExtraKey: paused}}
+		payload, err := json.Marshal(buildSchedulerMetadataAccount(account))
+		require.NoError(t, err)
+		var restored service.Account
+		require.NoError(t, json.Unmarshal(payload, &restored))
+		require.Contains(t, restored.Extra, service.OpenAIExcelBPSPausedOn403AtExtraKey)
+		require.True(t, restored.IsExcelBPSConfigured())
+		require.False(t, restored.IsExcelBPSEnabled())
+		require.False(t, restored.IsSchedulable())
 	}
 }

@@ -121,7 +121,8 @@ func (w *excelBPSChatWriter) WriteString(value string) (int, error) {
 }
 
 func writeExcelBPSStreamFailure(c *gin.Context, chat *excelBPSChatRequest, output io.StringWriter, status int, code, message string) {
-	if chat == nil {
+	_, messages := output.(*excelBPSMessagesWriter)
+	if chat == nil && !messages {
 		writeOpenAICompactSSEFailureMessageWithType(c, status, code, message, excelBPSErrorType(status))
 		return
 	}

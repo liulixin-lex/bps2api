@@ -796,7 +796,10 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if mode == AccountTestModeBPSTools {
 		return s.testExcelBPSToolRoundtrip(c, account, modelID)
 	}
-	if account.IsExcelBPSEnabled() && s.openaiGatewayService != nil {
+	if account.IsExcelBPSConfigured() {
+		if s.openaiGatewayService == nil {
+			return s.sendErrorAndEnd(c, "Excel BPS gateway is unavailable")
+		}
 		return s.testExcelBPSAccountConnection(c, account, modelID, prompt)
 	}
 

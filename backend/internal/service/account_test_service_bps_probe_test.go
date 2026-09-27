@@ -151,7 +151,7 @@ func TestExcelBPSToolProbeRejectsIncompleteStages(t *testing.T) {
 	}
 }
 
-func TestExcelBPSToolProbeRejectsModelsOutsideBPS(t *testing.T) {
+func TestExcelBPSToolProbeUsesBPSRegardlessOfLegacyModelScope(t *testing.T) {
 	account := excelAccount()
 	account.Extra["openai_excel_bps_models"] = []string{"gpt-6-astra"}
 	upstream := &bpsProbeUpstream{}
@@ -159,8 +159,8 @@ func TestExcelBPSToolProbeRejectsModelsOutsideBPS(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/300/test", nil)
-	require.Error(t, svc.testExcelBPSToolRoundtrip(c, account, "gpt-5.6-sol"))
-	require.Empty(t, upstream.bodies, "probe must not fall back to another upstream")
+	require.NoError(t, svc.testExcelBPSToolRoundtrip(c, account, "gpt-5.6-sol"))
+	require.Len(t, upstream.bodies, 3, "all probe steps must stay on BPS")
 }
 
 func TestExcelBPSToolProbeModeDoesNotFallBackToNative(t *testing.T) {
@@ -187,17 +187,20 @@ func TestExcelBPSToolProbeStopsWhenBPSIsDisabledBetweenSteps(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), `"type":"test_complete"`)
 }
 
-func TestExcelBPSToolProbeRejectsNativeFallbackBeforeDispatch(t *testing.T) {
+func TestExcelBPSToolProbeConfiguredPauseDoesNotDispatchNative(t *testing.T) {
 	upstream := &bpsProbeUpstream{}
 	svc := bpsProbeTestService(upstream)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/300/test", nil)
 	c.Set(bpsAccountProbeRequiredContextKey, true)
-	body := []byte(`{"model":"gpt-6-astra","input":"test","tools":[{"type":"image_generation"}]}`)
-	_, err := svc.openaiGatewayService.Forward(c, c, excelAccount(), body)
-	require.ErrorContains(t, err, "probe path is unavailable")
+	account := excelAccount()
+	account.Extra[OpenAIExcelBPSPausedOn403AtExtraKey] = "2026-09-27T00:00:00Z"
+	body := []byte(`{"model":"gpt-6-astra","input":"test"}`)
+	_, err := svc.openaiGatewayService.Forward(c, c, account, body)
+	require.ErrorContains(t, err, "basispoints_routing_paused")
 	require.Empty(t, upstream.bodies)
+	require.Equal(t, "/basispoints/api/responses", GetActualOpenAIUpstreamEndpoint(c))
 }
 
 func TestBPSProbeExactCallRequiresPlaintextDeclaredTool(t *testing.T) {

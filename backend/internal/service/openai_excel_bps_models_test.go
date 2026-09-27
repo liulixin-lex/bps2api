@@ -22,7 +22,7 @@ func TestExcelBPSPauseKeepsConfiguredSwitch(t *testing.T) {
 	a.Extra[OpenAIExcelBPSPausedOn403AtExtraKey] = "2026-09-26 11:40:00+00"
 	require.Equal(t, true, a.Extra["openai_excel_bps"])
 	require.False(t, a.IsExcelBPSEnabled())
-	require.False(t, a.IsExcelBPSEnabledForModel("gpt-6-astra"))
+	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-astra"), "paused account must remain bound to BPS")
 	require.False(t, a.IsExcelBPSAutoDisableOn403Enabled())
 	delete(a.Extra, OpenAIExcelBPSPausedOn403AtExtraKey)
 	require.True(t, a.IsExcelBPSEnabled())
@@ -33,16 +33,16 @@ func TestExcelBPSModelSelection(t *testing.T) {
 	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-sol"), "legacy all-model setting")
 	a.Extra["openai_excel_bps_models"] = []any{"gpt-6-astra"}
 	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-astra"))
-	require.False(t, a.IsExcelBPSEnabledForModel("gpt-6-sol"))
-	require.False(t, a.IsExcelBPSEnabledForModel("gpt-6-astra-other"))
+	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-sol"))
+	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-astra-other"))
 	a.Credentials["model_mapping"] = map[string]any{"alias": "gpt-6-astra", "gpt-6-astra": "gpt-6-sol"}
 	require.True(t, a.IsExcelBPSEnabledForModel("alias"))
-	require.False(t, a.IsExcelBPSEnabledForModel("gpt-6-astra"), "selection matches mapped upstream")
+	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-astra"), "legacy scope cannot change the configured channel")
 	require.True(t, a.isExcelBPSUpstreamModelEnabled("gpt-6-astra"), "already mapped names must not map again")
 	for _, models := range []any{[]any{}, []string{}, nil, "gpt-6-astra", []any{42, false}} {
 		a.Extra["openai_excel_bps_models"] = models
-		require.False(t, a.IsExcelBPSEnabledForModel("alias"))
-		require.False(t, a.isExcelBPSAllModelsEnabled())
+		require.True(t, a.IsExcelBPSEnabledForModel("alias"))
+		require.True(t, a.isExcelBPSAllModelsEnabled())
 	}
 	a.Extra["openai_excel_bps_models"] = []string{" gpt-6-astra "}
 	require.True(t, a.IsExcelBPSEnabledForModel("alias"))
@@ -66,18 +66,13 @@ func TestExcelBPSSelectedModelForwarding(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.NotNil(t, upstream.lastReq)
-			if model == "gpt-6-astra" {
-				require.Equal(t, "bps.openai.com", upstream.lastReq.URL.Host)
-				require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
-			} else {
-				require.Equal(t, "chatgpt.com", upstream.lastReq.URL.Host)
-				require.Equal(t, "/backend-api/codex/responses", upstream.lastReq.URL.Path)
-			}
+			require.Equal(t, "bps.openai.com", upstream.lastReq.URL.Host)
+			require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
 		})
 	}
 }
 
-func TestExcelBPSSelectedModelsPreserveCodexTransportAndTickets(t *testing.T) {
+func TestExcelBPSLegacyModelsCannotRestoreCodexTransportAndTickets(t *testing.T) {
 	a := excelAccount()
 	a.Extra["openai_excel_bps_models"] = []string{"gpt-6-astra"}
 	a.Extra["openai_oauth_responses_websockets_v2_mode"] = OpenAIWSIngressModeCtxPool
@@ -88,27 +83,26 @@ func TestExcelBPSSelectedModelsPreserveCodexTransportAndTickets(t *testing.T) {
 	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
 	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
 	svc := &OpenAIGatewayService{cfg: cfg}
-	require.False(t, a.IsOpenAIWSForceHTTPEnabled())
-	require.True(t, a.IsOpenAIResponsesWebSocketV2Enabled())
-	require.Equal(t, OpenAIWSIngressModeCtxPool, a.ResolveOpenAIResponsesWebSocketV2Mode("off"))
+	require.True(t, a.IsOpenAIWSForceHTTPEnabled())
+	require.False(t, a.IsOpenAIResponsesWebSocketV2Enabled())
+	require.Equal(t, OpenAIWSIngressModeOff, a.ResolveOpenAIResponsesWebSocketV2Mode("ctx_pool"))
 	for _, transport := range []OpenAIUpstreamTransport{OpenAIUpstreamTransportResponsesWebsocketV2, OpenAIUpstreamTransportResponsesWebsocketV2Ingress} {
 		require.False(t, svc.isOpenAIAccountTransportCompatible(a, transport, "gpt-6-astra"))
-		require.True(t, svc.isOpenAIAccountTransportCompatible(a, transport, "gpt-6-sol"))
+		require.False(t, svc.isOpenAIAccountTransportCompatible(a, transport, "gpt-6-sol"))
 	}
 	require.True(t, svc.isOpenAIAccountTransportCompatible(a, OpenAIUpstreamTransportHTTPSSE, "gpt-6-astra"))
-	require.True(t, isOpenAICodexTicketAccount(a))
+	require.False(t, isOpenAICodexTicketAccount(a))
 	require.False(t, isOpenAICodexTicketAccount(a, "gpt-6-astra"))
-	require.True(t, isOpenAICodexTicketAccount(a, "gpt-6-sol"))
+	require.False(t, isOpenAICodexTicketAccount(a, "gpt-6-sol"))
 	cfg.Gateway.OpenAICodexTicket.Enabled = true
 	cfg.Gateway.OpenAICodexTicket.FailClosed = true
 	cfg.Gateway.OpenAICodexTicket.Models = []string{"gpt-6-astra", "gpt-6-sol"}
 	require.False(t, svc.openAICodexTicketBlocksAccount(a, "gpt-6-astra"))
-	require.True(t, svc.openAICodexTicketBlocksAccount(a, "gpt-6-sol"))
+	require.False(t, svc.openAICodexTicketBlocksAccount(a, "gpt-6-sol"))
 	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), a, "gpt-6-astra", http.Header{}))
-	require.Error(t, svc.applyOpenAICodexTicket(context.Background(), a, "gpt-6-sol", http.Header{}))
+	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), a, "gpt-6-sol", http.Header{}))
 	statuses := OpenAICodexTicketStatuses(a, cfg.Gateway.OpenAICodexTicket, time.Now())
-	require.Len(t, statuses, 1)
-	require.Equal(t, "gpt-6-sol", statuses[0].Model)
+	require.Empty(t, statuses)
 	before := openAITurnRouteFingerprint(a)
 	a.Extra["openai_excel_bps_models"] = []string{"gpt-6-sol"}
 	require.NotEqual(t, before, openAITurnRouteFingerprint(a))

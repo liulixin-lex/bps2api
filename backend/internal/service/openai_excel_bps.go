@@ -173,10 +173,18 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 }
 
 func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time, timeouts config.ExcelBPSTimeoutConfig, attempt int) (*OpenAIForwardResult, error) {
+	// Record the selected provider before any local rewrite/validation. This
+	// keeps request errors (including image-shape validation) attributable to
+	// the BPS channel instead of the generic /v1/responses fallback label.
+	SetActualOpenAIUpstreamEndpoint(c, "/basispoints/api/responses")
+	c.Header("X-Codex2API-Upstream", "basispoints")
 	chat := excelBPSChatFromContext(ctx)
+	messages := excelBPSMessagesFromContext(ctx)
 	var downstream io.StringWriter = c.Writer
 	if chat != nil {
 		downstream = newExcelBPSChatWriter(c.Writer, chat.OriginalModel, chat.IncludeUsage)
+	} else if messages != nil {
+		downstream = newExcelBPSMessagesWriter(c.Writer, messages.OriginalModel)
 	}
 	// The normal sjson helpers and protocol/image rewrites allocate new output.
 	// Retain the immutable ingress slice for the bounded retry; cloning a
@@ -193,14 +201,21 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			if status == http.StatusServiceUnavailable && c.Writer.Header().Get("Retry-After") == "" {
 				c.Header("Retry-After", "1")
 			}
-			c.JSON(status, gin.H{"error": gin.H{"type": excelBPSErrorType(status), "code": code, "message": message}})
+			writeExcelBPSJSONError(c, messages, status, code, message)
 		}
 		return nil, fmt.Errorf("excel BPS: %s", code)
+	}
+	// A denied BPS account remains a BPS account until the administrator
+	// disables the switch. Honor the pause without silently selecting Codex.
+	if _, paused := account.Extra[OpenAIExcelBPSPausedOn403AtExtraKey]; paused {
+		return fail(http.StatusForbidden, "basispoints_routing_paused", "Excel BPS routing is paused after an upstream permission rejection; review the account permission and re-enable BPS to resume")
 	}
 	originalModel := gjson.GetBytes(body, "model").String()
 	model := account.GetMappedModel(originalModel)
 	if chat != nil {
 		originalModel, model = chat.OriginalModel, chat.UpstreamModel
+	} else if messages != nil {
+		originalModel, model = messages.OriginalModel, messages.UpstreamModel
 	}
 	stream := gjson.GetBytes(body, "stream").Bool()
 	var err error
@@ -277,7 +292,6 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	if account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	SetActualOpenAIUpstreamEndpoint(c, "/basispoints/api/responses")
 	SetOpsUpstreamModel(c, model)
 	sent := time.Now()
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
@@ -365,6 +379,8 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	result := &OpenAIForwardResult{Model: originalModel, UpstreamModel: model, UpstreamEndpoint: "/basispoints/api/responses", Stream: stream, ReasoningEffort: &bridge.Effort, RequestedReasoningEffort: requestedEffort, RequestID: resp.Header.Get("x-request-id")}
 	if chat != nil {
 		result.BillingModel = chat.BillingModel
+	} else if messages != nil {
+		result.BillingModel = messages.BillingModel
 	}
 	if stream {
 		c.Header("Content-Type", "text/event-stream")
@@ -396,7 +412,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	// disconnects. They must never trigger replay or a successful terminal.
 	downstreamFailure := func(writeErr error) (*OpenAIForwardResult, error) {
 		result.Duration = time.Since(start)
-		if !errors.Is(writeErr, apicompat.ErrChatStreamMetadataLimit) {
+		if !errors.Is(writeErr, apicompat.ErrChatStreamMetadataLimit) && !errors.Is(writeErr, errExcelBPSMessagesConversion) {
 			result.ClientDisconnect = true
 			return result, writeErr
 		}
@@ -411,9 +427,9 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			writeExcelBPSStreamFailure(c, chat, downstream, http.StatusBadGateway, code, message)
 		} else {
 			c.Header("Content-Type", "application/json")
-			c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": excelBPSErrorType(http.StatusBadGateway), "code": code, "message": message}})
+			writeExcelBPSJSONError(c, messages, http.StatusBadGateway, code, message)
 		}
-		return result, fmt.Errorf("excel BPS Chat conversion failed: %w", writeErr)
+		return result, fmt.Errorf("excel BPS response conversion failed: %w", writeErr)
 	}
 	var completed []byte
 	terminal := ""
@@ -578,7 +594,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 				writeExcelBPSStreamFailure(c, chat, downstream, 504, code, message)
 			} else {
 				c.Header("Content-Type", "application/json")
-				c.JSON(504, gin.H{"error": gin.H{"type": "server_error", "code": code, "message": message}})
+				writeExcelBPSJSONError(c, messages, 504, code, message)
 			}
 			return result, fmt.Errorf("excel BPS stream timeout: %w", err)
 		}
@@ -592,7 +608,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			_, _ = downstream.WriteString("event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"basispoints_stream_incomplete\",\"message\":\"Upstream stream ended before completion\"}}}\n\n")
 			c.Writer.Flush()
 		} else {
-			c.JSON(502, gin.H{"error": gin.H{"code": "basispoints_stream_incomplete", "message": "Excel BPS stream ended before completion"}})
+			writeExcelBPSJSONError(c, messages, 502, "basispoints_stream_incomplete", "Excel BPS stream ended before completion")
 		}
 		return result, fmt.Errorf("excel BPS stream incomplete")
 	}
@@ -603,7 +619,8 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			return result, failure
 		}
 	}
-	if terminal == "response.incomplete" {
+	messagesMaxTokens := messages != nil && terminal == "response.incomplete" && excelBPSIncompleteReason(completed) == "max_output_tokens"
+	if terminal == "response.incomplete" && !messagesMaxTokens {
 		reason := excelBPSIncompleteReason(completed)
 		message := "Excel BPS response incomplete: " + reason
 		detail, _ := json.Marshal(map[string]any{"event": terminal, "reason": reason,
@@ -619,6 +636,13 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 		MarkResponseCommitted(c)
 	}
 	if !stream {
+		if messages != nil && terminal == "response.incomplete" {
+			reason := excelBPSIncompleteReason(completed)
+			if reason != "max_output_tokens" {
+				writeExcelBPSJSONError(c, messages, http.StatusBadGateway, "basispoints_response_incomplete", "Excel BPS did not complete the response")
+				return result, fmt.Errorf("excel BPS Messages incomplete: %s", reason)
+			}
+		}
 		if terminal == "response.completed" || (terminal == "response.incomplete" && gjson.ParseBytes(completed).IsObject()) {
 			// An explicit incomplete response is a native Responses terminal,
 			// including its partial answer, usage and incomplete_details. Keep
@@ -629,14 +653,18 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 					return fail(502, "basispoints_chat_invalid", "Invalid BPS final response")
 				}
 				c.JSON(http.StatusOK, apicompat.ResponsesToChatCompletions(&response, chat.OriginalModel))
+			} else if messages != nil {
+				if err := writeExcelBPSMessagesResponse(c, completed, messages); err != nil {
+					return fail(502, "basispoints_messages_invalid", "Invalid BPS final response")
+				}
 			} else {
 				c.Data(http.StatusOK, "application/json", completed)
 			}
 		} else {
-			c.JSON(502, gin.H{"error": gin.H{"code": terminalCode, "message": "Excel BPS did not complete the response"}})
+			writeExcelBPSJSONError(c, messages, 502, terminalCode, "Excel BPS did not complete the response")
 		}
 	}
-	if terminal != "response.completed" {
+	if terminal != "response.completed" && !messagesMaxTokens {
 		return result, fmt.Errorf("excel BPS terminal: %s", terminal)
 	}
 	s.bindHTTPResponseAccount(ctx, c, account, result.ResponseID)

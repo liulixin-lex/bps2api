@@ -130,59 +130,31 @@ describe('BulkEditAccountModal', () => {
       expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { status: 'active' })
     })
 
-    it('enables BPS for Astra by default without changing other protocol settings', async () => {
+    it('enables the BPS channel without overwriting legacy model metadata', async () => {
       const wrapper = mountModal(oauthProps)
       await enableBPS(wrapper)
+      expect(wrapper.find('[data-testid="bulk-excel-bps-model-selection"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="bulk-excel-bps-channel-policy"]').exists()).toBe(true)
       await submit(wrapper)
       expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
         extra: {
           openai_excel_bps: true,
-          openai_excel_bps_models: ['gpt-6-astra'],
           openai_excel_bps_cache_creation_as_input: false
         }
       })
     })
 
-    it('submits normalized selected models and cache creation billing', async () => {
+    it('keeps cache creation billing configurable on the BPS channel', async () => {
       const wrapper = mountModal(oauthProps)
       await enableBPS(wrapper)
-      wrapper.get('[data-testid="bulk-excel-bps-model-selection"]')
-        .getComponent(ModelWhitelistSelector).vm.$emit('update:modelValue', [' gpt-6-sol ', 'gpt-6-astra', 'gpt-6-sol', ' '])
       await wrapper.get('[data-testid="bulk-excel-bps-cache-creation-as-input"]').setValue(true)
       await submit(wrapper)
       expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
         extra: {
           openai_excel_bps: true,
-          openai_excel_bps_models: ['gpt-6-sol', 'gpt-6-astra'],
           openai_excel_bps_cache_creation_as_input: true
         }
       })
-    })
-
-    it.each([false, true])('preserves the distinction between empty and all models: all=%s', async (allModels) => {
-      const wrapper = mountModal(oauthProps)
-      await enableBPS(wrapper)
-      wrapper.get('[data-testid="bulk-excel-bps-model-selection"]')
-        .getComponent(ModelWhitelistSelector).vm.$emit('update:modelValue', [])
-      await wrapper.get('[data-testid="bulk-excel-bps-all-models"]').setValue(allModels)
-      await submit(wrapper)
-      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-        extra: {
-          openai_excel_bps: true,
-          openai_excel_bps_models: allModels ? null : [],
-          openai_excel_bps_cache_creation_as_input: false
-        }
-      })
-    })
-
-    it('restores Astra-only selection with the shortcut', async () => {
-      const wrapper = mountModal(oauthProps)
-      await enableBPS(wrapper)
-      const selector = wrapper.get('[data-testid="bulk-excel-bps-model-selection"]').getComponent(ModelWhitelistSelector)
-      selector.vm.$emit('update:modelValue', ['gpt-6-sol'])
-      await nextTick()
-      await wrapper.get('[data-testid="bulk-excel-bps-astra-only"]').trigger('click')
-      expect(selector.props('modelValue')).toEqual(['gpt-6-astra'])
     })
 
     it('explicitly disables BPS and clears subordinate settings', async () => {
@@ -203,17 +175,13 @@ describe('BulkEditAccountModal', () => {
     it('resets BPS controls when the modal is reopened', async () => {
       const wrapper = mountModal(oauthProps)
       await enableBPS(wrapper)
-      wrapper.get('[data-testid="bulk-excel-bps-model-selection"]')
-        .getComponent(ModelWhitelistSelector).vm.$emit('update:modelValue', ['gpt-6-sol'])
-      await wrapper.get('[data-testid="bulk-excel-bps-all-models"]').setValue(true)
       await wrapper.get('[data-testid="bulk-excel-bps-cache-creation-as-input"]').setValue(true)
       await wrapper.setProps({ show: false })
       await wrapper.setProps({ show: true })
       expect((wrapper.get('#bulk-edit-excel-bps-enabled').element as HTMLInputElement).checked).toBe(false)
       expect(wrapper.get('[data-testid="bulk-excel-bps-toggle"]').attributes('aria-checked')).toBe('false')
       await enableBPS(wrapper)
-      expect(wrapper.get('[data-testid="bulk-excel-bps-model-selection"]').getComponent(ModelWhitelistSelector).props('modelValue'))
-        .toEqual(['gpt-6-astra'])
+      expect(wrapper.find('[data-testid="bulk-excel-bps-model-selection"]').exists()).toBe(false)
       expect((wrapper.get('[data-testid="bulk-excel-bps-cache-creation-as-input"]').element as HTMLInputElement).checked).toBe(false)
     })
 
@@ -241,7 +209,6 @@ describe('BulkEditAccountModal', () => {
         filters,
         extra: {
           openai_excel_bps: true,
-          openai_excel_bps_models: ['gpt-6-astra'],
           openai_excel_bps_cache_creation_as_input: false
         }
       })

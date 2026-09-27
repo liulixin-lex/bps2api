@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 	"go.uber.org/zap"
 )
 
@@ -106,6 +107,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 2. Model mapping
 	billingModel := resolveOpenAIForwardModel(account, normalizedModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
+	useExcelBPS := account.IsExcelBPSEnabledForModel(upstreamModel)
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
 	apiKeyID := getAPIKeyIDFromContext(c)
 	anthropicDigestChain := ""
@@ -141,7 +143,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 	compatReplayTrimmed := false
 	compatReplayGuardEnabled := shouldAutoInjectPromptCacheKeyForCompat(upstreamModel)
-	compatContinuationEnabled := openAICompatContinuationEnabled(account, upstreamModel)
+	compatContinuationEnabled := !useExcelBPS && openAICompatContinuationEnabled(account, upstreamModel)
 	previousResponseID := ""
 	if compatContinuationEnabled {
 		previousResponseID = s.getOpenAICompatSessionResponseID(ctx, c, account, promptCacheKey)
@@ -222,7 +224,7 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 		return nil, fmt.Errorf("marshal responses request: %w", err)
 	}
 
-	if account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
+	if !useExcelBPS && account.UsesOpenAICodexProtocol() && account.Platform != PlatformGrok {
 		var reqBody map[string]any
 		if err := json.Unmarshal(responsesBody, &reqBody); err != nil {
 			return nil, fmt.Errorf("unmarshal for codex transform: %w", err)
@@ -333,6 +335,24 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	}
 	responsesBody = updatedBody
 	responsesReq.ServiceTier = normalizedOpenAIServiceTierValue(gjson.GetBytes(responsesBody, "service_tier").String())
+	if useExcelBPS {
+		// Preserve the client Messages response contract while enforcing the
+		// same BPS-only account route as Responses and Chat Completions.
+		responsesBody, err = sjson.SetBytes(responsesBody, "stream", clientStream)
+		if err != nil {
+			return nil, err
+		}
+		if promptCacheKey != "" {
+			responsesBody, err = sjson.SetBytes(responsesBody, "prompt_cache_key", promptCacheKey)
+			if err != nil {
+				return nil, err
+			}
+		}
+		messagesCtx := context.WithValue(ctx, excelBPSMessagesContextKey{}, &excelBPSMessagesRequest{
+			OriginalModel: originalModel, BillingModel: billingModel, UpstreamModel: upstreamModel,
+		})
+		return s.forwardExcelBPS(messagesCtx, c, account, responsesBody, startTime)
+	}
 	grokCacheIdentity := ""
 	if account.Platform == PlatformGrok {
 		grokIntentBody := responsesBody

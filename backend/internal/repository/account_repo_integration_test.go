@@ -1763,9 +1763,9 @@ func (s *AccountRepoSuite) TestBulkUpdate_ExcelBPSModelScope() {
 		scopePresent        bool
 	}{
 		{map[string]any{"openai_excel_bps_models": nil, "openai_excel_bps_cache_creation_as_input": false}, true, true, false, false},
-		{map[string]any{"openai_excel_bps_models": []string{}}, false, false, false, true},
-		{map[string]any{"openai_excel_bps_models": []string{"gpt-6-astra"}, "openai_excel_bps_cache_creation_as_input": true}, true, false, true, true},
-		{map[string]any{"unrelated": "preserved"}, true, false, true, true},
+		{map[string]any{"openai_excel_bps_models": []string{}}, true, true, false, true},
+		{map[string]any{"openai_excel_bps_models": []string{"gpt-6-astra"}, "openai_excel_bps_cache_creation_as_input": true}, true, true, true, true},
+		{map[string]any{"unrelated": "preserved"}, true, true, true, true},
 		{map[string]any{"openai_excel_bps": false}, false, false, false, false},
 	}
 	for _, step := range steps {

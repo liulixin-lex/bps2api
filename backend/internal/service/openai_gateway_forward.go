@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
-	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requesttiming"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -79,17 +78,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	}
 
 	modelForBPS := gjson.GetBytes(body, "model").String()
-	if c.GetBool(bpsAccountProbeRequiredContextKey) &&
-		(!account.IsExcelBPSEnabledForModel(modelForBPS) || basispoints.NativeFallbackReason(body) != "") {
+	if c.GetBool(bpsAccountProbeRequiredContextKey) && !account.IsExcelBPSEnabledForModel(modelForBPS) {
 		return nil, errors.New("bps probe path is unavailable")
 	}
 	if account.IsExcelBPSEnabledForModel(modelForBPS) {
-		reason := basispoints.NativeFallbackReason(body)
-		if reason == "" {
-			return s.forwardExcelBPS(ctx, c, account, body, startTime)
-		}
-		c.Header("X-Codex2API-Upstream", "codex")
-		c.Header("X-Codex2API-Basispoints-Bypass", reason)
+		// The account switch is an explicit channel choice. Once Excel/BPS is
+		// enabled, every request for the mapped model enters the BPS bridge;
+		// unsupported optional fields are normalized or rejected by that bridge
+		// instead of silently changing the provider endpoint.
+		c.Header("X-Codex2API-Upstream", "basispoints")
+		return s.forwardExcelBPS(ctx, c, account, body, startTime)
 	}
 
 	// The SDK adapter owns Lite declarations, custom tools, replay item IDs,
