@@ -36,7 +36,7 @@ const ImageRelayDecodeReservationBytes int64 = 512 << 20
 
 func (c ImageRelayAdmissionConfig) WithDefaults() ImageRelayAdmissionConfig {
 	if c.DecodeMaxConcurrent == 0 {
-		c.DecodeMaxConcurrent = 1
+		c.DecodeMaxConcurrent = 4
 	}
 	if c.DecodeWaitMilliseconds == 0 {
 		c.DecodeWaitMilliseconds = 250

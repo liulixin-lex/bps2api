@@ -534,7 +534,7 @@ gateway:
   # Only active when excel_bps_image_relay_enabled is true. Process-local;
   # budgets are conservative reservations, not an RSS or global cluster limit.
   image_relay_admission:
-    decode_max_concurrent: 1
+    decode_max_concurrent: 4
     decode_wait_milliseconds: 250 # bounded wait before reading any body
     decode_budget_bytes: 536870912
     processing_budget_bytes: 1073741824

@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -13,6 +12,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -78,8 +78,8 @@ func (b *bpsImageAdmissionBudget) reserveConfigured(weight, limitBytes int64, ma
 	return b.reserveLocked(weight)
 }
 
-// Waiters already hold a processing lease, so their number is bounded by the
-// active-request limit. No request body is read or buffered while waiting.
+// Waiters hold an ingress slot, so their number is bounded independently of
+// long-lived image requests. No body is read or buffered while waiting.
 // A short wait absorbs decode microbursts without increasing peak memory.
 func (b *bpsImageAdmissionBudget) reserveWaiting(ctx context.Context, weight int64, wait time.Duration) (*bpsImageReservation, bool) {
 	deadline := time.Now().Add(wait)
@@ -166,6 +166,7 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 	}
 	cfg = cfg.WithDefaults()
 	decode := &bpsImageAdmissionBudget{maxBytes: cfg.DecodeBudgetBytes, maxRequests: cfg.DecodeMaxConcurrent}
+	ingress := &bpsImageAdmissionBudget{maxBytes: 1, maxRequests: max(cfg.MaxConcurrentRequests, cfg.DecodeMaxConcurrent)}
 	processing := &bpsImageAdmissionBudget{maxBytes: cfg.ProcessingBudgetBytes, maxRequests: cfg.MaxConcurrentRequests}
 	bodyCeiling := int64(bpsImageMaxBodyBytes)
 	if configuredMax > 0 && configuredMax < bodyCeiling {
@@ -217,30 +218,31 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 				zap.Int64("processing_limit_bytes", processingLimit), zap.Int("active_limit", activeLimit))
 			bpsImageAdmissionError(c, 503, "basispoints_image_request_busy", "Image relay request capacity is busy; retry later")
 		}
-		// Reject a full process before reading more bodies or using a decoder.
-		processLease, ok := processing.reserveConfigured(bpsImageMinBodyBytes*bpsImageBodyMultiplier, processingLimit, activeLimit)
+		// Bound waiting uploads independently. Image saturation must not reject
+		// text/tool requests before we can inspect their bounded decoded body.
+		ingressLease, ok := ingress.reserve(0)
 		if !ok {
-			_, active := processing.snapshot()
-			reason := "processing_bytes"
-			if active >= activeLimit {
-				reason = "active_requests"
-			}
-			reject(reason, -1, bpsImageMinBodyBytes*bpsImageBodyMultiplier)
+			reject("ingress_capacity", -1, 0)
 			return
 		}
-		defer processLease.release()
-		decodeLease, ok := decode.reserveWaiting(c.Request.Context(), config.ImageRelayDecodeReservationBytes, time.Duration(cfg.DecodeWaitMilliseconds)*time.Millisecond)
+		defer ingressLease.release()
+		decodeWeight := bpsImageDecodeWeight(wireLength, encoding, maxBody)
+		decodeLease, ok := decode.reserveWaiting(c.Request.Context(), decodeWeight, time.Duration(cfg.DecodeWaitMilliseconds)*time.Millisecond)
 		if !ok {
 			if c.Request.Context().Err() != nil {
 				c.Abort()
 				return
 			}
-			reject("decode_capacity", -1, config.ImageRelayDecodeReservationBytes)
+			reject("decode_capacity", -1, decodeWeight)
 			return
 		}
 		defer decodeLease.release()
 		started := time.Now()
-		body, err := readBPSAdmissionBody(c, maxBody, time.Duration(cfg.BodyReadTimeoutSeconds)*time.Second)
+		readLimit := maxBody
+		if wireLength > 0 && (encoding == "" || encoding == "identity") {
+			readLimit = min(readLimit, wireLength)
+		}
+		body, err := readBPSAdmissionBody(c, readLimit, time.Duration(cfg.BodyReadTimeoutSeconds)*time.Second)
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			var timeout net.Error
@@ -259,23 +261,30 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 		}
 		decoded := int64(len(body))
 		// Most Responses calls do not contain inline images. Keep their body
-		// intact, but release the image processing lease before handing off so
-		// ordinary text traffic cannot consume image relay capacity.
+		// intact, but release the decode/ingress leases before handing off so
+		// ordinary text traffic never consumes the image processing capacity.
 		if !bpsImageRequestNeedsRelay(body) {
 			c.Request.Body = httputil.NewPrereadBody(body)
 			c.Request.ContentLength = decoded
 			c.Request.Header.Del("Content-Encoding")
 			c.Request.Header.Del("Content-Length")
 			decodeLease.release()
-			processLease.release()
+			ingressLease.release()
 			c.Next()
 			return
 		}
 		weight := max(decoded, int64(bpsImageMinBodyBytes)) * bpsImageBodyMultiplier
-		if !processLease.resize(weight) {
-			reject("processing_bytes", decoded, weight)
+		processLease, ok := processing.reserveConfigured(weight, processingLimit, activeLimit)
+		if !ok {
+			_, active := processing.snapshot()
+			reason := "processing_bytes"
+			if active >= activeLimit {
+				reason = "active_requests"
+			}
+			reject(reason, decoded, weight)
 			return
 		}
+		defer processLease.release()
 		// Downstream retains body slices for retries/capture: hold the actual-body
 		// lease through c.Next, never just until response headers arrive.
 		c.Request.Body = httputil.NewPrereadBody(body)
@@ -283,6 +292,7 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 		c.Request.Header.Del("Content-Encoding")
 		c.Request.Header.Del("Content-Length")
 		decodeLease.release()
+		ingressLease.release()
 		logger.FromContext(c.Request.Context()).Debug("image relay admission accepted",
 			zap.String("component", "gateway.image_relay_admission"), zap.String("encoding", encoding),
 			zap.Int64("wire_bytes", wireLength), zap.Int64("decoded_bytes", decoded),
@@ -291,11 +301,20 @@ func ExcelBPSImageAdmission(settings excelBPSImageSettingsReader, configuredMax 
 	}
 }
 
-// ImageRelay.Rewrite only transforms input_image data URLs. Avoid holding the
-// long-lived processing lease for text, tool-only, or HTTPS-image requests.
-// This bounded marker check runs after the body has already been safely read.
+// Match the relay's JSON semantics, including escapes, duplicate keys and
+// case-insensitive data URL schemes. Never infer images from unrelated strings.
 func bpsImageRequestNeedsRelay(body []byte) bool {
-	return bytes.Contains(body, []byte(`"input_image"`)) && bytes.Contains(body, []byte(`"data:`))
+	return basispoints.RequestHasInlineImages(body)
+}
+
+// Small identity bodies need not reserve a 64 MiB decompression worst case.
+// Unknown lengths/encodings retain that bound. The body reader is still capped
+// by maxBody; a declared length is used only when net/http enforces its boundary.
+func bpsImageDecodeWeight(wireLength int64, encoding string, maxBody int64) int64 {
+	if wireLength > 0 && (encoding == "" || encoding == "identity") {
+		return min(config.ImageRelayDecodeReservationBytes, max(wireLength+1, int64(bpsImageMinBodyBytes))*bpsImageBodyMultiplier)
+	}
+	return min(config.ImageRelayDecodeReservationBytes, max(maxBody+1, int64(bpsImageMinBodyBytes))*bpsImageBodyMultiplier)
 }
 
 func readBPSAdmissionBody(c *gin.Context, limit int64, timeout time.Duration) ([]byte, error) {

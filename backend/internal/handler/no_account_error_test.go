@@ -59,6 +59,14 @@ func TestClassifyNoAccountError_NilDiagnoser_Falls503(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, cls.Status)
 	require.Equal(t, "api_error", cls.ErrType)
 	require.False(t, cls.ModelNotFound)
+	require.Equal(t, "5", c.Writer.Header().Get("Retry-After"))
+}
+
+func TestClassifyNoAccountError_PreservesExistingBackoff(t *testing.T) {
+	c := newTestGinContextWithRequest()
+	c.Header("Retry-After", "60")
+	_ = classifyNoAccountErrorFromGin(c, nil, nil, "gpt-5", "gpt-5", service.PlatformOpenAI)
+	require.Equal(t, "60", c.Writer.Header().Get("Retry-After"))
 }
 
 func TestClassifySelectionFailureError_RateLimitedPool(t *testing.T) {
@@ -122,6 +130,7 @@ func TestClassifyNoAccountError_ModelNotSupported_Returns404(t *testing.T) {
 	require.Equal(t, "model_not_found", cls.ErrType)
 	require.True(t, cls.ModelNotFound)
 	require.Contains(t, cls.Message, "gpt-5.1-codex-mini", "message must surface the requested model")
+	require.Empty(t, c.Writer.Header().Get("Retry-After"))
 
 	require.Len(t, fd.calls, 1)
 	require.Equal(t, "gpt-5.1-codex-mini", fd.calls[0].Model)

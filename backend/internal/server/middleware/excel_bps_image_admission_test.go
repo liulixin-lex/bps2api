@@ -72,7 +72,8 @@ func TestExcelBPSImageAdmission200ConcurrentRequests(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			payload := bytes.Repeat([]byte("x"), int(max(tt.length, 1024)))
-			copy(payload, []byte(`{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]}`))
+			copy(payload, []byte(`{"input":[{"role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}],"padding":"`))
+			copy(payload[len(payload)-2:], []byte(`"}`))
 			switch tt.encoding {
 			case "gzip":
 				var b bytes.Buffer
@@ -178,11 +179,11 @@ func TestExcelBPSImageAdmission200ConcurrentRequests(t *testing.T) {
 					require.Equal(t, "1", w.Header().Get("Retry-After"))
 					require.Contains(t, w.Body.String(), "basispoints_image_request_busy")
 				case <-deadline:
-					t.Fatal("rejected requests did not finish without reading their body")
+					t.Fatal("rejected requests did not finish within bounded admission wait")
 				}
 			}
 			require.Equal(t, int32(tt.allowed), peak.Load())
-			require.Equal(t, beforeRejected, reads.Load(), "full processing capacity must reject before body reads")
+			require.Greater(t, reads.Load(), beforeRejected, "bounded inspection must distinguish images from text even when image capacity is full")
 			once.Do(func() { close(release) })
 			for i := 0; i < tt.allowed; i++ {
 				select {

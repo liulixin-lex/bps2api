@@ -100,5 +100,5 @@ func TestExcelBPSImageAdmissionBudgetDoesNotAutoExpand(t *testing.T) {
 func TestBPSImageRequestNeedsRelay(t *testing.T) {
 	require.False(t, bpsImageRequestNeedsRelay([]byte(`{"input":"hello"}`)))
 	require.False(t, bpsImageRequestNeedsRelay([]byte(`{"input":[{"type":"input_image","image_url":"https://example.com/image.png"}]}`)))
-	require.True(t, bpsImageRequestNeedsRelay([]byte(`{"input":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}`)))
+	require.True(t, bpsImageRequestNeedsRelay([]byte(`{"input":[{"content":[{"type":"input_image","image_url":"data:image/png;base64,AAAA"}]}]}`)))
 }

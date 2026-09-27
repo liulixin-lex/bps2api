@@ -27,6 +27,11 @@ func TestCatalogKeepsNamespacedToolContractsInProse(t *testing.T) {
 	if strings.Contains(protocol, `"properties"`) || strings.Contains(protocol, `"type":"function"`) {
 		t.Fatal("tool schema was sent as a native-style JSON catalog")
 	}
+	for _, absent := range []string{"functions.exec", "functions.apply_patch"} {
+		if strings.Contains(protocol, absent) {
+			t.Fatalf("protocol invented an undeclared example tool %q", absent)
+		}
+	}
 }
 
 func TestCatalogPreservesComplexSchemaConstraints(t *testing.T) {
