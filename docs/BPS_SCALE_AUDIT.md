@@ -29,6 +29,8 @@ Cross-review corrected an intermediate handler design before acceptance: returni
 
 ## Compatibility boundaries
 
+The first whole-backend unit run exposed a timing assumption in the existing OAuth image JSON keepalive test: sleeping 20 ms did not guarantee that a heartbeat had run under load. The fixture now waits for the synchronized heartbeat event before releasing the upstream response, while retaining the flush, valid-JSON and image-content assertions. This changes test synchronization, not production heartbeat behavior.
+
 BPS is an adapter to an upstream product endpoint, not a documented replacement for every native Responses/Chat/Codex capability. Exact tool identity and executable tool-argument JSON must remain valid. Malformed generated tool JSON must not be guessed into executable calls. Existing recovery is bounded and only before client output/tool dispatch; retries after partial execution could duplicate user actions.
 
 Original image detail, supported inline/HTTPS images, client custom/function/function-code transport and known native history cases retain the existing protocol matrix coverage. Public OpenAI image size/count limits are not evidence for the private BPS endpoint's capacity and are not copied into this gateway blindly.
