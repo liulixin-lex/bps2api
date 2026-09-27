@@ -37,7 +37,9 @@ func TestIncidentCustomStringArgumentsPreserveExactInput(t *testing.T) {
 		}
 	}
 	for _, invalid := range []object{
-		{"name": "patch", "arguments": object{"input": input}},
+		// A sole string input is now losslessly normalized; additional data
+		// must still be rejected rather than silently discarded.
+		{"name": "patch", "arguments": object{"input": input, "extra": true}},
 		{"name": "patch", "input": input, "arguments": input},
 		{"name": "patch", "args": input, "arguments": input},
 	} {

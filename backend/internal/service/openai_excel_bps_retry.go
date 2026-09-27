@@ -60,6 +60,10 @@ func excelBPSCorrectableProtocolError(message string) bool {
 		"basispoints function code transport extended_summary must contain",
 		"basispoints raw transport requires a declared custom tool",
 		"basispoints returned a tool outside the client's catalog",
+		"basispoints custom tool input must be a string",
+		"basispoints direct custom tool input must be a string",
+		"basispoints direct custom function wrapper requires one string input",
+		"basispoints returned an unsupported native tool; no tool was executed",
 	} {
 		if strings.HasPrefix(message, prefix) {
 			return true

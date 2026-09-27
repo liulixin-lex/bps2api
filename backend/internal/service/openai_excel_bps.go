@@ -330,7 +330,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			correctable := excelBPSCorrectableProtocolError(protocolMessage)
 			if correctable && kind == "response.failed" && gjson.GetBytes(payload, "response.error.code").String() == "basispoints_protocol_error" && attempt == 0 && !outputCommitted && ctx.Err() == nil {
 				instructions := gjson.GetBytes(originalBody, "instructions").String()
-				instructions += "\nTransport correction: the previous tool response was rejected before any client output or tool dispatch. Follow the exact catalog transport. For CUSTOM raw input, summary MUST be codex2api.custom/CATALOG_NAME. For a declared FUNCTION_CODE tool, summary MUST be codex2api.function_code/CATALOG_NAME and extended_summary MUST contain the other arguments as JSON. Use the exact catalog name including its namespace. For ordinary FUNCTION, serialize one valid JSON envelope with escaped strings. Do not repeat the rejected wrapper or use a prose summary for raw source. Never invent tool names or execute wrapper code."
+				instructions += "\nTransport correction: the previous tool response was rejected before any client output or tool dispatch. Follow the exact catalog transport. For CUSTOM raw input, summary MUST be codex2api.custom/CATALOG_NAME and code MUST contain the raw string, never an object of arguments. For a declared FUNCTION_CODE tool, summary MUST be codex2api.function_code/CATALOG_NAME and extended_summary MUST contain the other arguments as JSON. Use the exact catalog name including its namespace. For ordinary FUNCTION, serialize one valid JSON envelope with escaped strings. Do not repeat the rejected wrapper or use a prose summary for raw source. Never invent tool names or execute wrapper code. Do not call native skills, workbook or connector tools. If the client catalog is empty, return assistant text only."
 				corrected, correctionErr := sjson.SetBytes(originalBody, "instructions", instructions)
 				if correctionErr == nil {
 					scanner.Close()
@@ -418,16 +418,40 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	}
 	result.Duration = time.Since(start)
 	result.UpstreamTerminalEvent = terminal
+	err = scanner.Err()
+	// A clean premature EOF before any visible output can be regenerated once.
+	// This shares the HTTP/protocol budget and original deadline. Never replay
+	// network errors, cancellation, flushed metadata, or delivered tool/text.
+	if terminal == "" && attempt == 0 && !outputCommitted && ctx.Err() == nil &&
+		(err == nil || errors.Is(err, io.ErrUnexpectedEOF)) {
+		scanner.Close()
+		_ = converted.Close()
+		_ = resp.Body.Close()
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+			UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"),
+			Kind: "pre_output_eof_retry", Message: "BPS stream ended before output; one recovery attempt",
+		})
+		timer := time.NewTimer(250 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			result.ClientDisconnect = true
+			return result, ctx.Err()
+		case <-timer.C:
+		}
+		return s.forwardExcelBPSAttempt(ctx, c, account, originalBody, start, timeouts, attempt+1)
+	}
 	// If no correction was taken, preserve the original SSE contract on EOF or
 	// timeout: metadata already received is followed by one terminal SSE error.
 	if stream && pending.Len() > 0 && !errors.Is(ctx.Err(), context.Canceled) {
-		if _, err = c.Writer.WriteString(pending.String()); err != nil {
+		if _, writeErr := c.Writer.WriteString(pending.String()); writeErr != nil {
 			result.ClientDisconnect = true
-			return result, err
+			return result, writeErr
 		}
 		pending.Reset()
 	}
-	if err = scanner.Err(); err != nil || terminal == "" {
+	if err != nil || terminal == "" {
 		if errors.Is(err, errOpenAISSEIdle) || errors.Is(err, errOpenAISSEFirstOutput) || errors.Is(context.Cause(ctx), errExcelBPSRequestTimeout) {
 			// Compact clients can have SSE headers committed by the keepalive
 			// even when the forwarded body uses stream=false. Stop it before
@@ -449,6 +473,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			result.ClientDisconnect = true
 			return result, ctx.Err()
 		}
+		result.streamReadIncomplete = true
 		MarkResponseCommitted(c)
 		if stream {
 			_, _ = c.Writer.WriteString("event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"basispoints_stream_incomplete\",\"message\":\"Upstream stream ended before completion\"}}}\n\n")
@@ -458,14 +483,29 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 		}
 		return result, fmt.Errorf("excel BPS stream incomplete")
 	}
+	if terminal == "response.incomplete" {
+		reason := excelBPSIncompleteReason(completed)
+		message := "Excel BPS response incomplete: " + reason
+		detail, _ := json.Marshal(map[string]any{"event": terminal, "reason": reason,
+			"duration_ms": result.Duration.Milliseconds(), "output_committed": outputCommitted})
+		setOpsUpstreamError(c, resp.StatusCode, message, string(detail))
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+			UpstreamStatusCode: resp.StatusCode, UpstreamRequestID: resp.Header.Get("x-request-id"),
+			Kind: "response_incomplete", Message: message, Detail: string(detail),
+		})
+	}
 	if terminal != "response.completed" {
 		MarkResponseCommitted(c)
 	}
 	if !stream {
-		if terminal != "response.completed" {
-			c.JSON(502, gin.H{"error": gin.H{"code": terminalCode, "message": "Excel BPS did not complete the response"}})
+		if terminal == "response.completed" || (terminal == "response.incomplete" && gjson.ParseBytes(completed).IsObject()) {
+			// An explicit incomplete response is a native Responses terminal,
+			// including its partial answer, usage and incomplete_details. Keep
+			// that contract instead of replacing it with a generic 502 body.
+			c.Data(http.StatusOK, "application/json", completed)
 		} else {
-			c.Data(200, "application/json", completed)
+			c.JSON(502, gin.H{"error": gin.H{"code": terminalCode, "message": "Excel BPS did not complete the response"}})
 		}
 	}
 	if terminal != "response.completed" {
@@ -473,6 +513,20 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	}
 	s.bindHTTPResponseAccount(ctx, c, account, result.ResponseID)
 	return result, nil
+}
+
+// Preserve a useful failure reason without logging provider-controlled text or
+// copying a potentially huge response body containing conversation metadata.
+func excelBPSIncompleteReason(response []byte) string {
+	reason := gjson.GetBytes(response, "incomplete_details.reason").String()
+	switch reason {
+	case "max_output_tokens", "max_tokens", "content_filter", "model_context_window_exceeded":
+		return reason
+	case "":
+		return "unspecified"
+	default:
+		return "unrecognized"
+	}
 }
 
 var excelBPSBearerPattern = regexp.MustCompile(`(?i)\bBearer\s+[^\s"',;<>]+`)
