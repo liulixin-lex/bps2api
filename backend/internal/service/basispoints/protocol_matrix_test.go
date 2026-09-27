@@ -73,15 +73,16 @@ func TestProtocolMatrixImageHistoryCapacity(t *testing.T) {
 			require.Len(t, content, count)
 			firstPart, ok := content[0].(object)
 			require.True(t, ok)
-			first := firstPart["image_url"]
+			first, ok := firstPart["image_url"].(string)
+			require.True(t, ok)
 			for _, p := range content {
 				part, ok := p.(object)
 				require.True(t, ok)
 				require.Equal(t, first, part["image_url"])
-				require.Equal(t, "original", p.(object)["detail"])
+				require.Equal(t, "original", part["detail"])
 			}
 			w := httptest.NewRecorder()
-			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, first.(string), nil))
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, first, nil))
 			require.Equal(t, 200, w.Code)
 			require.Equal(t, data, w.Body.Bytes())
 		})

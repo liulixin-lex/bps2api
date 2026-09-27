@@ -31,7 +31,9 @@ func TestProtocolMatrixImageDetailConversions(t *testing.T) {
 				for _, single := range []bool{false, true} {
 					var converted json.RawMessage
 					if single {
-						converted, err = chatContentFromSingleResponsesPart(part["type"].(string), fields)
+						partType, ok := part["type"].(string)
+						require.True(t, ok)
+						converted, err = chatContentFromSingleResponsesPart(partType, fields)
 					} else {
 						converted, err = responsesContentPartsToChatContent([]json.RawMessage{b}, "user")
 					}
