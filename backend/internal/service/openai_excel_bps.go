@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
@@ -124,6 +125,11 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 }
 
 func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time, timeouts config.ExcelBPSTimeoutConfig, attempt int) (*OpenAIForwardResult, error) {
+	chat := excelBPSChatFromContext(ctx)
+	var downstream io.StringWriter = c.Writer
+	if chat != nil {
+		downstream = newExcelBPSChatWriter(c.Writer, chat.OriginalModel, chat.IncludeUsage)
+	}
 	originalBody := append([]byte(nil), body...)
 	fail := func(status int, code, message string) (*OpenAIForwardResult, error) {
 		// A compact keepalive may already have committed SSE headers. Otherwise
@@ -131,7 +137,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 		committed := StopOpenAICompactSSEKeepaliveCommitted(c)
 		MarkResponseCommitted(c)
 		if committed {
-			writeOpenAICompactSSEFailureMessage(c, status, code, message)
+			writeExcelBPSStreamFailure(c, chat, downstream, status, code, message)
 		} else {
 			c.JSON(status, gin.H{"error": gin.H{"type": "invalid_request_error", "code": code, "message": message}})
 		}
@@ -139,6 +145,9 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	}
 	originalModel := gjson.GetBytes(body, "model").String()
 	model := account.GetMappedModel(originalModel)
+	if chat != nil {
+		originalModel, model = chat.OriginalModel, chat.UpstreamModel
+	}
 	stream := gjson.GetBytes(body, "stream").Bool()
 	var err error
 	body, err = sjson.SetBytes(body, "model", model)
@@ -295,6 +304,9 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	// client effort for usage display, and the BPS-normalized effort for billing.
 	requestedEffort := coalesceRequestedReasoningEffort(RequestedReasoningEffortFromContext(ctx), &bridge.RequestedEffort)
 	result := &OpenAIForwardResult{Model: originalModel, UpstreamModel: model, UpstreamEndpoint: "/basispoints/api/responses", Stream: stream, ReasoningEffort: &bridge.Effort, RequestedReasoningEffort: requestedEffort, RequestID: resp.Header.Get("x-request-id")}
+	if chat != nil {
+		result.BillingModel = chat.BillingModel
+	}
 	if stream {
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
@@ -310,7 +322,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	defer heartbeat.Stop()
 	keepalive := func() {
 		if stream && ctx.Err() == nil {
-			_, _ = c.Writer.WriteString(": keepalive\n\n")
+			_, _ = downstream.WriteString(": keepalive\n\n")
 			c.Writer.Flush()
 		}
 	}
@@ -402,14 +414,14 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 				line += "\n"
 			}
 			if pending.Len() > 0 {
-				if _, err = c.Writer.WriteString(pending.String()); err != nil {
+				if _, err = downstream.WriteString(pending.String()); err != nil {
 					result.ClientDisconnect = true
 					result.Duration = time.Since(start)
 					return result, err
 				}
 				pending.Reset()
 			}
-			if _, err = c.Writer.WriteString(line); err != nil {
+			if _, err = downstream.WriteString(line); err != nil {
 				result.ClientDisconnect = true
 				result.Duration = time.Since(start)
 				return result, err
@@ -450,7 +462,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	// If no correction was taken, preserve the original SSE contract on EOF or
 	// timeout: metadata already received is followed by one terminal SSE error.
 	if stream && pending.Len() > 0 && !errors.Is(ctx.Err(), context.Canceled) {
-		if _, writeErr := c.Writer.WriteString(pending.String()); writeErr != nil {
+		if _, writeErr := downstream.WriteString(pending.String()); writeErr != nil {
 			result.ClientDisconnect = true
 			return result, writeErr
 		}
@@ -467,7 +479,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			const code = "basispoints_stream_timeout"
 			const message = "Excel BPS stream timed out; request was not replayed"
 			if compactCommitted || (stream && c.Writer.Written()) {
-				writeOpenAICompactSSEFailureMessage(c, 504, code, message)
+				writeExcelBPSStreamFailure(c, chat, downstream, 504, code, message)
 			} else {
 				c.Header("Content-Type", "application/json")
 				c.JSON(504, gin.H{"error": gin.H{"type": "server_error", "code": code, "message": message}})
@@ -481,7 +493,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 		result.streamReadIncomplete = true
 		MarkResponseCommitted(c)
 		if stream {
-			_, _ = c.Writer.WriteString("event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"basispoints_stream_incomplete\",\"message\":\"Upstream stream ended before completion\"}}}\n\n")
+			_, _ = downstream.WriteString("event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"basispoints_stream_incomplete\",\"message\":\"Upstream stream ended before completion\"}}}\n\n")
 			c.Writer.Flush()
 		} else {
 			c.JSON(502, gin.H{"error": gin.H{"code": "basispoints_stream_incomplete", "message": "Excel BPS stream ended before completion"}})
@@ -508,7 +520,15 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 			// An explicit incomplete response is a native Responses terminal,
 			// including its partial answer, usage and incomplete_details. Keep
 			// that contract instead of replacing it with a generic 502 body.
-			c.Data(http.StatusOK, "application/json", completed)
+			if chat != nil {
+				var response apicompat.ResponsesResponse
+				if err := json.Unmarshal(completed, &response); err != nil {
+					return fail(502, "basispoints_chat_invalid", "Invalid BPS final response")
+				}
+				c.JSON(http.StatusOK, apicompat.ResponsesToChatCompletions(&response, chat.OriginalModel))
+			} else {
+				c.Data(http.StatusOK, "application/json", completed)
+			}
 		} else {
 			c.JSON(502, gin.H{"error": gin.H{"code": terminalCode, "message": "Excel BPS did not complete the response"}})
 		}

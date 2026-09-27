@@ -85,10 +85,14 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest) (*ResponsesRequest,
 		out.Tools = convertChatToolsToResponses(req.Tools, req.Functions)
 	}
 
-	// tool_choice: already compatible format — pass through directly.
+	// Forced Chat tools nest their name; Responses uses a flat name.
 	// Legacy function_call needs mapping.
 	if len(req.ToolChoice) > 0 {
-		out.ToolChoice = req.ToolChoice
+		tc, err := convertChatToolChoiceToResponses(req.ToolChoice)
+		if err != nil {
+			return nil, fmt.Errorf("convert tool_choice: %w", err)
+		}
+		out.ToolChoice = tc
 	} else if len(req.FunctionCall) > 0 {
 		tc, err := convertChatFunctionCallToToolChoice(req.FunctionCall)
 		if err != nil {
@@ -118,7 +122,7 @@ func convertChatMessagesToResponsesInput(msgs []ChatMessage) ([]ResponsesInputIt
 // ResponsesInputItem values.
 func chatMessageToResponsesItems(m ChatMessage) ([]ResponsesInputItem, error) {
 	switch m.Role {
-	case "system":
+	case "system", "developer":
 		return chatSystemToResponses(m)
 	case "user":
 		return chatUserToResponses(m)
@@ -143,7 +147,11 @@ func chatSystemToResponses(m ChatMessage) ([]ResponsesInputItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []ResponsesInputItem{{Role: "system", Content: content}}, nil
+	role := "system"
+	if m.Role == "developer" {
+		role = "developer"
+	}
+	return []ResponsesInputItem{{Role: role, Content: content}}, nil
 }
 
 // chatUserToResponses converts a user message, handling both plain strings and
@@ -381,6 +389,7 @@ func convertChatContentPartsToResponses(parts []ChatContentPart) []ResponsesCont
 					PromptCacheBreakpoint: p.PromptCacheBreakpoint,
 					Type:                  "input_image",
 					ImageURL:              p.ImageURL.URL,
+					Detail:                p.ImageURL.Detail,
 				})
 			}
 		case "file":
@@ -511,4 +520,29 @@ func convertChatFunctionCallToToolChoice(raw json.RawMessage) (json.RawMessage, 
 		"type": "function",
 		"name": obj.Name,
 	})
+}
+
+// Only flatten the function selection wrapper. Preserve other selection forms
+// and extra fields so the receiving provider can apply its own validation.
+func convertChatToolChoiceToResponses(raw json.RawMessage) (json.RawMessage, error) {
+	var choice map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &choice); err != nil || choice == nil {
+		if !json.Valid(raw) {
+			return nil, fmt.Errorf("invalid JSON")
+		}
+		return raw, nil
+	}
+	if rawString(choice["type"]) != "function" || len(choice["function"]) == 0 {
+		return raw, nil
+	}
+	var function map[string]json.RawMessage
+	if err := json.Unmarshal(choice["function"], &function); err != nil || len(function) != 1 || rawString(function["name"]) == "" {
+		return nil, fmt.Errorf("function selection requires a name")
+	}
+	if existing, ok := choice["name"]; ok && rawString(existing) != rawString(function["name"]) {
+		return nil, fmt.Errorf("conflicting function names")
+	}
+	choice["name"] = function["name"]
+	delete(choice, "function")
+	return json.Marshal(choice)
 }
