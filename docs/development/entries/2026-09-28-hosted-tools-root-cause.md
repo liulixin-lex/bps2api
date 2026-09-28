@@ -2,6 +2,8 @@
 
 [返回开发历程](../../../DEVELOPMENT_HISTORY.md) · [发布记录](2026-09-28-release-0.0.14.md)
 
+后续进展（2026-09-28 06:53 UTC）：用户授权优化后，已在 0.0.15 取消新增拒绝并上线，真实客户端工具往返通过，详见[修复与执行链路](2026-09-28-hosted-tools-fix.md)。下文保留根因轮当时的事实和范围。
+
 ## 背景与目标
 
 用户报告升级后再次出现 `basispoints does not support hosted tools; explicitly enable omission or select a compatible channel`，要求找根因。本轮定位与复现，不修改业务代码或生产策略开关。
