@@ -23,9 +23,11 @@ func describeCatalog(catalog []any) string {
 				line += " Input format: " + quoted(format) + "."
 			}
 		} else {
-			if supportsFunctionCodeTransport(text(entry["name"]), text(entry["type"]), entry["parameters"]) {
+			if supportsFunctionCodeTransport(text(entry["name"]), text(entry["type"]), entry["parameters"]) && !supportsFunctionCmdTransport(text(entry["name"]), text(entry["type"]), entry["parameters"]) {
 				field := functionCodeTransportField(entry["parameters"])
 				line += " Use FUNCTION_CODE transport: set run_officejs summary to " + quoted(functionCodeTransportPrefix+text(entry["name"])) + ". Put the exact " + field + " argument directly in native code. Put all other supplied arguments in one JSON object in extended_summary, using only fields declared in the contract; use {} when there are none. Do not include " + field + " in that object."
+			} else if supportsFunctionCmdTransport(text(entry["name"]), text(entry["type"]), entry["parameters"]) {
+				line += " Use FUNCTION_CMD transport: set run_officejs summary to " + quoted(functionCmdTransportPrefix+text(entry["name"])) + ". Put the exact cmd argument directly in native code. Put all other supplied arguments in one JSON object in extended_summary, using only fields declared in the contract; use {} when there are none. Do not include cmd in that object."
 			} else {
 				line += " Pass a JSON object in the envelope's arguments field."
 			}

@@ -1643,7 +1643,7 @@
         </div>
       </div>
 
-      <div v-if="!isSparkShadow">
+      <div v-if="!isSparkShadow && !authStore.isObserver">
         <div class="mb-1 flex items-center gap-2">
           <label class="input-label mb-0">{{ t('admin.accounts.proxy') }}</label>
           <ProxyAdBanner />
@@ -1783,12 +1783,79 @@
         </div>
         <div v-if="excelBPSEnabled" class="mt-3">
           <label class="flex items-center gap-2">
+            <input v-model="excelBPSOmitUnsupportedTools" type="checkbox"
+              data-testid="excel-bps-omit-unsupported-tools"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedTools') }}</span>
+          </label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedToolsDesc') }}</p>
+        </div>
+        <div v-if="excelBPSEnabled" class="mt-3">
+          <label class="flex items-center gap-2">
+            <input v-model="excelBPSIgnoreImages" type="checkbox"
+              data-testid="excel-bps-ignore-images"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreImages') }}</span>
+          </label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSIgnoreImagesDesc') }}</p>
+        </div>
+        <div v-if="excelBPSEnabled" class="mt-3">
+          <label class="flex items-center gap-2">
+            <input v-model="excelBPSIgnoreEncryptedContent" type="checkbox"
+              data-testid="excel-bps-ignore-encrypted-content"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContent') }}</span>
+          </label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSIgnoreEncryptedContentDesc') }}</p>
+        </div>
+        <div v-if="excelBPSEnabled" class="mt-3">
+          <label class="flex items-center gap-2">
             <input v-model="excelBPSAutoDisableOn403" type="checkbox"
               data-testid="excel-bps-auto-disable-on-403"
               class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
             <span class="text-sm">{{ t('admin.accounts.openai.excelBPSAutoDisableOn403') }}</span>
           </label>
           <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSAutoDisableOn403Desc') }}</p>
+        </div>
+        <div v-if="excelBPSEnabled" class="mt-3">
+          <label class="flex items-center gap-2">
+            <input v-model="excelBPSAutoMoveOn403" type="checkbox"
+              data-testid="excel-bps-auto-move-on-403"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSAutoMoveOn403') }}</span>
+          </label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSAutoMoveOn403Desc') }}</p>
+          <div v-if="excelBPSAutoMoveOn403" class="mt-2">
+            <label class="input-label">{{ t('admin.accounts.openai.excelBPS403TargetGroup') }}</label>
+            <Select v-model="excelBPS403TargetGroupID" :options="excelBPS403GroupOptions"
+              :aria-label="t('admin.accounts.openai.excelBPS403TargetGroup')"
+              data-testid="excel-bps-403-target-group" />
+          </div>
+        </div>
+        <div v-if="excelBPSEnabled" class="mt-3">
+          <label class="flex items-center gap-2">
+            <input v-model="excelBPSMihomo" type="checkbox" data-testid="excel-bps-mihomo"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSMihomo') }}</span>
+          </label>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSMihomoDesc') }}</p>
+          <div v-if="excelBPSMihomo" class="mt-2 flex flex-wrap items-center gap-4" role="radiogroup"
+            :aria-label="t('admin.accounts.openai.excelBPSProxySource')">
+            <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSProxySource') }}</span>
+            <label class="flex items-center gap-1.5 text-sm">
+              <input v-model="excelBPSProxySource" type="radio" value="mihomo" data-testid="excel-bps-proxy-source-mihomo"
+                class="h-4 w-4 border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+              {{ t('admin.accounts.openai.excelBPSProxySourceMihomo') }}
+            </label>
+            <label class="flex items-center gap-1.5 text-sm">
+              <input v-model="excelBPSProxySource" type="radio" value="ip_pool" data-testid="excel-bps-proxy-source-ip-pool"
+                class="h-4 w-4 border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
+              {{ t('admin.accounts.openai.excelBPSProxySourceIPPool') }}
+            </label>
+          </div>
+          <p v-if="excelBPSMihomo && excelBPSProxySource === 'ip_pool'" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.accounts.openai.excelBPSProxySourceIPPoolDesc') }}
+          </p>
         </div>
         <div v-if="excelBPSEnabled" class="mt-3">
           <label class="flex items-center gap-2">
@@ -3205,6 +3272,7 @@
 import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
@@ -3320,6 +3388,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const authStore = useAuthStore()
 const browserTimeZone = getBrowserTimeZone()
 
 const selectableGroups = computed(() => {
@@ -3805,11 +3874,23 @@ const customBaseUrl = ref('')
 
 // OpenAI 自动透传开关（OAuth/API Key）
 const excelBPSEnabled = ref(false)
-const excelBPSAllModels = ref(false)
-const excelBPSModels = ref<string[]>(['gpt-6-astra'])
+const excelBPSMihomo = ref(false)
+const excelBPSProxySource = ref<'mihomo' | 'ip_pool'>('mihomo')
 const excelBPSCacheCreationAsInput = ref(false)
 const excelBPSAutoDisableOn403 = ref(false)
 const excelBPSPausedOn403At = ref<string | null>(null)
+const excelBPSOmitUnsupportedTools = ref(false)
+const excelBPSIgnoreImages = ref(false)
+const excelBPSIgnoreEncryptedContent = ref(false)
+const excelBPSAutoMoveOn403 = ref(false)
+const excelBPS403TargetGroupID = ref<number | string>('')
+const excelBPS403GroupOptions = computed(() => [
+  { value: '', label: t('admin.accounts.openai.excelBPS403SelectTarget') },
+  { value: 0, label: t('admin.accounts.openai.excelBPS403LeaveAllGroups') },
+  ...props.groups
+    .filter(group => group.platform === 'openai' || (!authStore.isSimpleMode && group.platform === 'composite'))
+    .map(group => ({ value: group.id, label: group.name }))
+])
 const copilotSDKEnabled = ref(false)
 const openaiPassthroughEnabled = ref(false)
 // OpenAI Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
@@ -3846,8 +3927,8 @@ const {
 } = useQuotaNotifyState()
 
 // Load global feature states once
-adminAPI.settings.getWebSearchEmulationConfig().then(cfg => {
-  webSearchGlobalEnabled.value = cfg?.enabled === true && (cfg?.providers?.length ?? 0) > 0
+adminAPI.accounts.getManagementCapabilities().then(cfg => {
+  webSearchGlobalEnabled.value = cfg?.web_search_enabled === true
 }).catch(() => { webSearchGlobalEnabled.value = false })
 
 loadQuotaNotifyGlobal()
@@ -4303,11 +4384,16 @@ const syncFormFromAccount = (newAccount: Account | null) => {
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
   excelBPSEnabled.value = false
-  excelBPSAllModels.value = false
-  excelBPSModels.value = ['gpt-6-astra']
+  excelBPSMihomo.value = false
+  excelBPSProxySource.value = 'mihomo'
   excelBPSCacheCreationAsInput.value = false
   excelBPSAutoDisableOn403.value = false
   excelBPSPausedOn403At.value = null
+  excelBPSOmitUnsupportedTools.value = false
+  excelBPSIgnoreImages.value = false
+  excelBPSIgnoreEncryptedContent.value = false
+  excelBPSAutoMoveOn403.value = false
+  excelBPS403TargetGroupID.value = ''
   copilotSDKEnabled.value = false
   openaiPassthroughEnabled.value = false
   openaiFlattenNamespacesEnabled.value = false
@@ -4328,16 +4414,18 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
     excelBPSEnabled.value = newAccount.type === 'oauth' && extra?.openai_excel_bps === true
-    excelBPSAllModels.value = excelBPSEnabled.value && !Object.prototype.hasOwnProperty.call(extra ?? {}, 'openai_excel_bps_models')
-    if (Object.prototype.hasOwnProperty.call(extra ?? {}, 'openai_excel_bps_models')) {
-      excelBPSModels.value = Array.isArray(extra?.openai_excel_bps_models)
-        ? extra.openai_excel_bps_models.filter((model): model is string => typeof model === 'string')
-        : []
-    }
+    excelBPSMihomo.value = newAccount.type === 'oauth' && extra?.openai_excel_bps_mihomo === true
+    excelBPSProxySource.value = extra?.openai_excel_bps_proxy_source === 'ip_pool' ? 'ip_pool' : 'mihomo'
     excelBPSCacheCreationAsInput.value = excelBPSEnabled.value && extra?.openai_excel_bps_cache_creation_as_input === true
     excelBPSAutoDisableOn403.value = newAccount.type === 'oauth' && extra?.openai_excel_bps_auto_disable_on_403 === true
     excelBPSPausedOn403At.value = excelBPSEnabled.value && typeof extra?.openai_excel_bps_paused_on_403_at === 'string'
       ? extra.openai_excel_bps_paused_on_403_at : null
+    excelBPSOmitUnsupportedTools.value = excelBPSEnabled.value && extra?.openai_excel_bps_omit_unsupported_tools === true
+    excelBPSIgnoreImages.value = excelBPSEnabled.value && extra?.openai_excel_bps_ignore_images === true
+    excelBPSIgnoreEncryptedContent.value = excelBPSEnabled.value && extra?.openai_excel_bps_ignore_encrypted_content === true
+    excelBPSAutoMoveOn403.value = newAccount.type === 'oauth' && extra?.openai_excel_bps_auto_move_on_403 === true
+    const targetGroupID = extra?.openai_excel_bps_403_target_group_id
+    excelBPS403TargetGroupID.value = typeof targetGroupID === 'number' && Number.isSafeInteger(targetGroupID) && targetGroupID >= 0 ? targetGroupID : ''
     copilotSDKEnabled.value = newAccount.type === 'apikey' && extra?.openai_copilot_sdk === true
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
     openaiFlattenNamespacesEnabled.value =
@@ -5279,6 +5367,14 @@ const submitUpdateAccount = async (accountID: number, updatePayload: Record<stri
 const handleSubmit = async () => {
   if (!props.account) return
   const accountID = props.account.id
+  if (props.account.platform === 'openai' && props.account.type === 'oauth' && !isSparkShadow.value && excelBPSEnabled.value && excelBPSAutoMoveOn403.value) {
+    const target = Number(excelBPS403TargetGroupID.value)
+    if (excelBPS403TargetGroupID.value === '' || !Number.isSafeInteger(target) || target < 0 ||
+      !excelBPS403GroupOptions.value.some(option => option.value === target)) {
+      appStore.showError(t('admin.accounts.openai.excelBPS403SelectTarget'))
+      return
+    }
+  }
 
   if (form.status !== 'active' && form.status !== 'inactive' && form.status !== 'error') {
     appStore.showError(t('admin.accounts.pleaseSelectStatus'))
@@ -5294,6 +5390,9 @@ const handleSubmit = async () => {
 
   const updatePayload: Record<string, unknown> = { ...form }
   try {
+    if (authStore.isObserver) {
+      delete updatePayload.proxy_id
+    }
     // 后端期望 proxy_id: 0 表示清除代理，而不是 null
     if (updatePayload.proxy_id === null) {
       updatePayload.proxy_id = 0
@@ -5821,25 +5920,53 @@ const handleSubmit = async () => {
         if (currentExtra.openai_excel_bps_paused_on_403_at && !excelBPSPausedOn403At.value) {
           newExtra.openai_excel_bps_paused_on_403_at = null
         }
-        if (excelBPSAllModels.value) {
-          delete newExtra.openai_excel_bps_models
-        } else {
-          newExtra.openai_excel_bps_models = [...new Set(excelBPSModels.value.map(model => model.trim()).filter(Boolean))]
-        }
+        // Keep legacy model metadata; the switch selects the entire BPS channel.
       } else {
         delete newExtra.openai_excel_bps
         delete newExtra.openai_excel_bps_models
         delete newExtra.openai_excel_bps_paused_on_403_at
+      }
+      if (newExtra.openai_excel_bps === true && excelBPSMihomo.value && excelBPSProxySource.value === 'ip_pool') {
+        newExtra.openai_excel_bps_proxy_source = 'ip_pool'
+      } else {
+        delete newExtra.openai_excel_bps_proxy_source
+      }
+      if (newExtra.openai_excel_bps === true && excelBPSMihomo.value) {
+        newExtra.openai_excel_bps_mihomo = true
+      } else {
+        delete newExtra.openai_excel_bps_mihomo
       }
       if (newExtra.openai_excel_bps === true && excelBPSCacheCreationAsInput.value) {
         newExtra.openai_excel_bps_cache_creation_as_input = true
       } else {
         delete newExtra.openai_excel_bps_cache_creation_as_input
       }
+      if (newExtra.openai_excel_bps === true && excelBPSOmitUnsupportedTools.value) {
+        newExtra.openai_excel_bps_omit_unsupported_tools = true
+      } else {
+        delete newExtra.openai_excel_bps_omit_unsupported_tools
+      }
+      if (newExtra.openai_excel_bps === true && excelBPSIgnoreImages.value) {
+        newExtra.openai_excel_bps_ignore_images = true
+      } else {
+        delete newExtra.openai_excel_bps_ignore_images
+      }
+      if (newExtra.openai_excel_bps === true && excelBPSIgnoreEncryptedContent.value) {
+        newExtra.openai_excel_bps_ignore_encrypted_content = true
+      } else {
+        delete newExtra.openai_excel_bps_ignore_encrypted_content
+      }
       if (newExtra.openai_excel_bps === true && excelBPSAutoDisableOn403.value) {
         newExtra.openai_excel_bps_auto_disable_on_403 = true
       } else {
         delete newExtra.openai_excel_bps_auto_disable_on_403
+      }
+      if (newExtra.openai_excel_bps === true && excelBPSAutoMoveOn403.value) {
+        newExtra.openai_excel_bps_auto_move_on_403 = true
+        newExtra.openai_excel_bps_403_target_group_id = Number(excelBPS403TargetGroupID.value)
+      } else {
+        delete newExtra.openai_excel_bps_auto_move_on_403
+        delete newExtra.openai_excel_bps_403_target_group_id
       }
       if (props.account.type === 'oauth' || props.account.type === 'setup-token') {
         newExtra.openai_oauth_responses_websockets_v2_mode = openaiOAuthResponsesWebSocketV2Mode.value

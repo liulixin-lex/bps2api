@@ -819,6 +819,9 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			zap.Float64("load_skew", scheduleDecision.LoadSkew),
 		)
 		account := selection.Account
+		if skipNativeAfterExcelBPSFailure(selection, lastFailoverErr, failedAccountIDs, account.GetMappedModel(gjson.GetBytes(forwardBody, "model").String())) {
+			continue
+		}
 		if previousResponseID != "" && requestPlatform == service.PlatformOpenAI && !account.IsOpenAIApiKey() {
 			// The public Responses HTTP API supports previous_response_id on API-key
 			// accounts. OAuth/SetupToken upstreams do not, so keep searching instead
@@ -1435,6 +1438,12 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			return
 		}
 		account := selection.Account
+		defaultMappedModel := strings.TrimSpace(effectiveMappedModel)
+		forwardBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
+		upstreamModel := service.ResolveOpenAIMessagesUpstreamModel(account, gjson.GetBytes(forwardBody, "model").String(), defaultMappedModel)
+		if skipNativeAfterExcelBPSFailure(selection, lastFailoverErr, failedAccountIDs, upstreamModel) {
+			continue
+		}
 		sessionHash = ensureOpenAIPoolModeSessionHash(sessionHash, account)
 		reqLog.Debug("openai_messages.account_selected", zap.Int64("account_id", account.ID), zap.String("account_name", account.Name))
 		_ = scheduleDecision
@@ -1457,9 +1466,6 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
 		forwardStart := time.Now()
 
-		defaultMappedModel := strings.TrimSpace(effectiveMappedModel)
-		// 应用渠道模型映射到请求体
-		forwardBody := mappedBodyForMessages(channelMappingMsg.Mapped, channelMappingMsg.MappedModel)
 		writerSizeBeforeForward := c.Writer.Size()
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer func() {
@@ -1531,6 +1537,10 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 			})
 		}
 		if err != nil {
+			if failoverClientGone(c) {
+				submitMessagesUsage(result)
+				return
+			}
 			if result != nil && result.ImageCount > 0 {
 				reqLog.Warn("openai_messages.forward_partial_error_with_image_result",
 					zap.Int64("account_id", account.ID),
@@ -1695,8 +1705,29 @@ func (h *OpenAIGatewayHandler) anthropicStreamingAwareError(c *gin.Context, stat
 
 // handleAnthropicFailoverExhausted maps upstream failover errors to Anthropic format.
 func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	if failoverErr == nil {
+		h.anthropicStreamingAwareError(c, http.StatusBadGateway, "api_error", "Upstream request failed", streamStarted)
+		return
+	}
 	if failoverErr != nil {
 		copyFailoverRetryAfter(c, failoverErr.ResponseHeaders)
+	}
+	if failoverErr.Reason == service.ExcelBPSModelAccessChangedReason || failoverErr.Reason == service.ExcelBPSRateLimitedReason {
+		service.MarkResponseCommitted(c)
+		errType := "permission_error"
+		if failoverErr.Reason == service.ExcelBPSRateLimitedReason {
+			errType = "rate_limit_error"
+		}
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.ClientMessage, "")
+		payload := gin.H{"type": "error", "error": gin.H{"type": errType, "code": string(failoverErr.Reason), "message": failoverErr.ClientMessage}}
+		if streamStarted {
+			encoded, _ := json.Marshal(payload)
+			fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", encoded) //nolint:errcheck
+			c.Writer.Flush()
+		} else {
+			c.JSON(failoverErr.ClientStatusCode, payload)
+		}
+		return
 	}
 	if failoverErr != nil && failoverErr.IsCredentialFailure() {
 		status, message := credentialFailoverClientResponse(failoverErr)
@@ -3616,6 +3647,18 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 			status = http.StatusServiceUnavailable
 		}
 		h.handleStreamingAwareError(c, status, "server_error", failoverErr.ClientMessage, streamStarted)
+		return
+	}
+	// BPS rejections may echo request data: keep the fixed code and message
+	// instead of passthrough rules or the upstream body.
+	if failoverErr.Reason == service.ExcelBPSRateLimitedReason || failoverErr.Reason == service.ExcelBPSModelAccessChangedReason {
+		service.MarkResponseCommitted(c)
+		errType := "permission_error"
+		if failoverErr.Reason == service.ExcelBPSRateLimitedReason {
+			errType = "rate_limit_error"
+		}
+		service.SetOpsUpstreamError(c, failoverErr.StatusCode, failoverErr.ClientMessage, "")
+		h.handleStreamingAwareErrorWithCode(c, failoverErr.ClientStatusCode, errType, string(failoverErr.Reason), failoverErr.ClientMessage, streamStarted, false)
 		return
 	}
 	statusCode := failoverErr.StatusCode

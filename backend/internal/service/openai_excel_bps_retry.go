@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -54,6 +55,9 @@ func excelBPSHTTPRetryDelay(status int, retryAfter string, now time.Time) (time.
 // These errors arise in local transport translation before client dispatch.
 // Never regenerate provider refusals, structured answers or arbitrary failures.
 func excelBPSCorrectableProtocolError(message string) bool {
+	if strings.HasPrefix(message, "basispoints tool transport correction failed: basispoints source regeneration required:") {
+		return true
+	}
 	for _, prefix := range []string{
 		"basispoints function code transport requires an exact catalog function",
 		"basispoints function code transport requires string code",
@@ -72,4 +76,32 @@ func excelBPSCorrectableProtocolError(message string) bool {
 	return strings.HasPrefix(message, "basispoints tool transport code must contain one JSON client-tool envelope;") &&
 		(strings.Contains(message, "format=json_object;") || strings.Contains(message, "format=json_string;") || strings.Contains(message, "format=text_or_code;") || strings.Contains(message, "format=markdown;")) &&
 		strings.Contains(message, "json_failure=") && !strings.Contains(message, "json_failure=trailing_data")
+}
+
+// A broken JSON-shaped wrapper has no operation to preserve. Let the existing
+// one-shot pre-output request regeneration handle it before spending the shared
+// budget on a continuation that would have to invent an operation.
+func excelBPSSourceRegenerationRequired(response map[string]any) bool {
+	output, _ := response["output"].([]any)
+	for _, raw := range output {
+		item, _ := raw.(map[string]any)
+		if item["name"] != "run_officejs" && item["name"] != "functions.run_officejs" {
+			continue
+		}
+		var arguments map[string]any
+		switch value := item["arguments"].(type) {
+		case string:
+			if json.Unmarshal([]byte(value), &arguments) != nil {
+				continue
+			}
+		case map[string]any:
+			arguments = value
+		}
+		code, _ := arguments["code"].(string)
+		code = strings.TrimSpace(code)
+		if strings.HasPrefix(code, "{") && !json.Valid([]byte(code)) {
+			return true
+		}
+	}
+	return false
 }

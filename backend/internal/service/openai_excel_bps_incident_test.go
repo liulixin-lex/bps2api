@@ -46,7 +46,7 @@ func TestIncidentBPSProtocolRecoveryBoundaries(t *testing.T) {
 		{"recover production sized initialization", incidentBPSFrame("response.created", map[string]any{"response": map[string]any{"id": "resp_rejected", "instructions": strings.Repeat("x", 95<<10)}}) + incidentBPSFrame("response.in_progress", map[string]any{"response": map[string]any{"id": "resp_rejected", "instructions": strings.Repeat("x", 95<<10)}}) + bad, good, true, true, 2},
 		{"recover after buffered reasoning", metadata + incidentBPSFrame("response.output_item.added", map[string]any{"item": map[string]any{"type": "reasoning", "id": "reason_hidden"}}) + bad, good, true, true, 2},
 		{"recover JSON", metadata + bad, good, false, true, 2},
-		{"recover missing raw marker", metadata + incidentBPSToolResponse("resp_rejected", "const r = await tools.exec_command({cmd: 'true'}); text(r);"), good, true, true, 2},
+		{"unmarked source cannot change operation", metadata + incidentBPSToolResponse("resp_rejected", "const r = await tools.exec_command({cmd: 'true'}); text(r);"), good, true, false, 2},
 		{"no source regeneration after text", metadata + textDelta + incidentBPSToolResponse("resp_rejected", "text(await tools.exec_command({cmd: 'true'}));"), good, true, false, 1},
 		{"one retry maximum", metadata + bad, bad, true, false, 2},
 		{"no retry after text", metadata + textDelta + bad, good, true, false, 1},
@@ -72,7 +72,7 @@ func TestIncidentBPSProtocolRecoveryBoundaries(t *testing.T) {
 			require.Equal(t, tc.calls, len(upstream.requests))
 			require.True(t, first.closed)
 			if tc.success {
-				require.NoError(t, err)
+				require.NoError(t, err, rec.Body.String())
 				require.NotContains(t, rec.Body.String(), "resp_rejected")
 				require.NotContains(t, rec.Body.String(), "basispoints_protocol_error")
 				require.Contains(t, rec.Body.String(), "resp_corrected")
@@ -81,6 +81,10 @@ func TestIncidentBPSProtocolRecoveryBoundaries(t *testing.T) {
 				require.Equal(t, upstream.requests[0].Context().Value(httpUpstreamProfileContextKey{}), upstream.requests[1].Context().Value(httpUpstreamProfileContextKey{}))
 			} else {
 				require.Error(t, err)
+				if tc.name == "unmarked source cannot change operation" {
+					require.Contains(t, rec.Body.String(), "changed an operation")
+					require.NotContains(t, rec.Body.String(), "custom_tool_call")
+				}
 				if tc.name == "provider JSON attribution" {
 					require.Contains(t, rec.Body.String(), "server_is_overloaded")
 					require.NotContains(t, rec.Body.String(), "basispoints_protocol_error")

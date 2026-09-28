@@ -5,10 +5,11 @@ import BulkEditAccountModal from '../BulkEditAccountModal.vue'
 import ModelWhitelistSelector from '../ModelWhitelistSelector.vue'
 import { adminAPI } from '@/api/admin'
 
-const { showError, showSuccess, translate } = vi.hoisted(() => ({
+const { showError, showSuccess, translate, authIsSimpleMode } = vi.hoisted(() => ({
   showError: vi.fn(),
   showSuccess: vi.fn(),
-  translate: vi.fn((key: string) => key)
+  translate: vi.fn((key: string) => key),
+  authIsSimpleMode: { value: true }
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -19,9 +20,18 @@ vi.mock('@/stores/app', () => ({
   })
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    get isSimpleMode() {
+      return authIsSimpleMode.value
+    }
+  })
+}))
+
 vi.mock('@/api/admin', () => ({
   adminAPI: {
     accounts: {
+      getManagementCapabilities: vi.fn().mockResolvedValue({ web_search_enabled: false, account_quota_notify_enabled: false }),
       bulkUpdate: vi.fn(),
       checkMixedChannelRisk: vi.fn()
     }
@@ -82,6 +92,7 @@ function mountModal(extraProps: Record<string, unknown> = {}) {
 
 describe('BulkEditAccountModal', () => {
   beforeEach(() => {
+    authIsSimpleMode.value = true
     vi.mocked(adminAPI.accounts.bulkUpdate).mockReset()
     vi.mocked(adminAPI.accounts.checkMixedChannelRisk).mockReset()
     showError.mockReset()
@@ -100,6 +111,18 @@ describe('BulkEditAccountModal', () => {
 
   describe('Excel / BPS bulk settings', () => {
     const oauthProps = { selectedPlatforms: ['openai'], selectedTypes: ['oauth'] }
+    const defaultExtra = {
+      openai_excel_bps: true,
+      openai_excel_bps_mihomo: false,
+      openai_excel_bps_proxy_source: 'mihomo',
+      openai_excel_bps_cache_creation_as_input: false,
+      openai_excel_bps_ignore_images: false,
+      openai_excel_bps_ignore_encrypted_content: false,
+      openai_excel_bps_omit_unsupported_tools: false,
+      openai_excel_bps_auto_disable_on_403: false,
+      openai_excel_bps_auto_move_on_403: false,
+      openai_excel_bps_403_target_group_id: null
+    }
     const submit = async (wrapper: ReturnType<typeof mountModal>) => {
       await wrapper.get('#bulk-edit-account-form').trigger('submit.prevent')
       await flushPromises()
@@ -124,6 +147,8 @@ describe('BulkEditAccountModal', () => {
       const wrapper = mountModal(oauthProps)
       expect(wrapper.get('#bulk-edit-excel-bps-body').attributes('disabled')).toBeDefined()
       await enableBPS(wrapper)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-disable-on-403"]').setValue(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-move-on-403"]').setValue(true)
       await wrapper.get('#bulk-edit-excel-bps-enabled').setValue(false)
       await wrapper.get('#bulk-edit-status-enabled').setValue(true)
       await submit(wrapper)
@@ -137,9 +162,69 @@ describe('BulkEditAccountModal', () => {
       expect(wrapper.find('[data-testid="bulk-excel-bps-channel-policy"]').exists()).toBe(true)
       await submit(wrapper)
       expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        extra: defaultExtra
+      })
+    })
+
+    it('saves the hosted tool omission opt-in in bulk', async () => {
+      const wrapper = mountModal(oauthProps)
+      await enableBPS(wrapper)
+      await wrapper.get('[data-testid="bulk-excel-bps-omit-unsupported-tools"]').setValue(true)
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
         extra: {
-          openai_excel_bps: true,
-          openai_excel_bps_cache_creation_as_input: false
+          ...defaultExtra,
+          openai_excel_bps_omit_unsupported_tools: true
+        }
+      })
+    })
+
+    it.each([
+      { selector: 'bulk-excel-bps-ignore-images', field: 'openai_excel_bps_ignore_images' },
+      { selector: 'bulk-excel-bps-ignore-encrypted-content', field: 'openai_excel_bps_ignore_encrypted_content' }
+    ])('requires explicit opt-in for $field in bulk', async ({ selector, field }) => {
+      const wrapper = mountModal(oauthProps)
+      await enableBPS(wrapper)
+      const control = wrapper.get<HTMLInputElement>('[data-testid="' + selector + '"]')
+      expect(control.element.checked).toBe(false)
+      await control.setValue(true)
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], {
+        extra: { ...defaultExtra, [field]: true }
+      })
+      await wrapper.get('[data-testid="bulk-excel-bps-toggle"]').trigger('click')
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], {
+        extra: { ...defaultExtra, openai_excel_bps: false, openai_excel_bps_models: null }
+      })
+      wrapper.unmount()
+    })
+
+    it('saves the session proxy opt-in in bulk', async () => {
+      const wrapper = mountModal(oauthProps)
+      await enableBPS(wrapper)
+      await wrapper.get('[data-testid="excel-bps-mihomo"]').setValue(true)
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        extra: {
+          ...defaultExtra,
+          openai_excel_bps_mihomo: true
+        }
+      })
+    })
+
+    it('saves the IP management pool as the session proxy source in bulk', async () => {
+      const wrapper = mountModal(oauthProps)
+      await enableBPS(wrapper)
+      expect(wrapper.find('[data-testid="bulk-excel-bps-proxy-source-ip-pool"]').exists()).toBe(false)
+      await wrapper.get('[data-testid="excel-bps-mihomo"]').setValue(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-proxy-source-ip-pool"]').setValue(true)
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        extra: {
+          ...defaultExtra,
+          openai_excel_bps_mihomo: true,
+          openai_excel_bps_proxy_source: 'ip_pool'
         }
       })
     })
@@ -151,7 +236,7 @@ describe('BulkEditAccountModal', () => {
       await submit(wrapper)
       expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
         extra: {
-          openai_excel_bps: true,
+          ...defaultExtra,
           openai_excel_bps_cache_creation_as_input: true
         }
       })
@@ -160,14 +245,21 @@ describe('BulkEditAccountModal', () => {
     it('explicitly disables BPS and clears subordinate settings', async () => {
       const wrapper = mountModal(oauthProps)
       await enableBPS(wrapper)
+      await wrapper.get('[data-testid="bulk-excel-bps-omit-unsupported-tools"]').setValue(true)
       await wrapper.get('[data-testid="bulk-excel-bps-cache-creation-as-input"]').setValue(true)
+      await wrapper.get('[data-testid="excel-bps-mihomo"]').setValue(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-disable-on-403"]').setValue(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-move-on-403"]').setValue(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-403-target-group"]').setValue('0')
       await wrapper.get('[data-testid="bulk-excel-bps-toggle"]').trigger('click')
+      expect(wrapper.find('[data-testid="bulk-excel-bps-auto-disable-on-403"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="bulk-excel-bps-auto-move-on-403"]').exists()).toBe(false)
       await submit(wrapper)
       expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
         extra: {
+          ...defaultExtra,
           openai_excel_bps: false,
-          openai_excel_bps_models: null,
-          openai_excel_bps_cache_creation_as_input: false
+          openai_excel_bps_models: null
         }
       })
     })
@@ -175,7 +267,12 @@ describe('BulkEditAccountModal', () => {
     it('resets BPS controls when the modal is reopened', async () => {
       const wrapper = mountModal(oauthProps)
       await enableBPS(wrapper)
+      await wrapper.get('[data-testid="bulk-excel-bps-omit-unsupported-tools"]').setValue(true)
       await wrapper.get('[data-testid="bulk-excel-bps-cache-creation-as-input"]').setValue(true)
+      await wrapper.get('[data-testid="excel-bps-mihomo"]').setValue(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-disable-on-403"]').setValue(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-move-on-403"]').setValue(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-403-target-group"]').setValue('0')
       await wrapper.setProps({ show: false })
       await wrapper.setProps({ show: true })
       expect((wrapper.get('#bulk-edit-excel-bps-enabled').element as HTMLInputElement).checked).toBe(false)
@@ -183,11 +280,17 @@ describe('BulkEditAccountModal', () => {
       await enableBPS(wrapper)
       expect(wrapper.find('[data-testid="bulk-excel-bps-model-selection"]').exists()).toBe(false)
       expect((wrapper.get('[data-testid="bulk-excel-bps-cache-creation-as-input"]').element as HTMLInputElement).checked).toBe(false)
+      expect(wrapper.get<HTMLInputElement>('[data-testid="excel-bps-mihomo"]').element.checked).toBe(false)
+      expect(wrapper.get<HTMLInputElement>('[data-testid="bulk-excel-bps-auto-disable-on-403"]').element.checked).toBe(false)
+      expect(wrapper.get<HTMLInputElement>('[data-testid="bulk-excel-bps-auto-move-on-403"]').element.checked).toBe(false)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-move-on-403"]').setValue(true)
+      expect(wrapper.get<HTMLSelectElement>('[data-testid="bulk-excel-bps-403-target-group"]').element.value).toBe('')
     })
 
     it('does not submit hidden settings after target eligibility changes', async () => {
       const wrapper = mountModal(oauthProps)
       await enableBPS(wrapper)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-move-on-403"]').setValue(true)
       await wrapper.setProps({ selectedTypes: ['apikey'] })
       await submit(wrapper)
       expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
@@ -204,14 +307,85 @@ describe('BulkEditAccountModal', () => {
         target: { mode: 'filtered', filters, previewCount: 20, ...oauthProps }
       })
       await enableBPS(wrapper)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-disable-on-403"]').setValue(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-move-on-403"]').setValue(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-403-target-group"]').setValue('0')
       await submit(wrapper)
       expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith({
         filters,
         extra: {
-          openai_excel_bps: true,
-          openai_excel_bps_cache_creation_as_input: false
+          ...defaultExtra,
+          openai_excel_bps_auto_disable_on_403: true,
+          openai_excel_bps_auto_move_on_403: true,
+          openai_excel_bps_403_target_group_id: 0
         }
       })
+    })
+
+    it.each([
+      { disable: true, move: false, target: null },
+      { disable: false, move: true, target: 0 },
+      { disable: false, move: true, target: 7 },
+      { disable: true, move: true, target: 0 },
+      { disable: true, move: true, target: 7 }
+    ])('saves independent BPS 403 actions: %j', async ({ disable, move, target }) => {
+      const wrapper = mountModal({ ...oauthProps, groups: [{ id: 7, name: 'Quarantine', platform: 'openai' }] })
+      await enableBPS(wrapper)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-disable-on-403"]').setValue(disable)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-move-on-403"]').setValue(move)
+      if (move) await wrapper.get('[data-testid="bulk-excel-bps-403-target-group"]').setValue(String(target))
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        extra: {
+          ...defaultExtra,
+          openai_excel_bps_auto_disable_on_403: disable,
+          openai_excel_bps_auto_move_on_403: move,
+          openai_excel_bps_403_target_group_id: target
+        }
+      })
+      expect(showError).not.toHaveBeenCalled()
+    })
+
+    it('requires an explicit 403 group choice and clears it when the action is unchecked', async () => {
+      const wrapper = mountModal(oauthProps)
+      await enableBPS(wrapper)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-move-on-403"]').setValue(true)
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+      expect(showError).toHaveBeenCalledWith('admin.accounts.openai.excelBPS403SelectTarget')
+      await wrapper.get('[data-testid="bulk-excel-bps-403-target-group"]').setValue('0')
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-move-on-403"]').setValue(false)
+      expect(wrapper.find('[data-testid="bulk-excel-bps-403-target-group"]').exists()).toBe(false)
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { extra: defaultExtra })
+    })
+
+    it.each([false, true])('filters 403 destinations for simple mode %s and validates stale selections', async simpleMode => {
+      authIsSimpleMode.value = simpleMode
+      const wrapper = mountModal({ ...oauthProps, groups: [
+        { id: 7, name: 'Quarantine', platform: 'openai' },
+        { id: 8, name: 'Composite', platform: 'composite' },
+        { id: 9, name: 'Anthropic', platform: 'anthropic' }
+      ] })
+      await enableBPS(wrapper)
+      await wrapper.get('[data-testid="bulk-excel-bps-auto-move-on-403"]').setValue(true)
+      const selector = wrapper.get('[data-testid="bulk-excel-bps-403-target-group"]')
+      expect(selector.findAll('option').map(option => option.element.value))
+        .toEqual(simpleMode ? ['', '0', '7'] : ['', '0', '7', '8'])
+      await selector.setValue(simpleMode ? '7' : '8')
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
+        extra: {
+          ...defaultExtra,
+          openai_excel_bps_auto_move_on_403: true,
+          openai_excel_bps_403_target_group_id: simpleMode ? 7 : 8
+        }
+      })
+      vi.mocked(adminAPI.accounts.bulkUpdate).mockClear()
+      await wrapper.setProps({ groups: [] })
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).not.toHaveBeenCalled()
+      expect(showError).toHaveBeenCalledWith('admin.accounts.openai.excelBPS403SelectTarget')
     })
   })
 

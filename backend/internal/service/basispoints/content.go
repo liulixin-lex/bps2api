@@ -1,23 +1,55 @@
 package basispoints
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 )
 
-func validateHistoryContent(value any, inputIndex int, field string) error {
+// ContentValidationError identifies a rejected history part using only safe
+// protocol metadata, never the part's payload or caller-controlled type.
+type ContentValidationError struct {
+	Path        string
+	ContentType string
+	Shape       string
+	message     string
+}
+
+func (e *ContentValidationError) Error() string {
+	if e.Shape != "" {
+		return fmt.Sprintf("%s (path=%s; type=%s; shape=%s)", e.message, e.Path, e.ContentType, e.Shape)
+	}
+	return fmt.Sprintf("%s (path=%s; type=%s)", e.message, e.Path, e.ContentType)
+}
+
+func (b *Bridge) validateHistoryContent(value any, inputIndex int, field string) error {
 	content, _ := value.([]any)
 	for index, rawPart := range content {
 		part, _ := rawPart.(object)
 		normalizeContentPart(part)
+		path := fmt.Sprintf("input[%d].%s[%d]", inputIndex, field, index)
 		switch text(part["type"]) {
 		case "input_text", "output_text", "text", "refusal":
 		case "input_image":
-			if err := validateImage(part); err != nil {
-				return fmt.Errorf("%w (path=input[%d].%s[%d])", err, inputIndex, field, index)
+			var err error
+			if field == "output" && b.nativeToolImages[text(part["image_url"])] {
+				// Only this request's fully validated tool screenshots may remain inline.
+				if _, exists := part["file_id"]; exists {
+					err = fmt.Errorf("basispoints input_image requires exactly one image reference")
+				} else {
+					err = validateImageDetail(part)
+				}
+			} else {
+				err = validateImageWithAttachments(part, b.options.NativeAttachments)
 			}
+			if err != nil {
+				return &ContentValidationError{Path: path, ContentType: "input_image", message: err.Error()}
+			}
+		case "encrypted_content":
+			return &ContentValidationError{Path: path, ContentType: "encrypted_content", message: "basispoints cannot forward encrypted_content message parts; refresh the model catalog and start a new conversation without a multi-agent v2 override, or resend the original plaintext"}
 		default:
-			return fmt.Errorf("basispoints supports text and HTTPS input_image content only (path=input[%d].%s[%d]; type=%s)", inputIndex, field, index, contentTypeDiagnostic(part))
+			return &ContentValidationError{Path: path, ContentType: contentTypeDiagnostic(part), Shape: contentShapeDiagnostic(rawPart), message: "basispoints supports text and HTTPS input_image content only"}
 		}
 	}
 	return nil
@@ -38,12 +70,54 @@ func contentTypeDiagnostic(part object) string {
 		return "non_string"
 	}
 	switch kind {
-	case "image", "image_url", "output_image", "screenshot", "computer_screenshot", "input_file", "file", "document",
+	case "image", "image_url", "output_image", "screenshot", "computer_screenshot", "provider_image", "input_file", "file", "document",
 		"input_audio", "output_audio", "audio", "reasoning_text", "summary_text",
 		"tool_use", "tool_result", "thinking", "redacted_thinking":
 		return kind
 	default:
 		return "unknown"
+	}
+}
+
+// Unknown content cannot safely be lowered without knowing its protocol. Expose
+// a bounded, shallow signature to diagnose it without printing caller-supplied
+// types, unknown field names, URLs, text, or ciphertext. Fixed field order also
+// makes repeated failures comparable across long histories and request logs.
+func contentShapeDiagnostic(value any) string {
+	part, ok := value.(object)
+	if !ok {
+		return contentJSONKind(value)
+	}
+	fields := make([]string, 0, 18)
+	known := 0
+	for _, key := range []string{"type", "text", "content", "encrypted_content", "image_url", "url", "source", "file_id", "detail", "data", "payload", "encoding", "mime_type", "annotations", "refusal", "thinking", "signature"} {
+		if field, exists := part[key]; exists {
+			fields = append(fields, key+":"+contentJSONKind(field))
+			known++
+		}
+	}
+	if other := len(part) - known; other > 0 {
+		fields = append(fields, fmt.Sprintf("other_fields:%d", other))
+	}
+	return "object{" + strings.Join(fields, ",") + "}"
+}
+
+func contentJSONKind(value any) string {
+	switch value.(type) {
+	case nil:
+		return "null"
+	case string:
+		return "string"
+	case bool:
+		return "boolean"
+	case json.Number, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return "number"
+	case []any:
+		return "array"
+	case object:
+		return "object"
+	default:
+		return "other"
 	}
 }
 

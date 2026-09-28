@@ -127,7 +127,7 @@ func TestHostedDeclarationsFilteredAndUnknownTypesRejected(t *testing.T) {
 	for _, kind := range []string{"web_search", "web_search_preview", "web_search_preview_2025_03_11", "web_search_2025_08_26", "tool_search", "image_generation", "file_search", "code_interpreter", "computer", "computer_use_preview", "mcp"} {
 		source := testSource()
 		source["tools"] = []any{object{"type": kind}, object{"type": "function", "name": "shell"}}
-		body, bridge := mustPrepare(t, source, "scope", new(ReplayCache))
+		body, bridge := mustPrepare(t, source, "scope", new(ReplayCache), PrepareOptions{OmitUnsupportedTools: true})
 		if len(bridge.tools) != 1 || bridge.tools["shell"].Name != "shell" || body["tools"] != nil {
 			t.Fatalf("hosted %s affected available client tool or leaked upstream", kind)
 		}
@@ -165,7 +165,8 @@ func TestToolOutputHTTPSImagesRemainIntact(t *testing.T) {
 	source["input"] = []any{message("user", "inspect"), object{"type": "function_call", "name": "view_image", "call_id": "call_image", "arguments": `{}`}, object{"type": "function_call_output", "call_id": "call_image", "output": []any{image}}}
 	body, _ := mustPrepare(t, source, "scope", nil)
 	items := mustTestValue[[]any](t, body["input"])
-	if !reflect.DeepEqual(mustTestValue[object](t, items[len(items)-1])["output"], []any{image}) {
+	content := mustTestValue[[]any](t, mustTestValue[object](t, items[len(items)-1])["content"])
+	if !reflect.DeepEqual(content[len(content)-1], image) {
 		t.Fatal("HTTPS tool image changed")
 	}
 }

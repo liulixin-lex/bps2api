@@ -22,9 +22,9 @@ func NativeFallbackReason(body []byte) string {
 		return reason
 	}
 	choice := fields["tool_choice"]
-	// The bridge only implements auto/none. Preserve forced-tool semantics on
-	// the native channel instead of rejecting or silently weakening them.
-	if choice.String() == "required" || choice.IsObject() {
+	// Client selections are enforced by Prepare and response validation. Only
+	// hosted or unknown selection types remain capability diagnostics.
+	if unsupportedToolChoice(choice) {
 		return "tool_choice"
 	}
 	if fields["previous_response_id"].String() != "" {
@@ -41,7 +41,7 @@ func NativeFallbackReason(body []byte) string {
 	if input.IsArray() {
 		input.ForEach(func(_, item gjson.Result) bool {
 			switch item.Get("type").String() {
-			case "configuration_update", "agent_message", "item_reference", "tool_search_call", "tool_search_output",
+			case "configuration_update", "item_reference", "tool_search_call", "tool_search_output",
 				"computer_call", "computer_call_output", "code_interpreter_call", "image_generation_call",
 				"file_search_call", "web_search_call", "local_shell_call", "local_shell_call_output",
 				"shell_call", "shell_call_output", "apply_patch_call", "apply_patch_call_output", "mcp_call", "mcp_list_tools", "mcp_approval_request", "mcp_approval_response", "mcp_tool_call_output":
@@ -82,6 +82,29 @@ func NativeFallbackReason(body []byte) string {
 	// Inline data images are handled by Sub2API's local relay before Prepare;
 	// leave them on BPS so the relay can rewrite them to signed HTTPS URLs.
 	return ""
+}
+
+func unsupportedToolChoice(choice gjson.Result) bool {
+	if !choice.IsObject() {
+		return false
+	}
+	switch choice.Get("type").String() {
+	case "function", "custom", "namespace":
+		return false
+	case "allowed_tools":
+		unsupported := false
+		choice.Get("tools").ForEach(func(_, item gjson.Result) bool {
+			switch item.Get("type").String() {
+			case "function", "custom", "namespace":
+			default:
+				unsupported = true
+			}
+			return !unsupported
+		})
+		return unsupported
+	default:
+		return true
+	}
 }
 
 // A hosted tool is a provider capability, never an executable client function.

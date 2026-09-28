@@ -33,10 +33,19 @@ func TestFollowupBPSErrorClassification(t *testing.T) {
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 			_, err := svc.Forward(context.Background(), c, excelAccount(), []byte(`{"model":"gpt-5.6-sol","input":"test"}`))
 			require.Error(t, err)
-			require.Equal(t, tc.status, w.Code)
-			require.Equal(t, tc.kind, gjson.GetBytes(w.Body.Bytes(), "error.type").String())
-			require.Equal(t, "basispoints_upstream_error", gjson.GetBytes(w.Body.Bytes(), "error.code").String())
-			require.Equal(t, "30", w.Header().Get("Retry-After"))
+			if tc.status == http.StatusTooManyRequests {
+				requireExcelBPSRateLimitFailover(t, err, c)
+				var failover *UpstreamFailoverError
+				require.ErrorAs(t, err, &failover)
+				require.Equal(t, "30", failover.ResponseHeaders.Get("Retry-After"))
+				require.Equal(t, "gpt-5.6-sol", failover.RequiredExcelBPSUpstreamModel)
+				require.Empty(t, w.Body.String())
+			} else {
+				require.Equal(t, tc.status, w.Code)
+				require.Equal(t, tc.kind, gjson.GetBytes(w.Body.Bytes(), "error.type").String())
+				require.Equal(t, "basispoints_upstream_error", gjson.GetBytes(w.Body.Bytes(), "error.code").String())
+				require.Equal(t, "30", w.Header().Get("Retry-After"))
+			}
 			require.NotContains(t, w.Body.String(), "PRIVATE_UPSTREAM")
 			require.Len(t, upstream.requests, 1, "classification must not introduce request replay")
 		})

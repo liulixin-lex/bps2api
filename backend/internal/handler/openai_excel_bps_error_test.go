@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -56,9 +57,14 @@ func TestExcelBPSErrorDoesNotAppendFallback(t *testing.T) {
 			before := c.Writer.Size()
 			_, err := gateway.Forward(context.Background(), c, account, []byte(body))
 			require.Error(t, err)
+			h := &OpenAIGatewayHandler{}
+			var failover *service.UpstreamFailoverError
+			if errors.As(err, &failover) {
+				require.False(t, c.Writer.Written())
+				h.handleFailoverExhausted(c, failover, false)
+			}
 			response := rec.Body.String()
 			require.NotEmpty(t, response, "forward error: %v", err)
-			h := &OpenAIGatewayHandler{}
 			if !openAIForwardErrorAlreadyCommunicated(c, before, err) {
 				require.False(t, h.ensureForwardErrorResponse(c, false))
 			}

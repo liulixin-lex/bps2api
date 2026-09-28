@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-func TestIncidentForcedToolChoiceUsesNativeChannel(t *testing.T) {
+func TestIncidentForcedClientToolChoiceStaysOnBPS(t *testing.T) {
 	for _, choice := range []string{
 		`"required"`, `{"type":"function","name":"exec"}`,
 		`{"type":"custom","name":"patch"}`, `{"type":"allowed_tools","mode":"required","tools":[]}`,
 	} {
 		body := []byte(`{"model":"gpt-5.6-sol","tool_choice":` + choice + `,"input":"test"}`)
-		if got := NativeFallbackReason(body); got != "tool_choice" {
-			t.Errorf("choice=%s route=%q, want native tool_choice route", choice, got)
+		if got := NativeFallbackReason(body); got != "" {
+			t.Errorf("choice=%s unexpectedly requires native capability: %q", choice, got)
 		}
 	}
 	for _, choice := range []string{`"auto"`, `"none"`, `null`} {
@@ -57,7 +57,7 @@ func TestIncidentRawCommandTransportRoundTrip(t *testing.T) {
 	}}}
 	body, b := mustPrepare(t, source, "incident", new(ReplayCache))
 	bodyJSON, _ := json.Marshal(body)
-	if !strings.Contains(string(bodyJSON), "codex2api.function_code/exec_command") {
+	if !strings.Contains(string(bodyJSON), "codex2api.function_cmd/exec_command") {
 		t.Fatal("shell command was not advertised with lossless raw transport")
 	}
 	input := "python3 - <<'PY'\nprint(\"C:\\\\work\")\nPY\n"
@@ -77,7 +77,7 @@ func TestIncidentRawCommandTransportRoundTrip(t *testing.T) {
 	}
 	var outer object
 	_ = json.Unmarshal([]byte(text(replay["arguments"])), &outer)
-	if outer["code"] != input || outer["summary"] != "codex2api.function_code/exec_command" {
+	if outer["code"] != input || outer["summary"] != "codex2api.function_cmd/exec_command" {
 		t.Fatal("raw command history lost its exact transport")
 	}
 }

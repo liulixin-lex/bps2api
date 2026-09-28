@@ -112,7 +112,9 @@ func TestCollaborationPlaintextStreamsAndReplays(t *testing.T) {
 				child["input"] = []any{childMessage}
 				prepared, _ := mustPrepare(t, child, "account/key/child", new(ReplayCache))
 				childItems := mustTestValue[[]any](t, prepared["input"])
-				if !reflect.DeepEqual(childItems[len(childItems)-1], childMessage) {
+				lowered := mustTestValue[object](t, childItems[len(childItems)-1])
+				content := mustTestValue[[]any](t, lowered["content"])
+				if lowered["type"] != "message" || lowered["role"] != "user" || len(lowered) != 3 || len(content) != 2 || !reflect.DeepEqual(content[1:], childMessage["content"]) {
 					t.Fatal("child task changed")
 				}
 
@@ -168,8 +170,8 @@ func TestAgentCiphertextIsNeverGuessedAsPlaintext(t *testing.T) {
 		source["input"] = []any{object{"type": "agent_message", "author": "/root", "recipient": "/root/worker",
 			"content": []any{object{"type": "encrypted_content", "encrypted_content": value}}}}
 		raw, _ := json.Marshal(source)
-		if _, _, err := Prepare(raw, "scope", nil); err == nil {
-			t.Fatal("unknown encrypted content must not be reinterpreted or dropped")
+		if _, _, err := Prepare(raw, "scope", nil); err == nil || !strings.Contains(err.Error(), "type=encrypted_content") || !strings.Contains(err.Error(), "path=input[0].content[0]") || strings.Contains(err.Error(), value) {
+			t.Fatalf("encrypted content must be rejected with a safe, specific diagnostic: %v", err)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -66,6 +67,13 @@ func TestExcelBPSExplicitTransientHTTPRecovery(t *testing.T) {
 				require.Empty(t, w.Header().Get("Retry-After"))
 			} else {
 				require.Error(t, err)
+				if tc.status == http.StatusTooManyRequests {
+					var failover *UpstreamFailoverError
+					require.True(t, errors.As(err, &failover))
+					require.Equal(t, ExcelBPSRateLimitedReason, failover.Reason)
+					require.False(t, IsResponseCommitted(c), "the handler owns the final 429 or account switch")
+					return
+				}
 				require.Equal(t, tc.status, w.Code)
 				if tc.calls == 1 {
 					require.Equal(t, tc.header, w.Header().Get("Retry-After"))

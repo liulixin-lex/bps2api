@@ -115,11 +115,22 @@ func writeOpenAICompactSSEFailureMessage(c *gin.Context, statusCode int, errType
 // Typed adapters may add an error classification while preserving the existing
 // compact failure envelope and unchanged output for callers without a type.
 func writeOpenAICompactSSEFailureMessageWithType(c *gin.Context, statusCode int, errType, message, classification string) {
+	writeOpenAICompactSSEFailureMessageFields(c, statusCode, errType, message, classification, "")
+}
+
+func writeOpenAICompactSSEFailureMessageParam(c *gin.Context, statusCode int, errType, message, param string) {
+	writeOpenAICompactSSEFailureMessageFields(c, statusCode, errType, message, "", param)
+}
+
+func writeOpenAICompactSSEFailureMessageFields(c *gin.Context, statusCode int, errType, message, classification, param string) {
 	if c == nil {
 		return
 	}
 	MarkOpsStreamError(c, errType, message, statusCode)
 	errorFields := map[string]any{"code": errType, "message": message}
+	if param != "" {
+		errorFields["param"] = param
+	}
 	if classification != "" {
 		errorFields["type"] = classification
 	}

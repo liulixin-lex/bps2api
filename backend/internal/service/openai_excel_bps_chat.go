@@ -120,14 +120,22 @@ func (w *excelBPSChatWriter) WriteString(value string) (int, error) {
 	return len(value), nil
 }
 
-func writeExcelBPSStreamFailure(c *gin.Context, chat *excelBPSChatRequest, output io.StringWriter, status int, code, message string) {
+func writeExcelBPSStreamFailure(c *gin.Context, chat *excelBPSChatRequest, output io.StringWriter, status int, code, message string, param ...string) {
 	_, messages := output.(*excelBPSMessagesWriter)
 	if chat == nil && !messages {
-		writeOpenAICompactSSEFailureMessageWithType(c, status, code, message, excelBPSErrorType(status))
+		failureParam := ""
+		if len(param) > 0 {
+			failureParam = param[0]
+		}
+		writeOpenAICompactSSEFailureMessageFields(c, status, code, message, excelBPSErrorType(status), failureParam)
 		return
 	}
 	MarkOpsStreamError(c, code, message, status)
-	event, _ := json.Marshal(gin.H{"type": "response.failed", "response": gin.H{"status": "failed", "error": gin.H{"type": excelBPSErrorType(status), "code": code, "message": message}}})
+	errorBody := gin.H{"type": excelBPSErrorType(status), "code": code, "message": message}
+	if len(param) > 0 && param[0] != "" {
+		errorBody["param"] = param[0]
+	}
+	event, _ := json.Marshal(gin.H{"type": "response.failed", "response": gin.H{"status": "failed", "error": errorBody}})
 	_, _ = output.WriteString("data: " + string(event) + "\n\n")
 	c.Writer.Flush()
 }

@@ -1,6 +1,10 @@
 package service
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
+)
 
 // resolveOpenAIForwardModel 解析 OpenAI 兼容转发使用的模型。
 // messagesDispatchMappedModel 是调用方已为 /v1/messages 解析的显式调度结果；
@@ -19,6 +23,22 @@ func resolveOpenAIForwardModel(account *Account, requestedModel, messagesDispatc
 		return messagesDispatchMappedModel
 	}
 	return mappedModel
+}
+
+// ResolveOpenAIChatCompletionsUpstreamModel mirrors ForwardAsChatCompletions:
+// resolve the model from its channel-mapped body, then apply upstream aliases.
+// A routing model alone is insufficient for failover's actual-model constraint.
+func ResolveOpenAIChatCompletionsUpstreamModel(account *Account, requestedModel string) string {
+	return normalizeOpenAIModelForUpstream(account, resolveOpenAIForwardModel(account, requestedModel, ""))
+}
+
+// ResolveOpenAIMessagesUpstreamModel mirrors ForwardAsAnthropic in order:
+// normalize the channel-mapped body model, prefer an account mapping of that
+// model over the dispatch fallback, then apply upstream aliases.
+func ResolveOpenAIMessagesUpstreamModel(account *Account, requestedModel, messagesDispatchMappedModel string) string {
+	request := &apicompat.AnthropicRequest{Model: requestedModel}
+	applyOpenAICompatModelNormalization(request)
+	return normalizeOpenAIModelForUpstream(account, resolveOpenAIForwardModel(account, request.Model, messagesDispatchMappedModel))
 }
 
 // openAIOAuthForeignModelPrefixes 列出明确属于其他厂商家族的模型名前缀。

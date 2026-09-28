@@ -154,13 +154,17 @@ func excelBPSAnthropicErrorType(kind string) string {
 	}
 }
 
-func writeExcelBPSJSONError(c *gin.Context, messages *excelBPSMessagesRequest, status int, code, message string) {
+func writeExcelBPSJSONError(c *gin.Context, messages *excelBPSMessagesRequest, status int, code, message string, param ...string) {
 	if messages != nil {
 		c.Header("Content-Type", "application/json")
 		writeAnthropicError(c, status, excelBPSAnthropicErrorType(excelBPSErrorType(status)), message)
 		return
 	}
-	c.JSON(status, gin.H{"error": gin.H{"type": excelBPSErrorType(status), "code": code, "message": message}})
+	errorBody := gin.H{"type": excelBPSErrorType(status), "code": code, "message": message}
+	if len(param) > 0 && param[0] != "" {
+		errorBody["param"] = param[0]
+	}
+	c.JSON(status, gin.H{"error": errorBody})
 }
 
 func writeExcelBPSMessagesResponse(c *gin.Context, completed []byte, messages *excelBPSMessagesRequest) error {

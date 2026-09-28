@@ -23,7 +23,7 @@ func TestScaleProtocolNativeRequestOptions(t *testing.T) {
 		{"additional_include", object{"include": []any{"reasoning.encrypted_content", "output_text.logprobs"}}, "include"},
 		{"defaults", object{"text": object{"verbosity": "medium"}, "reasoning": object{"summary": "auto", "context": "auto", "effort": "high"}, "include": []any{"reasoning.encrypted_content"}, "background": false}, ""},
 		{"nulls", object{"text": object{"verbosity": nil}, "reasoning": object{"summary": nil, "context": nil, "effort": nil}, "include": nil}, ""},
-		{"agent_message", object{"input": []any{object{"type": "agent_message", "author": "one", "recipient": "two", "content": []any{}}}}, "native_history"},
+		{"agent_message", object{"input": []any{object{"type": "agent_message", "author": "one", "recipient": "two", "content": []any{}}}}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -40,6 +40,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	account = latest
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
+	// A failed account attempt must not leave a bypass reason on a later BPS response.
+	c.Writer.Header().Del("X-Codex2API-Basispoints-Bypass")
+	c.Writer.Header().Del("X-Codex2API-Upstream")
 	if shouldForwardOpenAIResponsesViaChatCompletions(account, body) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 	}
@@ -88,6 +91,16 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		// instead of silently changing the provider endpoint.
 		c.Header("X-Codex2API-Upstream", "basispoints")
 		return s.forwardExcelBPS(ctx, c, account, body, startTime)
+	}
+
+	if account.IsOpenAIOAuthLike() {
+		stripped, changed, stripErr := stripOpenAICodexUnsupportedWebSearchFields(body)
+		if stripErr != nil {
+			return nil, fmt.Errorf("strip unsupported Codex web search fields: %w", stripErr)
+		}
+		if changed {
+			body = stripped
+		}
 	}
 
 	// The SDK adapter owns Lite declarations, custom tools, replay item IDs,

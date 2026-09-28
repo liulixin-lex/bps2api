@@ -70,8 +70,17 @@ func TestExcelBPSAutoDisableOn403(t *testing.T) {
 				c, _ := gin.CreateTestContext(rec)
 				c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 				_, err := svc.Forward(context.Background(), c, account, []byte(fmt.Sprintf(`{"model":"gpt-6-astra","input":"test","stream":%v}`, stream)))
-				require.EqualError(t, err, "excel BPS: "+wantCode)
-				require.Equal(t, tc.status, rec.Code)
+				if tc.status == http.StatusTooManyRequests {
+					// The handler answers after trying other accounts.
+					requireExcelBPSRateLimitFailover(t, err, c)
+					wantCode = ""
+				} else if tc.modelError {
+					requireExcelBPSModelAccessFailover(t, err, c, "gpt-6-astra")
+					wantCode = ""
+				} else {
+					require.EqualError(t, err, "excel BPS: "+wantCode)
+					require.Equal(t, tc.status, rec.Code)
+				}
 				require.Equal(t, wantCode, gjson.Get(rec.Body.String(), "error.code").String())
 				require.Equal(t, tc.changed && tc.writeErr == nil, strings.Contains(rec.Body.String(), "routing was paused"))
 				require.NotContains(t, rec.Body.String(), "PRIVATE_UPSTREAM")

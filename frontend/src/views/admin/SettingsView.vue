@@ -4630,6 +4630,22 @@
                       />
                       <span>{{ t("admin.settings.gatewayForwarding.codexTicketProxyModeStatic") }}</span>
                     </label>
+                    <label
+                      class="inline-flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm transition-colors"
+                      :class="codexTicketProxyMode === 'ip_pool'
+                        ? 'border-primary-500 bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300'
+                        : 'border-gray-200 text-gray-600 hover:border-primary-300 dark:border-dark-600 dark:text-gray-400'"
+                    >
+                      <input
+                        class="sr-only"
+                        type="radio"
+                        name="codex-ticket-proxy-mode"
+                        value="ip_pool"
+                        :checked="codexTicketProxyMode === 'ip_pool'"
+                        @change="selectCodexTicketProxyMode('ip_pool')"
+                      />
+                      <span>{{ t("admin.settings.gatewayForwarding.codexTicketProxyModeIPPool") }}</span>
+                    </label>
                   </div>
                   <div
                     v-if="codexTicketProxyMode === 'mihomo'"
@@ -4639,8 +4655,15 @@
                       <span>{{ t("admin.settings.gatewayForwarding.codexTicketProxyMihomoEndpoint") }}</span>
                       <code class="rounded bg-white/70 px-1.5 py-0.5 font-mono text-xs dark:bg-dark-800/70">{{ CODEX_TICKET_MIHOMO_PROXY_URL }}</code>
                     </div>
-                    <MihomoSettings @ready="selectMihomoHarvestProxy" />
+                    <MihomoProxySelector @ready="selectMihomoHarvestProxy" />
                   </div>
+                  <p
+                    v-else-if="codexTicketProxyMode === 'ip_pool'"
+                    data-testid="codex-ticket-proxy-ip-pool-hint"
+                    class="mt-3 rounded-md border border-primary-200 bg-primary-50/60 px-3 py-2.5 text-sm text-primary-800 dark:border-primary-800 dark:bg-primary-900/20 dark:text-primary-200"
+                  >
+                    {{ t("admin.settings.gatewayForwarding.codexTicketProxyIPPoolHint") }}
+                  </p>
                   <input
                     v-else
                     id="codex-ticket-harvest-proxy"
@@ -7372,21 +7395,32 @@
               <Toggle id="excel-bps-image-enabled" v-model="form.excel_bps_image_relay_enabled" />
             </div>
             <div v-if="form.excel_bps_image_relay_enabled">
-              <label for="excel-bps-image-base-url" class="input-label">
-                {{ t('admin.settings.features.excelBpsImages.baseUrl') }}
-              </label>
-              <input
-                id="excel-bps-image-base-url"
-                v-model.trim="form.excel_bps_image_base_url"
-                type="url"
-                class="input"
-                placeholder="https://your-api.example.com"
-                required
-              />
-              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.settings.features.excelBpsImages.baseUrlHint') }}
+              <label for="excel-bps-image-mode" class="input-label">{{ t('admin.settings.features.excelBpsImages.mode') }}</label>
+              <select id="excel-bps-image-mode" v-model="form.excel_bps_image_mode" class="input">
+                <option value="relay">{{ t('admin.settings.features.excelBpsImages.modeRelay') }}</option>
+                <option value="native">{{ t('admin.settings.features.excelBpsImages.modeNative') }}</option>
+              </select>
+              <p v-if="form.excel_bps_image_mode === 'native'" class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.settings.features.excelBpsImages.nativeHint') }}
               </p>
-              <div class="mt-5 grid gap-4 sm:grid-cols-3">
+              <div v-if="form.excel_bps_image_mode === 'relay'" class="mt-5">
+                <label for="excel-bps-image-base-url" class="input-label">
+                  {{ t('admin.settings.features.excelBpsImages.baseUrl') }}
+                </label>
+                <input
+                  id="excel-bps-image-base-url"
+                  v-model.trim="form.excel_bps_image_base_url"
+                  type="url"
+                  class="input"
+                  placeholder="https://your-api.example.com"
+                  required
+                />
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.excelBpsImages.baseUrlHint') }}
+                </p>
+              </div>
+              <h4 class="mt-6 input-label">{{ t('admin.settings.features.excelBpsImages.requestLimitsTitle') }}</h4>
+              <div class="mt-5 grid gap-4 sm:grid-cols-4">
                 <div class="space-y-1">
                   <label for="excel-bps-image-body-limit" class="input-label">{{ t('admin.settings.features.excelBpsImages.bodyLimit') }}</label>
                   <input id="excel-bps-image-body-limit" v-model.number="form.excel_bps_image_body_limit_mib" class="input" type="number" min="1" max="64" step="1" required />
@@ -7399,16 +7433,51 @@
                   <label for="excel-bps-image-max-requests" class="input-label">{{ t('admin.settings.features.excelBpsImages.maxRequests') }}</label>
                   <input id="excel-bps-image-max-requests" v-model.number="form.excel_bps_image_max_requests" class="input" type="number" min="1" max="512" step="1" required />
                 </div>
+                <div class="space-y-1">
+                  <label for="excel-bps-image-max-images" class="input-label">{{ t('admin.settings.features.excelBpsImages.maxImages') }}</label>
+                  <input id="excel-bps-image-max-images" v-model.number="form.excel_bps_image_max_images" class="input" type="number" min="1" max="4096" step="1" required />
+                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.features.excelBpsImages.limitRange', { max: 4096 }) }}</p>
+                </div>
               </div>
               <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
                 {{ t('admin.settings.features.excelBpsImages.budgetHint') }}
               </p>
-              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.settings.features.excelBpsImages.retentionHint') }}
+              <p v-if="form.excel_bps_image_mode === 'native'" class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                {{ t('admin.settings.features.excelBpsImages.nativeRetentionHint', { maxImages: form.excel_bps_image_max_images }) }}
               </p>
-              <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.settings.features.excelBpsImages.capacityHint') }}
-              </p>
+              <template v-if="form.excel_bps_image_mode === 'relay'">
+                <h4 class="mt-6 input-label">{{ t('admin.settings.features.excelBpsImages.imageLimitsTitle') }}</h4>
+                <div class="mt-3 grid gap-4 sm:grid-cols-3">
+                  <div class="space-y-1">
+                    <label for="excel-bps-image-max-image-mib" class="input-label">{{ t('admin.settings.features.excelBpsImages.maxImageMiB') }}</label>
+                    <input id="excel-bps-image-max-image-mib" v-model.number="form.excel_bps_image_max_image_mib" class="input" type="number" min="1" max="128" step="1" required />
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.features.excelBpsImages.limitRange', { max: 128 }) }}</p>
+                  </div>
+                  <div class="space-y-1">
+                    <label for="excel-bps-image-max-total-mib" class="input-label">{{ t('admin.settings.features.excelBpsImages.maxTotalMiB') }}</label>
+                    <input id="excel-bps-image-max-total-mib" v-model.number="form.excel_bps_image_max_total_mib" class="input" type="number" min="1" max="128" step="1" required />
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.features.excelBpsImages.limitRange', { max: 128 }) }}</p>
+                  </div>
+                  <div class="space-y-1">
+                    <label for="excel-bps-image-storage-mib" class="input-label">{{ t('admin.settings.features.excelBpsImages.storageMiB') }}</label>
+                    <input id="excel-bps-image-storage-mib" v-model.number="form.excel_bps_image_storage_mib" class="input" type="number" min="1" max="16384" step="1" required />
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.features.excelBpsImages.limitRange', { max: 16384 }) }}</p>
+                  </div>
+                  <div class="space-y-1">
+                    <label for="excel-bps-image-storage-entries" class="input-label">{{ t('admin.settings.features.excelBpsImages.storageEntries') }}</label>
+                    <input id="excel-bps-image-storage-entries" v-model.number="form.excel_bps_image_storage_entries" class="input" type="number" min="1" max="65536" step="1" required />
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.features.excelBpsImages.limitRange', { max: 65536 }) }}</p>
+                  </div>
+                  <div class="space-y-1">
+                    <label for="excel-bps-image-ttl-minutes" class="input-label">{{ t('admin.settings.features.excelBpsImages.ttlMinutes') }}</label>
+                    <input id="excel-bps-image-ttl-minutes" v-model.number="form.excel_bps_image_ttl_minutes" class="input" type="number" min="1" max="1440" step="1" required />
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.features.excelBpsImages.limitRange', { max: 1440 }) }}</p>
+                  </div>
+                </div>
+                <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.excelBpsImages.retentionHint') }}
+                </p>
+              </template>
             </div>
           </div>
         </div>
@@ -9289,7 +9358,7 @@ import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
-import MihomoSettings from "@/views/admin/settings/MihomoSettings.vue";
+import MihomoProxySelector from "@/views/admin/settings/MihomoProxySelector.vue";
 import PelicanShowcaseSettings from "@/views/admin/settings/PelicanShowcaseSettings.vue";
 import {
   defaultPelicanShowcaseConfig,
@@ -10343,11 +10412,18 @@ const form = reactive<SettingsForm>({
   request_capture_enabled: false,
   request_capture_quota_mib: 1024,
   request_capture_retention_days: 7,
+  excel_bps_image_mode: 'relay' as 'relay' | 'native',
   excel_bps_image_relay_enabled: false,
   excel_bps_image_base_url: '',
   excel_bps_image_body_limit_mib: 64,
   excel_bps_image_budget_mib: 512,
   excel_bps_image_max_requests: 32,
+  excel_bps_image_max_image_mib: 20,
+  excel_bps_image_max_images: 500,
+  excel_bps_image_max_total_mib: 48,
+  excel_bps_image_storage_mib: 1024,
+  excel_bps_image_storage_entries: 512,
+  excel_bps_image_ttl_minutes: 30,
 });
 
 // 人机验证 UI 状态：单卡片「总开关 + 服务商单选」，落库仍是三个独立
@@ -11301,12 +11377,23 @@ const codexSyncedVersionLabel = computed(() => {
 });
 
 const CODEX_TICKET_MIHOMO_PROXY_URL = "http://127.0.0.1:3101";
-type CodexTicketProxyMode = "mihomo" | "static";
+const CODEX_TICKET_IP_POOL_PROXY_URL = "ippool://active";
+type CodexTicketProxyMode = "mihomo" | "static" | "ip_pool";
 const codexTicketProxyMode = ref<CodexTicketProxyMode>("static");
 const codexTicketStaticProxyDraft = ref("");
 
 function isCodexTicketMihomoProxyURL(value: string): boolean {
   return value.trim().replace(/\/+$/, "") === CODEX_TICKET_MIHOMO_PROXY_URL;
+}
+
+function isCodexTicketIPPoolProxyURL(value: string): boolean {
+  return value.trim() === CODEX_TICKET_IP_POOL_PROXY_URL;
+}
+
+function codexTicketProxyModeOf(value: string): CodexTicketProxyMode {
+  if (isCodexTicketMihomoProxyURL(value)) return "mihomo";
+  if (isCodexTicketIPPoolProxyURL(value)) return "ip_pool";
+  return "static";
 }
 
 function selectMihomoHarvestProxy(endpoint: string): void {
@@ -11316,19 +11403,23 @@ function selectMihomoHarvestProxy(endpoint: string): void {
 
 function syncCodexTicketProxyMode(): void {
   const current = form.openai_codex_ticket_harvest_proxy_url;
-  const isMihomo = isCodexTicketMihomoProxyURL(current);
-  codexTicketProxyMode.value = isMihomo ? "mihomo" : "static";
-  codexTicketStaticProxyDraft.value = isMihomo ? form.openai_codex_ticket_static_proxy_url || "" : current;
+  const mode = codexTicketProxyModeOf(current);
+  codexTicketProxyMode.value = mode;
+  codexTicketStaticProxyDraft.value = mode === "static" ? current : form.openai_codex_ticket_static_proxy_url || "";
 }
 
 function selectCodexTicketProxyMode(mode: CodexTicketProxyMode): void {
-  const wasMihomo = isCodexTicketMihomoProxyURL(form.openai_codex_ticket_harvest_proxy_url);
-  if (!wasMihomo) {
+  const previous = codexTicketProxyModeOf(form.openai_codex_ticket_harvest_proxy_url);
+  if (previous === "static") {
     codexTicketStaticProxyDraft.value =
       form.openai_codex_ticket_harvest_proxy_url;
   }
   codexTicketProxyMode.value = mode;
-  if (mode === "static" && wasMihomo) {
+  if (mode === "ip_pool") {
+    form.openai_codex_ticket_harvest_proxy_url = CODEX_TICKET_IP_POOL_PROXY_URL;
+  } else if (previous !== "static" && previous !== mode) {
+    // Mihomo writes its endpoint only once the kernel reports ready, so until
+    // then the form keeps the static address rather than the pool sentinel.
     form.openai_codex_ticket_harvest_proxy_url =
       codexTicketStaticProxyDraft.value;
   }
@@ -11635,7 +11726,7 @@ async function saveSettings() {
   saving.value = true;
   try {
     const imageBaseUrl = form.excel_bps_image_base_url.trim();
-    if (form.excel_bps_image_relay_enabled || imageBaseUrl) {
+    if ((form.excel_bps_image_relay_enabled && form.excel_bps_image_mode === 'relay') || imageBaseUrl) {
       try {
         const parsed = new URL(imageBaseUrl);
         if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password ||
@@ -11654,6 +11745,20 @@ async function saveSettings() {
       !Number.isInteger(form.excel_bps_image_max_requests) || form.excel_bps_image_max_requests < 1 || form.excel_bps_image_max_requests > 512
     ) {
       appStore.showError(t('admin.settings.features.excelBpsImages.invalidCapacity'));
+      return;
+    }
+    if (
+      !Number.isInteger(form.excel_bps_image_max_image_mib) || form.excel_bps_image_max_image_mib < 1 || form.excel_bps_image_max_image_mib > 128 ||
+      !Number.isInteger(form.excel_bps_image_max_images) || form.excel_bps_image_max_images < 1 || form.excel_bps_image_max_images > 4096 ||
+      !Number.isInteger(form.excel_bps_image_max_total_mib) || form.excel_bps_image_max_total_mib < 1 || form.excel_bps_image_max_total_mib > 128 ||
+      !Number.isInteger(form.excel_bps_image_storage_mib) || form.excel_bps_image_storage_mib < 1 || form.excel_bps_image_storage_mib > 16384 ||
+      !Number.isInteger(form.excel_bps_image_storage_entries) || form.excel_bps_image_storage_entries < 1 || form.excel_bps_image_storage_entries > 65536 ||
+      !Number.isInteger(form.excel_bps_image_ttl_minutes) || form.excel_bps_image_ttl_minutes < 1 || form.excel_bps_image_ttl_minutes > 1440 ||
+      form.excel_bps_image_max_total_mib < form.excel_bps_image_max_image_mib ||
+      form.excel_bps_image_storage_mib < form.excel_bps_image_max_total_mib ||
+      form.excel_bps_image_storage_entries < form.excel_bps_image_max_images
+    ) {
+      appStore.showError(t('admin.settings.features.excelBpsImages.invalidLimits'));
       return;
     }
     const normalizedTableDefaultPageSize = Math.floor(
@@ -12155,11 +12260,18 @@ async function saveSettings() {
       request_capture_enabled: form.request_capture_enabled,
       request_capture_quota_mib: form.request_capture_quota_mib,
       request_capture_retention_days: form.request_capture_retention_days,
+      excel_bps_image_mode: form.excel_bps_image_mode,
       excel_bps_image_relay_enabled: form.excel_bps_image_relay_enabled,
       excel_bps_image_base_url: form.excel_bps_image_base_url.trim(),
       excel_bps_image_body_limit_mib: form.excel_bps_image_body_limit_mib,
       excel_bps_image_budget_mib: form.excel_bps_image_budget_mib,
       excel_bps_image_max_requests: form.excel_bps_image_max_requests,
+      excel_bps_image_max_image_mib: form.excel_bps_image_max_image_mib,
+      excel_bps_image_max_images: form.excel_bps_image_max_images,
+      excel_bps_image_max_total_mib: form.excel_bps_image_max_total_mib,
+      excel_bps_image_storage_mib: form.excel_bps_image_storage_mib,
+      excel_bps_image_storage_entries: form.excel_bps_image_storage_entries,
+      excel_bps_image_ttl_minutes: form.excel_bps_image_ttl_minutes,
     };
 
     // 仅当 openai_fast_policy_settings 已成功从后端加载时才回写，

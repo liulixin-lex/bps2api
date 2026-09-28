@@ -5,6 +5,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -111,6 +112,11 @@ func TestDisableExcelBPSOn403ConcurrentAndCache(t *testing.T) {
 	require.False(t, after.IsExcelBPSEnabled())
 	require.Equal(t, true, after.Extra["openai_excel_bps"], "preserve the configured switch")
 	require.NotEmpty(t, after.Extra[service.OpenAIExcelBPSPausedOn403AtExtraKey])
+	marker, ok := after.Extra[service.ExcelBPS403DisabledAtKey].(string)
+	require.True(t, ok)
+	parsed, err := time.Parse(time.RFC3339, marker)
+	require.NoError(t, err)
+	require.WithinDuration(t, time.Now(), parsed, time.Minute)
 	require.Len(t, cache.setAccounts, 1)
 	require.False(t, cache.setAccounts[0].IsExcelBPSEnabled())
 	require.True(t, before.IsExcelBPSEnabled(), "shared request snapshot must remain unchanged")
@@ -143,10 +149,27 @@ func TestExcelBPSPersistenceRoundtrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, true, readback.Extra["openai_excel_bps"])
 	require.Equal(t, paused.Extra[service.OpenAIExcelBPSPausedOn403AtExtraKey], readback.Extra[service.OpenAIExcelBPSPausedOn403AtExtraKey])
+	require.Equal(t, paused.Extra[service.ExcelBPS403DisabledAtKey], readback.Extra[service.ExcelBPS403DisabledAtKey])
 	readback.Extra[service.OpenAIExcelBPSPausedOn403AtExtraKey] = nil
 	require.NoError(t, repo.Update(ctx, readback))
 	resumed, err := repo.GetByID(ctx, account.ID)
 	require.NoError(t, err)
 	require.True(t, resumed.IsExcelBPSEnabled())
 	require.NotContains(t, resumed.Extra, service.OpenAIExcelBPSPausedOn403AtExtraKey)
+	require.NotContains(t, resumed.Extra, service.ExcelBPS403DisabledAtKey)
+	changed, err = repo.DisableExcelBPSOn403(ctx, resumed)
+	require.NoError(t, err)
+	require.True(t, changed)
+	_, err = repo.BulkUpdate(ctx, []int64{account.ID}, service.AccountBulkUpdate{Extra: map[string]any{"openai_passthrough": false}})
+	require.NoError(t, err)
+	stillPaused, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.False(t, stillPaused.IsExcelBPSEnabled())
+	require.NotEmpty(t, stillPaused.Extra[service.ExcelBPS403DisabledAtKey])
+	_, err = repo.BulkUpdate(ctx, []int64{account.ID}, service.AccountBulkUpdate{Extra: map[string]any{"openai_excel_bps": true}})
+	require.NoError(t, err)
+	bulkResumed, err := repo.GetByID(ctx, account.ID)
+	require.NoError(t, err)
+	require.True(t, bulkResumed.IsExcelBPSEnabled())
+	require.NotContains(t, bulkResumed.Extra, service.ExcelBPS403DisabledAtKey)
 }

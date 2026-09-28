@@ -832,6 +832,39 @@ func mappingHasWildcardForModel(mapping map[string]string, model string) bool {
 	return false
 }
 
+// resolveGrokMediaFallbackModel returns the built-in Grok Imagine mapping for
+// known media aliases when an account has a custom chat-only model mapping.
+//
+// model_mapping is an explicit allowlist when it is non-empty, which is the
+// right behavior for ordinary models. Media eligibility is the separate
+// operator-controlled switch for Grok image/edit/video generation, so an
+// eligible Grok account may inherit only the built-in, known media aliases
+// without widening its chat allowlist or accepting arbitrary model names.
+//
+// billing_unobserved remains a candidate here because the scheduler must be
+// able to select the account and let the request path perform its authoritative
+// media eligibility probe before forwarding.
+func (a *Account) resolveGrokMediaFallbackModel(requestedModel string) (string, bool) {
+	if a == nil || !a.IsGrok() {
+		return "", false
+	}
+
+	defaultMapping := xai.DefaultModelMapping()
+	mappedModel, matched := resolveRequestedModelInMapping(defaultMapping, requestedModel)
+	if !matched || !xai.IsGrokImagineModel(requestedModel) {
+		return "", false
+	}
+
+	eligible, reason := a.GrokMediaGenerationEligibility()
+	if !eligible && reason != "billing_unobserved" {
+		return "", false
+	}
+	if strings.TrimSpace(mappedModel) == "" {
+		return "", false
+	}
+	return mappedModel, true
+}
+
 func normalizeRequestedModelForLookup(platform, requestedModel string) string {
 	trimmed := strings.TrimSpace(requestedModel)
 	if trimmed == "" {
@@ -905,7 +938,11 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 		return true
 	}
 	normalized := normalizeRequestedModelForLookup(a.Platform, requestedModel)
-	return normalized != requestedModel && mappingSupportsRequestedModel(mapping, normalized)
+	if normalized != requestedModel && mappingSupportsRequestedModel(mapping, normalized) {
+		return true
+	}
+	_, fallback := a.resolveGrokMediaFallbackModel(requestedModel)
+	return fallback
 }
 
 // GetMappedModel 获取映射后的模型名（支持通配符，最长优先匹配）
@@ -930,6 +967,9 @@ func (a *Account) ResolveMappedModel(requestedModel string) (mappedModel string,
 		if mappedModel, matched := resolveRequestedModelInMapping(mapping, normalized); matched {
 			return mappedModel, true
 		}
+	}
+	if mappedModel, matched := a.resolveGrokMediaFallbackModel(requestedModel); matched {
+		return mappedModel, true
 	}
 	return requestedModel, false
 }
@@ -2174,6 +2214,61 @@ func (a *Account) IsExcelBPSEnabled() bool {
 	return !paused
 }
 
+const ExcelBPSIgnoreImagesKey = "openai_excel_bps_ignore_images"
+
+// IsExcelBPSIgnoreImagesEnabled opts into text-only forwarding when global BPS
+// image support is disabled. The forwarding path checks that global setting.
+func (a *Account) IsExcelBPSIgnoreImagesEnabled() bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	enabled, _ := a.Extra[ExcelBPSIgnoreImagesKey].(bool)
+	return enabled
+}
+
+const ExcelBPSIgnoreEncryptedContentKey = "openai_excel_bps_ignore_encrypted_content"
+
+// IsExcelBPSIgnoreEncryptedContentEnabled opts into replacing ciphertext that
+// BPS cannot forward, such as sub-agent messages in an old Codex conversation,
+// with an omission notice instead of rejecting the whole request.
+func (a *Account) IsExcelBPSIgnoreEncryptedContentEnabled() bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	enabled, _ := a.Extra[ExcelBPSIgnoreEncryptedContentKey].(bool)
+	return enabled
+}
+
+func (a *Account) IsExcelBPSMihomoEnabled() bool {
+	if !a.IsExcelBPSEnabled() {
+		return false
+	}
+	enabled, _ := a.Extra["openai_excel_bps_mihomo"].(bool)
+	return enabled
+}
+
+// ExcelBPSProxySourceKey selects the pool behind the BPS session proxy toggle:
+// the managed Mihomo kernel (default) or the admin proxy list (IP 管理).
+const ExcelBPSProxySourceKey = "openai_excel_bps_proxy_source"
+
+const (
+	ExcelBPSProxySourceMihomo = "mihomo"
+	ExcelBPSProxySourceIPPool = "ip_pool"
+)
+
+// ExcelBPSProxySource is meaningful only while the session proxy is enabled;
+// unknown stored values fall back to the Mihomo pool rather than direct.
+func (a *Account) ExcelBPSProxySource() string {
+	if !a.IsExcelBPSMihomoEnabled() {
+		return ""
+	}
+	source, _ := a.Extra[ExcelBPSProxySourceKey].(string)
+	if source == ExcelBPSProxySourceIPPool {
+		return ExcelBPSProxySourceIPPool
+	}
+	return ExcelBPSProxySourceMihomo
+}
+
 // IsExcelBPSCacheCreationAsInputEnabled controls local billing and downstream usage.
 // The setting has no effect unless this account uses the Excel/BPS protocol.
 func (a *Account) IsExcelBPSCacheCreationAsInputEnabled() bool {
@@ -2184,7 +2279,7 @@ func (a *Account) IsExcelBPSCacheCreationAsInputEnabled() bool {
 	return enabled
 }
 
-// IsExcelBPSAutoDisableOn403Enabled opts into disabling BPS after a generic 403.
+// IsExcelBPSAutoDisableOn403Enabled opts into pausing BPS after a generic 403.
 func (a *Account) IsExcelBPSAutoDisableOn403Enabled() bool {
 	if !a.IsExcelBPSEnabled() {
 		return false

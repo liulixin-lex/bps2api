@@ -11,11 +11,20 @@ import (
 )
 
 const (
-	SettingKeyExcelBPSImageRelayEnabled = "excel_bps_image_relay_enabled"
-	SettingKeyExcelBPSImageBaseURL      = "excel_bps_image_base_url"
-	SettingKeyExcelBPSImageBodyLimitMiB = "excel_bps_image_body_limit_mib"
-	SettingKeyExcelBPSImageBudgetMiB    = "excel_bps_image_budget_mib"
-	SettingKeyExcelBPSImageMaxRequests  = "excel_bps_image_max_requests"
+	SettingKeyExcelBPSImageMode           = "excel_bps_image_mode"
+	ExcelBPSImageModeRelay                = "relay"
+	ExcelBPSImageModeNative               = "native"
+	SettingKeyExcelBPSImageRelayEnabled   = "excel_bps_image_relay_enabled"
+	SettingKeyExcelBPSImageBaseURL        = "excel_bps_image_base_url"
+	SettingKeyExcelBPSImageBodyLimitMiB   = "excel_bps_image_body_limit_mib"
+	SettingKeyExcelBPSImageBudgetMiB      = "excel_bps_image_budget_mib"
+	SettingKeyExcelBPSImageMaxRequests    = "excel_bps_image_max_requests"
+	SettingKeyExcelBPSImageMaxImageMiB    = "excel_bps_image_max_image_mib"
+	SettingKeyExcelBPSImageMaxImages      = "excel_bps_image_max_images"
+	SettingKeyExcelBPSImageMaxTotalMiB    = "excel_bps_image_max_total_mib"
+	SettingKeyExcelBPSImageStorageMiB     = "excel_bps_image_storage_mib"
+	SettingKeyExcelBPSImageStorageEntries = "excel_bps_image_storage_entries"
+	SettingKeyExcelBPSImageTTLMinutes     = "excel_bps_image_ttl_minutes"
 
 	DefaultExcelBPSImageBodyLimitMiB = 64
 	DefaultExcelBPSImageBudgetMiB    = 512
@@ -23,6 +32,7 @@ const (
 )
 
 type ExcelBPSImageRelaySettings struct {
+	Mode         string
 	Enabled      bool
 	BaseURL      string
 	BodyLimitMiB int
@@ -31,20 +41,28 @@ type ExcelBPSImageRelaySettings struct {
 	// Unset database settings must not reduce existing deployment overrides.
 	InheritBudget      bool
 	InheritMaxRequests bool
+	Limits             basispoints.ImageRelayLimits
 }
 
-func normalizeExcelBPSImageRelaySettings(enabled bool, baseURL string) (ExcelBPSImageRelaySettings, error) {
+func normalizeExcelBPSImageRelaySettings(enabled bool, baseURL, mode string) (ExcelBPSImageRelaySettings, error) {
+	if mode == "" {
+		mode = ExcelBPSImageModeRelay
+	}
+	if mode != ExcelBPSImageModeRelay && mode != ExcelBPSImageModeNative {
+		return ExcelBPSImageRelaySettings{}, infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_MODE", "Image mode must be relay or native")
+	}
 	baseURL = strings.TrimSpace(baseURL)
-	if enabled || baseURL != "" {
+	if (enabled && mode == ExcelBPSImageModeRelay) || baseURL != "" {
 		if err := basispoints.ValidateImageRelayOrigin(baseURL); err != nil {
 			return ExcelBPSImageRelaySettings{}, infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_BASE_URL", err.Error())
 		}
 	}
 	return ExcelBPSImageRelaySettings{
-		Enabled: enabled, BaseURL: strings.TrimRight(baseURL, "/"),
+		Mode: mode, Enabled: enabled, BaseURL: strings.TrimRight(baseURL, "/"),
 		BodyLimitMiB: DefaultExcelBPSImageBodyLimitMiB,
 		BudgetMiB:    DefaultExcelBPSImageBudgetMiB,
 		MaxRequests:  DefaultExcelBPSImageMaxRequests,
+		Limits:       basispoints.DefaultImageRelayLimits(),
 	}, nil
 }
 
@@ -81,13 +99,14 @@ func (s *SettingService) GetExcelBPSImageRelaySettings(ctx context.Context) (Exc
 	dbCtx, cancel := context.WithTimeout(ctx, gatewayForwardingDBTimeout)
 	defer cancel()
 	values, err := s.settingRepo.GetMultiple(dbCtx, []string{
-		SettingKeyExcelBPSImageRelayEnabled, SettingKeyExcelBPSImageBaseURL,
+		SettingKeyExcelBPSImageMode, SettingKeyExcelBPSImageRelayEnabled, SettingKeyExcelBPSImageBaseURL,
 		SettingKeyExcelBPSImageBodyLimitMiB, SettingKeyExcelBPSImageBudgetMiB, SettingKeyExcelBPSImageMaxRequests,
+		SettingKeyExcelBPSImageMaxImageMiB, SettingKeyExcelBPSImageMaxImages, SettingKeyExcelBPSImageMaxTotalMiB, SettingKeyExcelBPSImageStorageMiB, SettingKeyExcelBPSImageStorageEntries, SettingKeyExcelBPSImageTTLMinutes,
 	})
 	if err != nil {
 		return ExcelBPSImageRelaySettings{}, infraerrors.ServiceUnavailable("EXCEL_BPS_IMAGE_SETTINGS_UNAVAILABLE", "Excel BPS image settings are unavailable")
 	}
-	settings, err := normalizeExcelBPSImageRelaySettings(values[SettingKeyExcelBPSImageRelayEnabled] == "true", values[SettingKeyExcelBPSImageBaseURL])
+	settings, err := normalizeExcelBPSImageRelaySettings(values[SettingKeyExcelBPSImageRelayEnabled] == "true", values[SettingKeyExcelBPSImageBaseURL], values[SettingKeyExcelBPSImageMode])
 	if err != nil {
 		return ExcelBPSImageRelaySettings{}, err
 	}
@@ -103,5 +122,50 @@ func (s *SettingService) GetExcelBPSImageRelaySettings(ctx context.Context) (Exc
 	}
 	settings.InheritBudget = values[SettingKeyExcelBPSImageBudgetMiB] == ""
 	settings.InheritMaxRequests = values[SettingKeyExcelBPSImageMaxRequests] == ""
+	settings.Limits, err = parseExcelBPSImageLimits(values)
+	if err != nil {
+		return ExcelBPSImageRelaySettings{}, infraerrors.ServiceUnavailable("EXCEL_BPS_IMAGE_SETTINGS_UNAVAILABLE", "Excel BPS image limits are unavailable")
+	}
 	return settings, nil
+}
+
+func parseExcelBPSImageLimits(values map[string]string) (basispoints.ImageRelayLimits, error) {
+	limits := basispoints.DefaultImageRelayLimits()
+	var err error
+	limits.MaxImageMiB, err = parseExcelBPSImageCapacity(values[SettingKeyExcelBPSImageMaxImageMiB], limits.MaxImageMiB)
+	if err != nil {
+		return limits, err
+	}
+	limits.MaxImages, err = parseExcelBPSImageCapacity(values[SettingKeyExcelBPSImageMaxImages], limits.MaxImages)
+	if err != nil {
+		return limits, err
+	}
+	limits.MaxTotalMiB, err = parseExcelBPSImageCapacity(values[SettingKeyExcelBPSImageMaxTotalMiB], limits.MaxTotalMiB)
+	if err != nil {
+		return limits, err
+	}
+	limits.StorageMiB, err = parseExcelBPSImageCapacity(values[SettingKeyExcelBPSImageStorageMiB], limits.StorageMiB)
+	if err != nil {
+		return limits, err
+	}
+	limits.StorageEntries, err = parseExcelBPSImageCapacity(values[SettingKeyExcelBPSImageStorageEntries], limits.StorageEntries)
+	if err != nil {
+		return limits, err
+	}
+	limits.TTLMinutes, err = parseExcelBPSImageCapacity(values[SettingKeyExcelBPSImageTTLMinutes], limits.TTLMinutes)
+	if err != nil {
+		return limits, err
+	}
+	return limits, limits.Validate()
+}
+
+func (s *SystemSettings) imageRelayLimits() basispoints.ImageRelayLimits {
+	return basispoints.ImageRelayLimits{
+		MaxImageMiB:    s.ExcelBPSImageMaxImageMiB,
+		MaxImages:      s.ExcelBPSImageMaxImages,
+		MaxTotalMiB:    s.ExcelBPSImageMaxTotalMiB,
+		StorageMiB:     s.ExcelBPSImageStorageMiB,
+		StorageEntries: s.ExcelBPSImageStorageEntries,
+		TTLMinutes:     s.ExcelBPSImageTTLMinutes,
+	}
 }

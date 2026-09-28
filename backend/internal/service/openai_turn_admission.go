@@ -167,6 +167,8 @@ func openAITurnRouteFingerprint(a *Account) [32]byte {
 		codexFingerprintSeedExtraKey, codexFingerprintModeExtraKey,
 		"openai_passthrough", "openai_oauth_passthrough", "openai_excel_bps", "openai_excel_bps_models",
 		OpenAIExcelBPSPausedOn403AtExtraKey,
+		"openai_excel_bps_mihomo", ExcelBPSProxySourceKey,
+		ExcelBPSIgnoreImagesKey, ExcelBPSIgnoreEncryptedContentKey, ExcelBPSOmitUnsupportedToolsKey,
 		"openai_oauth_responses_websockets_v2_mode", "openai_apikey_responses_websockets_v2_mode",
 		"openai_oauth_responses_websockets_v2_enabled", "openai_apikey_responses_websockets_v2_enabled",
 		"responses_websockets_v2_enabled", "openai_ws_enabled", "openai_ws_force_http",

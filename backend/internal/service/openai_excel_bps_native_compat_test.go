@@ -107,7 +107,8 @@ func TestNativeCompatBPSCustomCorrectionIsBounded(t *testing.T) {
 	_, err = svc.Forward(context.Background(), c, excelAccount(), body)
 	require.NoError(t, err)
 	require.Len(t, upstream.requests, 2)
-	require.NotContains(t, rec.Body.String(), "resp_bad")
+	require.Contains(t, rec.Body.String(), `"id":"resp_bad"`, "correction keeps the original response identity")
+	require.NotContains(t, rec.Body.String(), `"input":7`)
 	require.Contains(t, rec.Body.String(), "text(1)")
 }
 
