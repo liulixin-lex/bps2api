@@ -15,6 +15,19 @@ type protocolError struct{ error }
 
 func (e protocolError) Unwrap() error { return e.error }
 
+type passthroughError struct{ error }
+
+func (e passthroughError) Unwrap() error { return e.error }
+
+// PreserveError keeps operational failures from repair callbacks out of the
+// synthetic protocol-error SSE path while retaining errors.Is/errors.As.
+func PreserveError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return passthroughError{err}
+}
+
 type streamBody struct {
 	*io.PipeReader
 	upstream io.ReadCloser
@@ -280,6 +293,10 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 		return nil
 	})
 	if err != nil && !errors.Is(err, io.EOF) {
+		var passthrough passthroughError
+		if errors.As(err, &passthrough) {
+			return err
+		}
 		var invalid protocolError
 		if errors.Is(err, io.ErrClosedPipe) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &invalid) {
 			return err

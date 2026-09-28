@@ -16,19 +16,37 @@ func TestStrictBPSAccountConfiguredScopeAndPause(t *testing.T) {
 	for _, legacyScope := range []any{nil, []string{}, []string{"gpt-6-astra"}, "invalid-legacy-scope"} {
 		for _, paused := range []bool{false, true} {
 			account := excelAccount()
-			account.Extra["openai_excel_bps_models"] = legacyScope
+			account.Extra["openai_oauth_responses_websockets_v2_enabled"] = true
+			account.Extra["openai_oauth_responses_websockets_v2_mode"] = OpenAIWSIngressModeHTTPBridge
+			if legacyScope != nil {
+				account.Extra["openai_excel_bps_models"] = legacyScope
+			}
 			if paused {
 				account.Extra[OpenAIExcelBPSPausedOn403AtExtraKey] = "2026-09-27T00:00:00Z"
 			}
 			require.True(t, account.IsExcelBPSConfigured())
 			require.Equal(t, !paused, account.IsExcelBPSEnabled())
-			require.True(t, account.IsExcelBPSEnabledForModel("gpt-5.6-sol"))
-			require.True(t, account.IsOpenAIWSForceHTTPEnabled())
-			require.False(t, account.IsOpenAIResponsesWebSocketV2Enabled())
-			require.Equal(t, OpenAIWSIngressModeOff, account.ResolveOpenAIResponsesWebSocketV2Mode(OpenAIWSIngressModeHTTPBridge))
+			if _, scoped := account.Extra["openai_excel_bps_models"]; scoped {
+				require.False(t, account.IsExcelBPSEnabledForModel("gpt-5.6-sol"), "a scoped BPS account must leave non-selected models on native routing")
+			} else {
+				require.True(t, account.IsExcelBPSEnabledForModel("gpt-5.6-sol"))
+			}
+			// A scoped BPS account only forces HTTP for selected models. The
+			// unselected native models must remain eligible for WebSocket routing.
+			require.Equal(t, legacyScope == nil, account.IsOpenAIWSForceHTTPEnabled())
+			require.Equal(t, legacyScope != nil, account.IsOpenAIResponsesWebSocketV2Enabled())
+			if legacyScope == nil {
+				require.Equal(t, OpenAIWSIngressModeOff, account.ResolveOpenAIResponsesWebSocketV2Mode(OpenAIWSIngressModeHTTPBridge))
+			} else {
+				require.Equal(t, OpenAIWSIngressModeHTTPBridge, account.ResolveOpenAIResponsesWebSocketV2Mode(OpenAIWSIngressModeHTTPBridge))
+			}
 			service := &OpenAIGatewayService{cfg: &config.Config{}}
 			binding := &openAIWSTurnBinding{model: "gpt-5.6-sol", fingerprint: openAITurnRouteFingerprint(account), createdAt: time.Now()}
-			require.ErrorContains(t, service.checkOpenAIWSBinding(account, "gpt-5.6-sol", binding), "excel_bps_requires_http")
+			if legacyScope == nil {
+				require.ErrorContains(t, service.checkOpenAIWSBinding(account, "gpt-5.6-sol", binding), "excel_bps_requires_http")
+			} else {
+				require.NoError(t, service.checkOpenAIWSBinding(account, "gpt-5.6-sol", binding), "a native model is not bound to BPS protocol")
+			}
 			account.Extra["openai_excel_bps"] = false
 			require.False(t, account.IsExcelBPSConfigured())
 			require.False(t, account.IsExcelBPSEnabledForModel("gpt-5.6-sol"))
@@ -65,7 +83,7 @@ func TestStrictBPSAccountPauseIsUnschedulableUntilResumeOrDisable(t *testing.T) 
 	require.True(t, account.IsSchedulable())
 	account.Extra[OpenAIExcelBPSPausedOn403AtExtraKey] = "2026-09-27T00:00:00Z"
 	require.False(t, account.IsSchedulable())
-	require.True(t, account.IsExcelBPSEnabledForModel("gpt-5.6-sol"), "a paused account must never be rerouted to native")
+	require.True(t, account.IsExcelBPSConfiguredForModel("gpt-5.6-sol"), "a paused account keeps its configured BPS model scope")
 	delete(account.Extra, OpenAIExcelBPSPausedOn403AtExtraKey)
 	require.True(t, account.IsSchedulable(), "explicit resume restores BPS scheduling")
 	account.Extra[OpenAIExcelBPSPausedOn403AtExtraKey] = "2026-09-27T00:00:00Z"

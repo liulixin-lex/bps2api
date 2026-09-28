@@ -184,6 +184,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		BalanceNotify: balanceNotifyService,
 		Settings:      settingService,
 		Quotas:        serviceUserPlatformQuotaRepository,
+		RPMCache:      rpmCache,
 		Harvest:       codexHarvestService,
 	}
 	openAIGatewayService := service.ProvideOpenAIGatewayService(openAIGatewayDependencies)

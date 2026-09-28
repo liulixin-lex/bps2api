@@ -107,7 +107,11 @@ func (s *OpenAIGatewayService) ForwardAsAnthropic(
 	// 2. Model mapping
 	billingModel := resolveOpenAIForwardModel(account, normalizedModel, defaultMappedModel)
 	upstreamModel := normalizeOpenAIModelForUpstream(account, billingModel)
-	useExcelBPS := account.IsExcelBPSEnabledForModel(upstreamModel)
+	// upstreamModel is already resolved through the account mapping above. Do
+	// not map it a second time when checking the scoped BPS channel: a mapping
+	// such as alias -> gpt-6-astra plus gpt-6-astra -> gpt-6-sol must keep the
+	// first resolution's selected protocol.
+	useExcelBPS := account.IsExcelBPSConfiguredForUpstreamModel(upstreamModel)
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
 	apiKeyID := getAPIKeyIDFromContext(c)
 	anthropicDigestChain := ""

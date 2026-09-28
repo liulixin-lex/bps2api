@@ -26,9 +26,9 @@ const (
 	SettingKeyExcelBPSImageStorageEntries = "excel_bps_image_storage_entries"
 	SettingKeyExcelBPSImageTTLMinutes     = "excel_bps_image_ttl_minutes"
 
-	DefaultExcelBPSImageBodyLimitMiB = 64
-	DefaultExcelBPSImageBudgetMiB    = 512
-	DefaultExcelBPSImageMaxRequests  = 32
+	DefaultExcelBPSImageBodyLimitMiB = 128
+	DefaultExcelBPSImageBudgetMiB    = 1024
+	DefaultExcelBPSImageMaxRequests  = 128
 )
 
 type ExcelBPSImageRelaySettings struct {
@@ -67,8 +67,8 @@ func normalizeExcelBPSImageRelaySettings(enabled bool, baseURL, mode string) (Ex
 }
 
 func validateExcelBPSImageCapacity(bodyLimitMiB, budgetMiB, maxRequests int) error {
-	if bodyLimitMiB < 1 || bodyLimitMiB > 64 {
-		return infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_CAPACITY", "Image request body limit must be 1-64 MiB")
+	if bodyLimitMiB < 1 || bodyLimitMiB > 128 {
+		return infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_CAPACITY", "Image request body limit must be 1-128 MiB")
 	}
 	if budgetMiB < 512 || budgetMiB > 2048 || budgetMiB < bodyLimitMiB*8 {
 		return infraerrors.BadRequest("INVALID_EXCEL_BPS_IMAGE_CAPACITY", "Image request budget must be 512-2048 MiB and at least eight times the body limit")

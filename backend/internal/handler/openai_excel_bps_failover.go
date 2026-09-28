@@ -9,7 +9,7 @@ func skipNativeAfterExcelBPSFailure(selection *service.AccountSelectionResult, f
 	if failure == nil || (failure.Reason != service.ExcelBPSRateLimitedReason && failure.Reason != service.ExcelBPSModelAccessChangedReason) || selection == nil || selection.Account == nil {
 		return false
 	}
-	if selection.Account.IsExcelBPSConfigured() && (failure.RequiredExcelBPSUpstreamModel == "" || upstreamModel == failure.RequiredExcelBPSUpstreamModel) {
+	if selection.Account.IsExcelBPSConfiguredForUpstreamModel(upstreamModel) && (failure.RequiredExcelBPSUpstreamModel == "" || upstreamModel == failure.RequiredExcelBPSUpstreamModel) {
 		return false
 	}
 	excluded[selection.Account.ID] = struct{}{}

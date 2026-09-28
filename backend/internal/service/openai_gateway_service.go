@@ -472,6 +472,7 @@ type OpenAIGatewayService struct {
 	userRepo               UserRepository
 	userSubRepo            UserSubscriptionRepository
 	cache                  GatewayCache
+	rpmCache               RPMCache
 	cfg                    *config.Config
 	codexDetector          CodexClientRestrictionDetector
 	schedulerSnapshot      *SchedulerSnapshotService
@@ -551,6 +552,11 @@ type OpenAIGatewayService struct {
 }
 
 type OpenAIGatewayOption func(*OpenAIGatewayService)
+
+// WithOpenAIRPMCache enables strict RPM accounting for OpenAI OAuth accounts.
+func WithOpenAIRPMCache(cache RPMCache) OpenAIGatewayOption {
+	return func(s *OpenAIGatewayService) { s.rpmCache = cache }
+}
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService
 func NewOpenAIGatewayService(

@@ -93,3 +93,24 @@ func TestIncidentBPSProtocolRecoveryBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestIncidentBPSProtocolRecoveryThenEOFUsesRemainingBudget(t *testing.T) {
+	bad := incidentBPSToolResponse("resp_protocol", "{malformed")
+	good := incidentBPSToolResponse("resp_protocol_recovered", `{"name":"exec","input":"print('exact')"}`)
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(bad))},
+		{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))},
+		{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(good))},
+	}}
+	svc := openAIClientToolsTestService(upstream)
+	svc.cfg.Gateway.ExcelBPSTimeouts.MaxAttempts = 3
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	body := []byte(`{"model":"gpt-5.6-sol","stream":true,"instructions":"retain original instruction","input":"run it","tools":[{"type":"custom","name":"exec"}]}`)
+	_, err := svc.Forward(context.Background(), c, excelAccount(), body)
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 3)
+	require.Contains(t, rec.Body.String(), "resp_protocol_recovered")
+	require.Contains(t, string(upstream.bodies[1]), "Transport correction")
+}

@@ -149,7 +149,7 @@ func TestExcelBPSSelectedModelBillingPreservesCodexCacheCreation(t *testing.T) {
 	account := excelAccount()
 	account.Extra["openai_excel_bps_models"] = []string{"gpt-6-astra"}
 	account.Extra["openai_excel_bps_cache_creation_as_input"] = true
-	require.True(t, account.IsExcelBPSEnabledForModel("gpt-6-sol"), "billing must still use the observed endpoint for historical native results")
+	require.False(t, account.IsExcelBPSEnabledForModel("gpt-6-sol"), "a scoped BPS account leaves historical native results on the native channel")
 	original := OpenAIUsage{InputTokens: 1000, CacheCreationInputTokens: 200, CacheReadInputTokens: 100, OutputTokens: 50}
 	result := &OpenAIForwardResult{RequestID: "resp_codex_billing", Model: "gpt-6-sol", UpstreamEndpoint: "/v1/responses", Usage: original}
 	require.NoError(t, svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{

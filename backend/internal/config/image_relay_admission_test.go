@@ -10,6 +10,8 @@ func TestImageRelayAdmissionConfig(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.Equal(t, (ImageRelayAdmissionConfig{}).WithDefaults(), cfg.Gateway.ImageRelayAdmission)
+	require.Equal(t, int64(1<<30), cfg.Gateway.ImageRelayAdmission.DecodeBudgetBytes)
+	require.NoError(t, (ImageRelayAdmissionConfig{DecodeBudgetBytes: 512 << 20}).Validate(), "existing 512 MiB deployments remain valid")
 	for _, c := range []ImageRelayAdmissionConfig{
 		{DecodeMaxConcurrent: -1}, {DecodeBudgetBytes: 1}, {ProcessingBudgetBytes: 1},
 		{MaxConcurrentRequests: -1}, {BodyReadTimeoutSeconds: -1}, {BodyReadTimeoutSeconds: 601},
@@ -31,12 +33,16 @@ func TestExcelBPSTimeoutsConfig(t *testing.T) {
 	resetViperWithJWTSecret(t)
 	cfg, err := Load()
 	require.NoError(t, err)
-	require.Equal(t, ExcelBPSTimeoutConfig{}, cfg.Gateway.ExcelBPSTimeouts)
+	require.Equal(t, ExcelBPSTimeoutConfig{MaxAttempts: 3, RecoveryBudgetSeconds: 30, RecoveryInitialDelayMilliseconds: 250, RecoveryMaxDelaySeconds: 5}, cfg.Gateway.ExcelBPSTimeouts)
 	t.Setenv("GATEWAY_EXCEL_BPS_TIMEOUTS_IDLE_SECONDS", "300")
+	t.Setenv("GATEWAY_EXCEL_BPS_TIMEOUTS_MAX_ATTEMPTS", "1")
+	t.Setenv("GATEWAY_EXCEL_BPS_TIMEOUTS_RECOVERY_BUDGET_SECONDS", "15")
 	cfg, err = Load()
 	require.NoError(t, err)
 	require.Equal(t, 300, cfg.Gateway.ExcelBPSTimeouts.IdleSeconds)
-	for _, c := range []ExcelBPSTimeoutConfig{{IdleSeconds: -1}, {FirstOutputSeconds: 7201}, {TotalSeconds: -1}} {
+	require.Equal(t, 1, cfg.Gateway.ExcelBPSTimeouts.MaxAttempts)
+	require.Equal(t, 15, cfg.Gateway.ExcelBPSTimeouts.RecoveryBudgetSeconds)
+	for _, c := range []ExcelBPSTimeoutConfig{{IdleSeconds: -1}, {FirstOutputSeconds: 7201}, {TotalSeconds: -1}, {MaxAttempts: 7}, {RecoveryInitialDelayMilliseconds: 5001}, {RecoveryMaxDelaySeconds: 61}} {
 		require.Error(t, c.Validate())
 	}
 }

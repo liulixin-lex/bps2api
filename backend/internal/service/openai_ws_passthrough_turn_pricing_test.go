@@ -126,6 +126,51 @@ func TestPassthroughIngressFollowUpCallsBeforeTurnAfterBeforeRequest(t *testing.
 	require.Equal(t, 2, gotAfter)
 }
 
+func TestOpenAIRPMPassthroughRejectsFollowUpBeforeUpstreamWrite(t *testing.T) {
+	controlCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	upstream := newStagedPassthroughConn()
+	upstream.Send(`{"type":"response.completed","response":{"id":"resp_rpm_1","model":"gpt-5.1"}}`)
+	account := passthroughLifecycleAccount()
+	account.Type = AccountTypeOAuth
+	account.Extra = map[string]any{"base_rpm": 2, "openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough}
+	latest := *account
+	latest.Extra = map[string]any{"base_rpm": 1, "openai_oauth_responses_websockets_v2_mode": OpenAIWSIngressModePassthrough}
+	cfg := passthroughLifecycleConfig()
+	cfg.Gateway.OpenAIWS.OAuthEnabled = true
+	svc := newPassthroughLifecycleService(cfg, upstream)
+	repo := &turnAdmissionRepo{account: account}
+	svc.accountRepo = repo
+	svc.rpmCache = &openAIRPMTestCache{counts: map[int64]int{}}
+	hooks := &OpenAIWSIngressHooks{BeforeRequest: func(int, []byte, string) error {
+		repo.account = &latest // Simulate an admin lowering the limit between turns.
+		return nil
+	}}
+	server, result := startPassthroughHookRecordingServer(t, controlCtx, svc, account, hooks)
+	defer server.Close()
+	client := dialPassthroughLifecycleClient(t, server)
+	defer func() { _ = client.CloseNow() }()
+	requirePassthroughUpstreamWrite(t, upstream, time.Second)
+	_, err := readPassthroughLifecycleFrame(t, client, 3*time.Second)
+	require.NoError(t, err)
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), time.Second)
+	err = client.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","model":"gpt-5.1"}`))
+	writeCancel()
+	require.NoError(t, err)
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, ErrOpenAIRPMExhausted)
+	case <-time.After(3 * time.Second):
+		t.Fatal("RPM rejection did not terminate the follow-up")
+	}
+	cache, ok := svc.rpmCache.(*openAIRPMTestCache)
+	require.True(t, ok)
+	if got := cache.counts[account.ID]; got != 1 {
+		t.Fatalf("expected one RPM reservation, got %d", got)
+	}
+	require.Empty(t, upstream.writes, "the exhausted follow-up must honor the latest limit, not the stale selected account")
+}
+
 func TestPassthroughIngressBeforeTurnRejectionDoesNotForwardFollowUp(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	controlCtx, cancelControl := context.WithCancelCause(context.Background())

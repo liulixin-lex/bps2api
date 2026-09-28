@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestExcelBPSPauseKeepsConfiguredSwitch(t *testing.T) {
@@ -33,16 +34,16 @@ func TestExcelBPSModelSelection(t *testing.T) {
 	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-sol"), "legacy all-model setting")
 	a.Extra["openai_excel_bps_models"] = []any{"gpt-6-astra"}
 	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-astra"))
-	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-sol"))
-	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-astra-other"))
+	require.False(t, a.IsExcelBPSEnabledForModel("gpt-6-sol"), "a scoped BPS account must not claim unrelated models")
+	require.False(t, a.IsExcelBPSEnabledForModel("gpt-6-astra-other"), "scope matching is exact after mapping")
 	a.Credentials["model_mapping"] = map[string]any{"alias": "gpt-6-astra", "gpt-6-astra": "gpt-6-sol"}
 	require.True(t, a.IsExcelBPSEnabledForModel("alias"))
-	require.True(t, a.IsExcelBPSEnabledForModel("gpt-6-astra"), "legacy scope cannot change the configured channel")
-	require.True(t, a.isExcelBPSUpstreamModelEnabled("gpt-6-astra"), "already mapped names must not map again")
+	require.False(t, a.IsExcelBPSEnabledForModel("gpt-6-astra"), "an explicitly mapped request follows its mapped native model")
+	require.True(t, a.isExcelBPSUpstreamModelEnabled("gpt-6-astra"), "already mapped names are matched directly against the selected upstream scope")
 	for _, models := range []any{[]any{}, []string{}, nil, "gpt-6-astra", []any{42, false}} {
 		a.Extra["openai_excel_bps_models"] = models
-		require.True(t, a.IsExcelBPSEnabledForModel("alias"))
-		require.True(t, a.isExcelBPSAllModelsEnabled())
+		require.False(t, a.IsExcelBPSEnabledForModel("alias"), "an explicitly present invalid/empty scope must not become all-model routing")
+		require.False(t, a.isExcelBPSAllModelsEnabled())
 	}
 	a.Extra["openai_excel_bps_models"] = []string{" gpt-6-astra "}
 	require.True(t, a.IsExcelBPSEnabledForModel("alias"))
@@ -66,13 +67,35 @@ func TestExcelBPSSelectedModelForwarding(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.NotNil(t, upstream.lastReq)
-			require.Equal(t, "bps.openai.com", upstream.lastReq.URL.Host)
-			require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
+			if model == "gpt-6-astra" {
+				require.Equal(t, "bps.openai.com", upstream.lastReq.URL.Host)
+				require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
+			} else {
+				require.NotEqual(t, "bps.openai.com", upstream.lastReq.URL.Host, "unselected models stay on native OpenAI routing")
+			}
 		})
 	}
 }
 
-func TestExcelBPSLegacyModelsCannotRestoreCodexTransportAndTickets(t *testing.T) {
+func TestExcelBPSForwardingUsesFirstMappedModelForScopedSelection(t *testing.T) {
+	wire := "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_mapped\",\"status\":\"completed\",\"model\":\"gpt-6-astra\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(wire))}}
+	svc := openAIClientToolsTestService(upstream)
+	a := excelAccount()
+	a.Extra["openai_excel_bps_models"] = []string{"gpt-6-astra"}
+	a.Credentials["model_mapping"] = map[string]any{"alias": "gpt-6-astra", "gpt-6-astra": "gpt-6-sol"}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	result, err := svc.Forward(context.Background(), c, a, []byte(`{"model":"alias","stream":true,"input":"test"}`))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, upstream.lastReq)
+	require.Equal(t, "bps.openai.com", upstream.lastReq.URL.Host)
+	require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
+	require.Equal(t, "gpt-6-astra", gjson.GetBytes(upstream.lastBody, "model").String(), "BPS scope uses the first mapping result without remapping it")
+}
+
+func TestExcelBPSModelScopePreservesNativeTransportAndTickets(t *testing.T) {
 	a := excelAccount()
 	a.Extra["openai_excel_bps_models"] = []string{"gpt-6-astra"}
 	a.Extra["openai_oauth_responses_websockets_v2_mode"] = OpenAIWSIngressModeCtxPool
@@ -83,26 +106,27 @@ func TestExcelBPSLegacyModelsCannotRestoreCodexTransportAndTickets(t *testing.T)
 	cfg.Gateway.OpenAIWS.ResponsesWebsocketsV2 = true
 	cfg.Gateway.OpenAIWS.ModeRouterV2Enabled = true
 	svc := &OpenAIGatewayService{cfg: cfg}
-	require.True(t, a.IsOpenAIWSForceHTTPEnabled())
-	require.False(t, a.IsOpenAIResponsesWebSocketV2Enabled())
-	require.Equal(t, OpenAIWSIngressModeOff, a.ResolveOpenAIResponsesWebSocketV2Mode("ctx_pool"))
+	require.False(t, a.IsOpenAIWSForceHTTPEnabled(), "a scoped BPS account only forces HTTP for selected models")
+	require.True(t, a.IsOpenAIResponsesWebSocketV2Enabled(), "scoped BPS must not disable native WS globally")
+	require.Equal(t, OpenAIWSIngressModeCtxPool, a.ResolveOpenAIResponsesWebSocketV2Mode("ctx_pool"), "scoped BPS leaves native model ingress available")
 	for _, transport := range []OpenAIUpstreamTransport{OpenAIUpstreamTransportResponsesWebsocketV2, OpenAIUpstreamTransportResponsesWebsocketV2Ingress} {
 		require.False(t, svc.isOpenAIAccountTransportCompatible(a, transport, "gpt-6-astra"))
-		require.False(t, svc.isOpenAIAccountTransportCompatible(a, transport, "gpt-6-sol"))
+		require.True(t, svc.isOpenAIAccountTransportCompatible(a, transport, "gpt-6-sol"), "an unselected model may retain native WS transport")
 	}
 	require.True(t, svc.isOpenAIAccountTransportCompatible(a, OpenAIUpstreamTransportHTTPSSE, "gpt-6-astra"))
-	require.False(t, isOpenAICodexTicketAccount(a))
+	require.True(t, isOpenAICodexTicketAccount(a), "a scoped account remains a ticket candidate without a selected model")
 	require.False(t, isOpenAICodexTicketAccount(a, "gpt-6-astra"))
-	require.False(t, isOpenAICodexTicketAccount(a, "gpt-6-sol"))
+	require.True(t, isOpenAICodexTicketAccount(a, "gpt-6-sol"))
 	cfg.Gateway.OpenAICodexTicket.Enabled = true
 	cfg.Gateway.OpenAICodexTicket.FailClosed = true
 	cfg.Gateway.OpenAICodexTicket.Models = []string{"gpt-6-astra", "gpt-6-sol"}
 	require.False(t, svc.openAICodexTicketBlocksAccount(a, "gpt-6-astra"))
-	require.False(t, svc.openAICodexTicketBlocksAccount(a, "gpt-6-sol"))
+	require.True(t, svc.openAICodexTicketBlocksAccount(a, "gpt-6-sol"), "fail-closed ticket gating remains available to native scoped models")
 	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), a, "gpt-6-astra", http.Header{}))
-	require.NoError(t, svc.applyOpenAICodexTicket(context.Background(), a, "gpt-6-sol", http.Header{}))
+	require.ErrorContains(t, svc.applyOpenAICodexTicket(context.Background(), a, "gpt-6-sol", http.Header{}), "model_ticket_unavailable")
 	statuses := OpenAICodexTicketStatuses(a, cfg.Gateway.OpenAICodexTicket, time.Now())
-	require.Empty(t, statuses)
+	require.Len(t, statuses, 1)
+	require.Equal(t, "gpt-6-sol", statuses[0].Model)
 	before := openAITurnRouteFingerprint(a)
 	a.Extra["openai_excel_bps_models"] = []string{"gpt-6-sol"}
 	require.NotEqual(t, before, openAITurnRouteFingerprint(a))

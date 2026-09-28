@@ -270,6 +270,42 @@ func TestExcelBPSAttachmentUsesResolvedSessionProxy(t *testing.T) {
 	require.Equal(t, 1, calls)
 }
 
+func TestExcelBPSAttachmentAcquiresRPMBeforeSend(t *testing.T) {
+	body, _ := nativeGatewayBody(t)
+	images, err := basispoints.PrepareNativeImages(body)
+	require.NoError(t, err)
+	account := excelAccount()
+	account.Extra["base_rpm"] = 1
+	cache := &openAIRPMTestCache{counts: map[int64]int{account.ID: 1}}
+	calls := 0
+	svc := openAIClientToolsTestService(nil)
+	svc.rpmCache = cache
+	svc.httpUpstream = &nativeAttachmentUpstream{do: func(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"openai_file_id":"file-rpm"}`))}, nil
+	}}
+	_, err = images.Upload(context.Background(), new(basispoints.AttachmentCache), "", func(ctx context.Context, img basispoints.InlineAttachment) (string, error) {
+		return svc.uploadExcelBPSAttachment(ctx, account, "test-token", "test-account", "", img)
+	})
+	require.ErrorIs(t, err, ErrOpenAIRPMExhausted)
+	require.Zero(t, calls, "an exhausted RPM admission must stop before attachment upload")
+}
+
+func TestExcelBPSAttachmentForwardPreservesRPMError(t *testing.T) {
+	body, _ := nativeGatewayBody(t)
+	account := excelAccount()
+	account.Extra["base_rpm"] = 1
+	svc := openAIClientToolsTestService(&httpUpstreamRecorder{})
+	enableNativeAttachments(svc)
+	svc.rpmCache = &openAIRPMTestCache{counts: map[int64]int{account.ID: 1}}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	_, err := svc.Forward(context.Background(), c, account, body)
+	require.ErrorIs(t, err, ErrOpenAIRPMExhausted)
+	require.False(t, c.Writer.Written(), "the handler must receive typed RPM errors before any 502 is committed")
+}
+
 func TestExcelBPSNativeToolScreenshotsStayInline(t *testing.T) {
 	imageBody, _ := nativeGatewayBody(t)
 	dataURL := gjson.GetBytes(imageBody, "input.0.content.0.image_url").String()

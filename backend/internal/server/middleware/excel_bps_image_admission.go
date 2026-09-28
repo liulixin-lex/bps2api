@@ -18,11 +18,11 @@ import (
 )
 
 const (
-	bpsImageMaxBodyBytes   = 64 << 20
-	bpsImageBudgetBytes    = 512 << 20
+	bpsImageMaxBodyBytes   = service.DefaultExcelBPSImageBodyLimitMiB << 20
+	bpsImageBudgetBytes    = service.DefaultExcelBPSImageBudgetMiB << 20
 	bpsImageBodyMultiplier = 8
 	bpsImageMinBodyBytes   = 1 << 20
-	bpsImageMaxRequests    = 32
+	bpsImageMaxRequests    = service.DefaultExcelBPSImageMaxRequests
 )
 
 type excelBPSImageSettingsReader interface {
@@ -314,14 +314,16 @@ func bpsImageRequestNeedsRelay(body []byte) bool {
 	return basispoints.RequestHasInlineImages(body)
 }
 
-// Small identity bodies need not reserve a 64 MiB decompression worst case.
+// Small identity bodies need not reserve a 128 MiB decompression worst case.
 // Unknown lengths/encodings retain that bound. The body reader is still capped
 // by maxBody; a declared length is used only when net/http enforces its boundary.
 func bpsImageDecodeWeight(wireLength int64, encoding string, maxBody int64) int64 {
 	if wireLength > 0 && (encoding == "" || encoding == "identity") {
-		return min(config.ImageRelayDecodeReservationBytes, max(wireLength+1, int64(bpsImageMinBodyBytes))*bpsImageBodyMultiplier)
+		return max(min(wireLength+1, maxBody), int64(bpsImageMinBodyBytes)) * bpsImageBodyMultiplier
 	}
-	return min(config.ImageRelayDecodeReservationBytes, max(maxBody+1, int64(bpsImageMinBodyBytes))*bpsImageBodyMultiplier)
+	// The body reader caps decoded data at maxBody. Reserve exactly that bound
+	// so the default 128 MiB body can enter with the default 1 GiB budget.
+	return max(maxBody, int64(bpsImageMinBodyBytes)) * bpsImageBodyMultiplier
 }
 
 func readBPSAdmissionBody(c *gin.Context, limit int64, timeout time.Duration) ([]byte, error) {

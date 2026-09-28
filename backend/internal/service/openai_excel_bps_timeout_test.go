@@ -35,6 +35,10 @@ func TestExcelBPSTimeoutsDoNotReplay(t *testing.T) {
 			defer func() { _ = writer.Close() }()
 			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{}, Body: reader}}
 			svc := openAIClientToolsTestService(upstream)
+			// This table verifies terminal timeout formatting with recovery
+			// explicitly disabled; automatic pre-output recovery is covered by
+			// the retry tests.
+			tt.limits.MaxAttempts = 1
 			svc.cfg.Gateway.ExcelBPSTimeouts = tt.limits
 			if tt.emit {
 				done := make(chan struct{})

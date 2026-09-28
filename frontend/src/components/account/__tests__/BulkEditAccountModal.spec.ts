@@ -113,6 +113,7 @@ describe('BulkEditAccountModal', () => {
     const oauthProps = { selectedPlatforms: ['openai'], selectedTypes: ['oauth'] }
     const defaultExtra = {
       openai_excel_bps: true,
+      openai_excel_bps_models: null,
       openai_excel_bps_mihomo: false,
       openai_excel_bps_proxy_source: 'mihomo',
       openai_excel_bps_cache_creation_as_input: false,
@@ -154,25 +155,27 @@ describe('BulkEditAccountModal', () => {
       expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { status: 'active' })
     })
 
-    it('enables the BPS channel without overwriting legacy model metadata', async () => {
+    it('enables BPS for all models with an explicit scope reset', async () => {
       const wrapper = mountModal(oauthProps)
       await enableBPS(wrapper)
       expect(wrapper.find('[data-testid="bulk-excel-bps-model-selection"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="bulk-excel-bps-channel-policy"]').exists()).toBe(true)
+      expect(wrapper.get<HTMLInputElement>('[data-testid="bulk-excel-bps-all-models"]').element.checked).toBe(true)
       await submit(wrapper)
       expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
         extra: defaultExtra
       })
     })
 
-    it('uses automatic tool compatibility without writing a legacy switch', async () => {
+    it('saves a custom model selection and clears it when all models are selected', async () => {
       const wrapper = mountModal(oauthProps)
       await enableBPS(wrapper)
-      expect(wrapper.find('[data-testid="bulk-excel-bps-omit-unsupported-tools"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="bulk-excel-bps-tool-compatibility"]').exists()).toBe(true)
+      await wrapper.get('[data-testid="bulk-excel-bps-all-models"]').setValue(false)
+      await wrapper.get('[data-testid="bulk-excel-bps-astra-only"]').trigger('click')
       await submit(wrapper)
-      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { extra: defaultExtra })
-      expect(vi.mocked(adminAPI.accounts.bulkUpdate).mock.calls[0]?.[1]?.extra).not.toHaveProperty('openai_excel_bps_omit_unsupported_tools')
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], { extra: { ...defaultExtra, openai_excel_bps_models: ['gpt-6-astra'] } })
+      await wrapper.get('[data-testid="bulk-excel-bps-all-models"]').setValue(true)
+      await submit(wrapper)
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenLastCalledWith([1, 2], { extra: defaultExtra })
     })
 
     it.each([

@@ -124,8 +124,8 @@ func TestExcelBPSHostedCompatibilityIgnoresLegacyOptIn(t *testing.T) {
 	}
 }
 
-func TestExcelBPSToolPolicyIgnoresLegacyModelScope(t *testing.T) {
-	for _, models := range [][]string{{}, {"gpt-5.6-sol"}} {
+func TestExcelBPSToolPolicyFollowsSelectedModelScope(t *testing.T) {
+	for _, models := range [][]string{{}, {"gpt-5.6-sol"}, {"gpt-6-astra"}} {
 		t.Run(fmt.Sprint(models), func(t *testing.T) {
 			upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(excelBPSToolPolicyResponse))}}
 			account := excelAccount()
@@ -136,9 +136,14 @@ func TestExcelBPSToolPolicyIgnoresLegacyModelScope(t *testing.T) {
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 			_, err := openAIClientToolsTestService(upstream).Forward(context.Background(), c, account, []byte("{\"model\":\"gpt-6-astra\",\"input\":\"hello\",\"tools\":[{\"type\":\"web_search\",\"external_web_access\":true}]}"))
 			require.NoError(t, err)
-			require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
-			require.Empty(t, rec.Header().Get("X-Codex2API-Basispoints-Bypass"))
-			require.Contains(t, string(upstream.lastBody), "Hosted tools unavailable through Basispoints")
+			if len(models) == 1 && models[0] == "gpt-6-astra" {
+				require.Equal(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
+				require.Empty(t, rec.Header().Get("X-Codex2API-Basispoints-Bypass"))
+				require.Contains(t, string(upstream.lastBody), "Hosted tools unavailable through Basispoints")
+			} else {
+				require.NotEqual(t, "/basispoints/api/responses", upstream.lastReq.URL.Path)
+				require.NotContains(t, string(upstream.lastBody), "Hosted tools unavailable through Basispoints")
+			}
 		})
 	}
 }

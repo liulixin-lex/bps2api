@@ -63,7 +63,7 @@ func TestExcelBPSImageAdmissionCoversGatewayAliasesBeforeBodyRead(t *testing.T) 
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		body := &bpsImageUnreadBody{}
 		req.Body = body
-		req.ContentLength = 65 << 20
+		req.ContentLength = 129 << 20
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		require.Equal(t, http.StatusRequestEntityTooLarge, w.Code, path)

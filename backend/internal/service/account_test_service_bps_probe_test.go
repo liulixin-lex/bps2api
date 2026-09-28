@@ -151,7 +151,7 @@ func TestExcelBPSToolProbeRejectsIncompleteStages(t *testing.T) {
 	}
 }
 
-func TestExcelBPSToolProbeUsesBPSRegardlessOfLegacyModelScope(t *testing.T) {
+func TestExcelBPSToolProbeUsesBPSForSelectedModelScope(t *testing.T) {
 	account := excelAccount()
 	account.Extra["openai_excel_bps_models"] = []string{"gpt-6-astra"}
 	upstream := &bpsProbeUpstream{}
@@ -159,8 +159,20 @@ func TestExcelBPSToolProbeUsesBPSRegardlessOfLegacyModelScope(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/300/test", nil)
-	require.NoError(t, svc.testExcelBPSToolRoundtrip(c, account, "gpt-5.6-sol"))
+	require.NoError(t, svc.testExcelBPSToolRoundtrip(c, account, "gpt-6-astra"))
 	require.Len(t, upstream.bodies, 3, "all probe steps must stay on BPS")
+}
+
+func TestExcelBPSToolProbeRejectsUnselectedModelScope(t *testing.T) {
+	account := excelAccount()
+	account.Extra["openai_excel_bps_models"] = []string{"gpt-6-astra"}
+	upstream := &bpsProbeUpstream{}
+	svc := bpsProbeTestService(upstream)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/300/test", nil)
+	require.ErrorContains(t, svc.testExcelBPSToolRoundtrip(c, account, "gpt-5.6-sol"), "requires this model")
+	require.Empty(t, upstream.bodies)
 }
 
 func TestExcelBPSToolProbeModeDoesNotFallBackToNative(t *testing.T) {

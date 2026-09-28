@@ -1,0 +1,51 @@
+package repository
+
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/stretchr/testify/require"
+)
+
+func TestQualityBPSSnapshotEqualDefaultsAndManualChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		before, after map[string]any
+		equal         bool
+	}{
+		{"omitted false switches", map[string]any{"openai_excel_bps": true, "openai_excel_bps_ignore_images": false, "openai_excel_bps_mihomo": false}, map[string]any{"openai_excel_bps": true}, true},
+		{"default proxy", map[string]any{"openai_excel_bps_proxy_source": "mihomo"}, nil, true},
+		{"default hosted compatibility", map[string]any{service.ExcelBPSOmitUnsupportedToolsKey: true}, nil, true},
+		{"legacy hosted field does not create a policy conflict", map[string]any{service.ExcelBPSOmitUnsupportedToolsKey: false}, nil, true},
+		{"manual disable", map[string]any{"openai_excel_bps": true}, nil, false},
+		{"manual toggle", map[string]any{"openai_excel_bps_ignore_images": true}, nil, false},
+		{"manual proxy change", map[string]any{"openai_excel_bps_proxy_source": "ip_pool"}, nil, false},
+		{"model scope removed", map[string]any{"openai_excel_bps_models": []string{"gpt-6-astra"}}, nil, false},
+		{"empty models are not all models", map[string]any{"openai_excel_bps_models": []string{}}, nil, false},
+		{"null models are not all models", map[string]any{"openai_excel_bps_models": nil}, nil, false},
+		{"target group removed", map[string]any{"openai_excel_bps_403_target_group_id": 0}, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			toRaw := func(value map[string]any) map[string]json.RawMessage {
+				data, err := json.Marshal(value)
+				require.NoError(t, err)
+				var raw map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(data, &raw))
+				return raw
+			}
+			before, after := toRaw(tc.before), toRaw(tc.after)
+			require.Equal(t, tc.equal, qualityBPSSnapshotEqual(before, after))
+			require.Equal(t, tc.equal, qualityBPSSnapshotEqual(after, before))
+		})
+	}
+}
+
+func TestQualityBPSBlockedOn403PreservesRuntimeMarkers(t *testing.T) {
+	require.False(t, qualityBPSBlockedOn403(nil))
+	for _, key := range []string{service.OpenAIExcelBPSPausedOn403AtExtraKey, service.ExcelBPS403DisabledAtKey} {
+		for _, marker := range []any{"2026-09-28T00:00:00Z", "", nil} {
+			require.True(t, qualityBPSBlockedOn403(map[string]any{key: marker}), "presence of %s must block automatic restoration", key)
+		}
+	}
+}

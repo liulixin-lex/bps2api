@@ -93,7 +93,7 @@ func (*admissionBlockedBody) Close() error { return nil }
 func TestExcelBPSImageAdmissionRejectsWhileDecodingWithoutReading(t *testing.T) {
 	sink := initMiddlewareTestLogger(t)
 	body := &admissionBlockedBody{entered: make(chan struct{}), release: make(chan struct{})}
-	r := admissionRouter(config.ImageRelayAdmissionConfig{}, func(c *gin.Context) { c.Status(200) })
+	r := admissionRouter(config.ImageRelayAdmissionConfig{DecodeBudgetBytes: 512 << 20}, func(c *gin.Context) { c.Status(200) })
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -147,6 +147,44 @@ func TestExcelBPSImageAdmissionProcessingHandoffIsBounded(t *testing.T) {
 	used, n := b.snapshot()
 	require.Zero(t, used)
 	require.Zero(t, n)
+}
+
+func TestExcelBPSImageAdmissionDefaultsAllow128BodiesWithinOneGiBBudget(t *testing.T) {
+	budget := &bpsImageAdmissionBudget{}
+	leases := make([]*bpsImageReservation, 0, 128)
+	for range 128 {
+		lease, ok := budget.reserve(8 << 20)
+		require.True(t, ok)
+		leases = append(leases, lease)
+	}
+	_, ok := budget.reserve(8 << 20)
+	require.False(t, ok)
+	bytes, requests := budget.snapshot()
+	require.Equal(t, int64(1<<30), bytes)
+	require.Equal(t, 128, requests)
+	for _, lease := range leases {
+		lease.release()
+	}
+}
+
+func TestBPSImageDecodeWeightTracksConfiguredBodyLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		wireLength int64
+		encoding   string
+		maxBody    int64
+		want       int64
+	}{
+		{"small identity", 1024, "", 128 << 20, 8 << 20},
+		{"legacy body", -1, "", 64 << 20, 512 << 20},
+		{"maximum identity", 128 << 20, "identity", 128 << 20, 1 << 30},
+		{"compressed", 1024, "gzip", 128 << 20, 1 << 30},
+		{"chunked", -1, "", 128 << 20, 1 << 30},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, bpsImageDecodeWeight(tc.wireLength, tc.encoding, tc.maxBody))
+		})
+	}
 }
 
 func TestExcelBPSImageAdmissionDecodeWaitReusesReleasedSlot(t *testing.T) {

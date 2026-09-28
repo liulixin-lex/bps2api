@@ -387,10 +387,14 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		}
 	}
 
+	rpmAccount := account
 	checkBeforeWrite := func() error {
 		latest, err := s.admitOpenAITurn(ctx, c, account, mappedModel)
 		if err == nil {
 			err = s.checkOpenAIWSBinding(latest, mappedModel, lease.conn.turnBinding)
+		}
+		if err == nil {
+			rpmAccount = latest
 		}
 		if err != nil {
 			s.invalidateOpenAIWSTurnStateAfterAdmissionFailure(
@@ -415,7 +419,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 		payload,
 		previousResponseID,
 		reqBody,
-		account,
+		rpmAccount,
 		stateStore,
 		groupID,
 	); err != nil {
@@ -423,6 +427,9 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 	}
 
 	if err := checkBeforeWrite(); err != nil {
+		return nil, err
+	}
+	if err := s.acquireOpenAIRPMForSend(ctx, rpmAccount); err != nil {
 		return nil, err
 	}
 	if err := lease.WriteJSONWithContextTimeout(ctx, payload, s.openAIWSWriteTimeout()); err != nil {

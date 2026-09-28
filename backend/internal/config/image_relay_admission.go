@@ -8,13 +8,39 @@ type ExcelBPSTimeoutConfig struct {
 	FirstOutputSeconds int `mapstructure:"first_output_seconds"`
 	IdleSeconds        int `mapstructure:"idle_seconds"`
 	TotalSeconds       int `mapstructure:"total_seconds"`
+	// MaxAttempts is the total number of pre-output upstream attempts. Zero
+	// selects the bounded default; one disables recovery without disabling the
+	// timeout checks above.
+	MaxAttempts int `mapstructure:"max_attempts"`
+	// RecoveryBudgetSeconds bounds time spent replaying a request before any
+	// semantic output is delivered. Zero selects the safe default.
+	RecoveryBudgetSeconds int `mapstructure:"recovery_budget_seconds"`
+	// RecoveryInitialDelayMilliseconds controls the first retry backoff. Zero
+	// selects the short default used for transient BPS failures.
+	RecoveryInitialDelayMilliseconds int `mapstructure:"recovery_initial_delay_milliseconds"`
+	RecoveryMaxDelaySeconds          int `mapstructure:"recovery_max_delay_seconds"`
 }
 
 func (c ExcelBPSTimeoutConfig) Validate() error {
-	for name, value := range map[string]int{"first_output_seconds": c.FirstOutputSeconds, "idle_seconds": c.IdleSeconds, "total_seconds": c.TotalSeconds} {
+	for name, value := range map[string]int{
+		"first_output_seconds": c.FirstOutputSeconds, "idle_seconds": c.IdleSeconds,
+		"total_seconds": c.TotalSeconds, "max_attempts": c.MaxAttempts,
+		"recovery_budget_seconds":             c.RecoveryBudgetSeconds,
+		"recovery_initial_delay_milliseconds": c.RecoveryInitialDelayMilliseconds,
+		"recovery_max_delay_seconds":          c.RecoveryMaxDelaySeconds,
+	} {
 		if value < 0 || value > 7200 {
 			return fmt.Errorf("gateway.excel_bps_timeouts.%s must be between 0 and 7200", name)
 		}
+	}
+	if c.MaxAttempts > 6 {
+		return fmt.Errorf("gateway.excel_bps_timeouts.max_attempts must be between 0 and 6")
+	}
+	if c.RecoveryInitialDelayMilliseconds > 5000 {
+		return fmt.Errorf("gateway.excel_bps_timeouts.recovery_initial_delay_milliseconds must be between 0 and 5000")
+	}
+	if c.RecoveryMaxDelaySeconds > 60 {
+		return fmt.Errorf("gateway.excel_bps_timeouts.recovery_max_delay_seconds must be between 0 and 60")
 	}
 	return nil
 }
@@ -30,9 +56,14 @@ type ImageRelayAdmissionConfig struct {
 	BodyReadTimeoutSeconds int   `mapstructure:"body_read_timeout_seconds"`
 }
 
-// DecodeReservationBytes covers bounded wire/output buffers, their assembly
-// copies and decoder workspace. It is a reservation, not an RSS measurement.
+// ImageRelayDecodeReservationBytes retains the minimum accepted decode budget
+// for existing deployments. Per-request reservations follow their body limit.
 const ImageRelayDecodeReservationBytes int64 = 512 << 20
+
+// ImageRelayDecodeBudgetBytes is the default process-local decode budget. The
+// lower reservation constant remains the minimum accepted explicit setting so
+// existing deployments using 512 MiB continue to validate.
+const ImageRelayDecodeBudgetBytes int64 = 1 << 30
 
 func (c ImageRelayAdmissionConfig) WithDefaults() ImageRelayAdmissionConfig {
 	if c.DecodeMaxConcurrent == 0 {
@@ -42,7 +73,7 @@ func (c ImageRelayAdmissionConfig) WithDefaults() ImageRelayAdmissionConfig {
 		c.DecodeWaitMilliseconds = 250
 	}
 	if c.DecodeBudgetBytes == 0 {
-		c.DecodeBudgetBytes = ImageRelayDecodeReservationBytes
+		c.DecodeBudgetBytes = ImageRelayDecodeBudgetBytes
 	}
 	if c.ProcessingBudgetBytes == 0 {
 		c.ProcessingBudgetBytes = 1 << 30

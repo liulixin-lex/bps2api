@@ -542,17 +542,22 @@ gateway:
   image_relay_admission:
     decode_max_concurrent: 4
     decode_wait_milliseconds: 250 # bounded wait before reading any body
-    decode_budget_bytes: 536870912
+    decode_budget_bytes: 1073741824
     processing_budget_bytes: 1073741824
     max_concurrent_requests: 128
     body_read_timeout_seconds: 60
-  # Deployment BPS timeouts (binary defaults remain 0 for compatibility).
+  # Deployment BPS timeouts. Timeout values remain opt-in; transient failures
+  # before visible output use the bounded recovery defaults below.
   # 0 explicitly disables a timeout; increase limits for longer reasoning.
   # Idle counts raw upstream bytes, never downstream keepalive writes.
   excel_bps_timeouts:
     first_output_seconds: 0
     idle_seconds: 300
     total_seconds: 1800
+    max_attempts: 3
+    recovery_budget_seconds: 30
+    recovery_initial_delay_milliseconds: 250
+    recovery_max_delay_seconds: 5
   image_concurrency:
     # Enable image-only concurrency protection; false keeps existing behavior unchanged
     # 是否启用图片独立并发保护；false 保持现有行为不变

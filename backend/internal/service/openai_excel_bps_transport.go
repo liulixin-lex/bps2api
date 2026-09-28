@@ -149,14 +149,28 @@ func (b *excelBPSTrackedBody) Read(p []byte) (int, error) {
 // At most one extra model attempt, on another healthy managed exit, and only
 // before HTTP could have written anything. The caller owns the returned lease
 // through response closure. Static account proxies retain their old behavior.
-func (s *OpenAIGatewayService) doExcelBPSRequest(ctx context.Context, c *gin.Context, account *Account, scope string, body []byte, token, accountID string, acquire excelBPSAcquire) (*http.Response, excelBPSLease, string, error) {
+func (s *OpenAIGatewayService) doExcelBPSRequest(ctx context.Context, c *gin.Context, account *Account, scope string, body []byte, token, accountID string, acquire excelBPSAcquire, recovery ...*excelBPSRecovery) (*http.Response, excelBPSLease, string, error) {
 	managed := account.IsExcelBPSMihomoEnabled()
 	var excluded []string
 	proxy := ""
 	if account.Proxy != nil {
 		proxy = account.Proxy.URL()
 	}
+	var lastError error
+	var retryCancel context.CancelFunc
+	handedOff := false
+	defer func() {
+		if retryCancel != nil && !handedOff {
+			retryCancel()
+		}
+	}()
 	for attempt := 1; attempt <= 2; attempt++ {
+		if attempt > 1 && len(recovery) > 0 && recovery[0] != nil {
+			if !recovery[0].consumeRepair() {
+				return nil, nil, proxy, lastError
+			}
+			ctx, retryCancel = recovery[0].withDeadline(ctx)
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, nil, proxy, err
 		}
@@ -180,12 +194,25 @@ func (s *OpenAIGatewayService) doExcelBPSRequest(ctx context.Context, c *gin.Con
 			}
 			return nil, nil, proxy, err
 		}
+		// Admission reserves the first slot; every actual BPS send, including
+		// transport retries, acquires a slot immediately before Do.
+		if err := s.acquireOpenAIRPMForSend(ctx, account); err != nil {
+			if lease != nil {
+				lease.Release()
+			}
+			return nil, nil, proxy, err
+		}
 		c.Set("excel_bps_upstream_attempt", attempt)
 		evidence := &excelBPSWriteEvidence{}
 		resp, err := s.httpUpstream.Do(evidence.request(req), proxy, account.ID, account.Concurrency)
 		if err == nil {
+			if retryCancel != nil && resp != nil && resp.Body != nil {
+				resp.Body = &excelBPSRecoveryBody{ReadCloser: resp.Body, cancel: retryCancel}
+				handedOff = true
+			}
 			return resp, lease, proxy, nil
 		}
+		lastError = err
 		// Even an unusual response+error result makes replay unsafe.
 		retry := managed && attempt == 1 && resp == nil && evidence.unsent() && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
 		if resp != nil && resp.Body != nil {

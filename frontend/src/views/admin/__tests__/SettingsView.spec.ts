@@ -780,7 +780,7 @@ describe("admin SettingsView payment visible method controls", () => {
     wrapper.unmount();
   });
 
-  it("keeps conservative BPS admission defaults independent of concurrency", async () => {
+  it("uses larger BPS admission defaults independent of concurrency", async () => {
     const settings: Record<string, unknown> = { ...baseSettingsResponse };
     delete settings.excel_bps_image_max_images;
     getSettings.mockResolvedValueOnce(settings);
@@ -789,16 +789,18 @@ describe("admin SettingsView payment visible method controls", () => {
     const card = wrapper.get('[data-testid="excel-bps-image-settings"]');
     await card.get('#excel-bps-image-enabled').setValue(true);
     expect((card.get('#excel-bps-image-mode').element as HTMLSelectElement).value).toBe('relay');
-    expect((card.get('#excel-bps-image-budget').element as HTMLInputElement).value).toBe('512');
-    expect((card.get('#excel-bps-image-max-requests').element as HTMLInputElement).value).toBe('32');
+    expect((card.get('#excel-bps-image-budget').element as HTMLInputElement).value).toBe('1024');
+    expect((card.get('#excel-bps-image-max-requests').element as HTMLInputElement).value).toBe('128');
     expect((card.get('#excel-bps-image-max-images').element as HTMLInputElement).value).toBe('500');
     await card.get('#excel-bps-image-base-url').setValue('https://images.example');
     await card.get('#excel-bps-image-max-requests').setValue('512');
-    expect((card.get('#excel-bps-image-budget').element as HTMLInputElement).value).toBe('512');
+    await card.get('#excel-bps-image-body-limit').setValue('128');
+    expect((card.get('#excel-bps-image-budget').element as HTMLInputElement).value).toBe('1024');
     await wrapper.find('form').trigger('submit.prevent');
     await flushPromises();
     expect(updateSettings.mock.calls[0]?.[0]).toMatchObject({
-      excel_bps_image_budget_mib: 512,
+      excel_bps_image_body_limit_mib: 128,
+      excel_bps_image_budget_mib: 1024,
       excel_bps_image_max_requests: 512,
       excel_bps_image_max_images: 500,
       excel_bps_image_mode: 'relay',
@@ -930,7 +932,7 @@ describe("admin SettingsView payment visible method controls", () => {
     await wrapper.get('#excel-bps-image-enabled').setValue(true);
     await wrapper.get('#excel-bps-image-base-url').setValue('https://images.example');
     for (const [selector, value] of [
-      ['#excel-bps-image-body-limit', '65'],
+      ['#excel-bps-image-body-limit', '129'],
       ['#excel-bps-image-budget', '511'],
       ['#excel-bps-image-max-requests', '0'],
       ['#excel-bps-image-max-requests', '513'],

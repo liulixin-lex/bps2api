@@ -172,6 +172,9 @@ func TestNativeCompatBPSRecoverySharesBudgetAndCancellation(t *testing.T) {
 		}
 		upstream := &httpUpstreamRecorder{responses: responses}
 		svc := openAIClientToolsTestService(upstream)
+		// Preserve this test's one-retry boundary while exercising the shared
+		// HTTP and stream attempt budget.
+		svc.cfg.Gateway.ExcelBPSTimeouts.MaxAttempts = 2
 		rec := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(rec)
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -211,7 +214,7 @@ func TestNativeCompatBPSTotalTimeoutDuringRecovery(t *testing.T) {
 			require.Error(t, err)
 			require.Len(t, upstream.requests, 1)
 			require.Equal(t, http.StatusGatewayTimeout, rec.Code, "internal timeout must produce a terminal failure, not an empty 200")
-			require.Contains(t, rec.Body.String(), "timed out")
+			require.Equal(t, "basispoints_request_timeout", gjson.Get(rec.Body.String(), "error.code").String())
 			if result != nil {
 				require.False(t, result.ClientDisconnect, "internal timeout is not a client disconnect")
 			}

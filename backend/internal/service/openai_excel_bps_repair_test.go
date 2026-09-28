@@ -124,6 +124,29 @@ func TestExcelBPSToolCorrectionPreservesRouteAndUsage(t *testing.T) {
 	}
 }
 
+func TestExcelBPSRepairPreservesTypedRPMError(t *testing.T) {
+	first := &excelBPSRepairBody{Reader: strings.NewReader(excelBPSRepairWire(t, "rpm_repair", "Run client tool", "text(42);"))}
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{{StatusCode: http.StatusOK, Header: http.Header{}, Body: first}}}
+	svc := openAIClientToolsTestService(upstream)
+	cache := &openAIRPMTestCache{counts: map[int64]int{}}
+	svc.rpmCache = cache
+	body := []byte(`{"model":"gpt-5.6-sol","stream":false,"input":"test","tools":[{"type":"namespace","name":"functions","tools":[{"type":"custom","name":"exec"}]}]}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(body))
+	account := excelAccount()
+	account.Extra["base_rpm"] = 1
+	allowed, state, err := svc.TryAcquireOpenAIOAuthRPM(context.Background(), account)
+	require.NoError(t, err)
+	require.True(t, allowed)
+	ctx := WithOpenAIRPMReservation(context.Background(), account, state)
+	_, err = svc.Forward(ctx, c, account, body)
+	require.ErrorIs(t, err, ErrOpenAIRPMExhausted)
+	require.NotContains(t, rec.Body.String(), "basispoints_protocol_error")
+	require.Equal(t, 1, len(upstream.requests), "the exhausted repair must not reach BPS")
+	require.Equal(t, 1, cache.counts[account.ID], "the handler admission is consumed by the first send only")
+}
+
 func TestExcelBPSToolCorrectionStopsOnHTTPRejection(t *testing.T) {
 	for _, status := range []int{403, 429, 500} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {

@@ -85,7 +85,11 @@ func TestExcelBPSAutoDisableOn403(t *testing.T) {
 				require.Equal(t, tc.changed && tc.writeErr == nil, strings.Contains(rec.Body.String(), "routing was paused"))
 				require.NotContains(t, rec.Body.String(), "PRIVATE_UPSTREAM")
 				require.Equal(t, tc.wantCalls, calls)
-				require.Len(t, upstream.requests, 1, "do not replay the failed request")
+				wantRequests := 1
+				if tc.status == http.StatusInternalServerError {
+					wantRequests = 2 // Recover a transient failure before returning it.
+				}
+				require.Len(t, upstream.requests, wantRequests)
 				require.True(t, account.IsExcelBPSEnabled(), "do not mutate a shared scheduler snapshot")
 				require.True(t, account.Schedulable)
 				require.Equal(t, StatusActive, account.Status)

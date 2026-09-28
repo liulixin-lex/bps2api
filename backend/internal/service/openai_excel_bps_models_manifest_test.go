@@ -34,7 +34,7 @@ func TestExcelBPSManifestCapabilitiesFollowMappedOAuthRoute(t *testing.T) {
 			body, err := buildCodexModelsManifestForAccounts(PlatformOpenAI, []string{"gpt-6-astra", "public-astra", "gpt-5.6-sol"}, []Account{account}, nil, nil, true)
 			require.NoError(t, err)
 			for _, model := range decodeCodexManifestModels(t, body) {
-				if accountType == AccountTypeOAuth {
+				if accountType == AccountTypeOAuth && model["slug"] != "gpt-5.6-sol" {
 					require.Contains(t, model, "multi_agent_version")
 					require.Nil(t, model["multi_agent_version"])
 					require.Nil(t, model["multi_agent_reasoning_effort"])
@@ -91,7 +91,7 @@ func TestExcelBPSManifestFetchedAndPinnedCatalogUseFinalETag(t *testing.T) {
 		require.Nil(t, models[0]["multi_agent_reasoning_effort"])
 		require.Equal(t, "freeform", models[0]["apply_patch_tool_type"])
 		require.Equal(t, map[string]any{"kept": true}, models[0]["unknown"])
-		require.Nil(t, models[1]["multi_agent_version"], "all models of the configured OAuth account remain BPS")
+		require.Equal(t, "v2", models[1]["multi_agent_version"], "unselected models retain native capabilities")
 		next := &OpenAIModelsResponse{Body: []byte(source), ETag: oldETag}
 		require.NoError(t, svc.MergeGroupConfiguredCodexModels(context.Background(), group, next, manifest.ETag))
 		require.True(t, next.NotModified)
@@ -115,8 +115,9 @@ func TestExcelBPSManifestRestrictionPreservesNativeModels(t *testing.T) {
 	bps.Extra["openai_excel_bps_models"] = []string{}
 	result, changed, err := restrictExcelBPSCodexModelsManifest(body, []Account{bps}, nil)
 	require.NoError(t, err)
-	require.True(t, changed)
-	require.Nil(t, decodeCodexManifestModels(t, result)[0]["multi_agent_version"], "empty legacy model list cannot restore native capabilities")
+	require.False(t, changed)
+	require.True(t, bytes.Equal(body, result))
+	require.Equal(t, "v2", decodeCodexManifestModels(t, result)[0]["multi_agent_version"], "an empty explicit scope leaves the model native")
 }
 
 func TestExcelBPSManifestConflictingAliasDoesNotRestoreBundledV2(t *testing.T) {

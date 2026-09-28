@@ -191,6 +191,40 @@ func TestExcelBPSInvalidEncryptedContentRetryIsBounded(t *testing.T) {
 	}
 }
 
+func TestExcelBPSInvalidEncryptedContentSharesRecoveryBudget(t *testing.T) {
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusBadRequest, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(excelBPSInvalidCiphertext))},
+		{StatusCode: http.StatusInternalServerError, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":"server_error"}}`))},
+	}}
+	svc := openAIClientToolsTestService(upstream)
+	svc.cfg.Gateway.ExcelBPSTimeouts.MaxAttempts = 2
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	_, err := svc.Forward(context.Background(), c, excelAccount(), excelBPSEncryptedHistoryRequest(false))
+	require.Error(t, err)
+	require.Len(t, upstream.requests, 2, "encrypted repair and HTTP retry share MaxAttempts")
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+func TestExcelBPSInvalidEncryptedContentRecoveryUsesRemainingBudget(t *testing.T) {
+	good := incidentBPSFrame("response.completed", map[string]any{"response": map[string]any{"id": "resp_encrypted_recovered", "status": "completed", "model": "gpt-5.6-sol", "output": []any{}}})
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusBadRequest, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(excelBPSInvalidCiphertext))},
+		{StatusCode: http.StatusServiceUnavailable, Header: http.Header{"Retry-After": []string{"0"}}, Body: io.NopCloser(strings.NewReader("busy"))},
+		{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(good))},
+	}}
+	svc := openAIClientToolsTestService(upstream)
+	svc.cfg.Gateway.ExcelBPSTimeouts.MaxAttempts = 3
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	_, err := svc.Forward(context.Background(), c, excelAccount(), excelBPSEncryptedHistoryRequest(false))
+	require.NoError(t, err)
+	require.Len(t, upstream.requests, 3)
+	require.Contains(t, rec.Body.String(), "resp_encrypted_recovered")
+}
+
 func TestExcelBPSInvalidEncryptedContentDoesNotRetryOtherFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name, rejection, body string
@@ -209,7 +243,11 @@ func TestExcelBPSInvalidEncryptedContentDoesNotRetryOtherFailures(t *testing.T) 
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 			_, err := svc.Forward(context.Background(), c, excelAccount(), []byte(tc.body))
 			require.Error(t, err)
-			require.Len(t, upstream.requests, 1)
+			wantRequests := 1
+			if tc.status == http.StatusInternalServerError {
+				wantRequests = 2
+			}
+			require.Len(t, upstream.requests, wantRequests)
 			require.Equal(t, tc.status, rec.Code)
 		})
 	}

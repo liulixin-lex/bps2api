@@ -521,3 +521,20 @@ func TestExcelBPSFailoverReleasesExcludedSelection(t *testing.T) {
 	require.Contains(t, excluded, int64(5))
 	require.Nil(t, selection.ReleaseFunc)
 }
+
+func TestExcelBPSScopedFailoverCannotFallBackToNative(t *testing.T) {
+	account := service.Account{
+		ID:       7,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeOAuth,
+		Extra:    map[string]any{"openai_excel_bps": true, "openai_excel_bps_models": []any{"gpt-6-sol"}},
+	}
+	released := 0
+	selection := &service.AccountSelectionResult{Account: &account, Acquired: true, ReleaseFunc: func() { released++ }}
+	excluded := map[int64]struct{}{}
+	failure := &service.UpstreamFailoverError{Reason: service.ExcelBPSModelAccessChangedReason}
+	require.True(t, skipNativeAfterExcelBPSFailure(selection, failure, excluded, "gpt-6-astra"))
+	require.Equal(t, 1, released)
+	require.Contains(t, excluded, account.ID)
+	require.Nil(t, selection.ReleaseFunc)
+}

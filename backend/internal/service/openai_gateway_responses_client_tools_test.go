@@ -40,7 +40,7 @@ func openAIClientToolsTestService(upstream *httpUpstreamRecorder) *OpenAIGateway
 		httpUpstream: upstream,
 		cfg: &config.Config{Security: config.SecurityConfig{
 			URLAllowlist: config.URLAllowlistConfig{Enabled: false},
-		}},
+		}, Gateway: config.GatewayConfig{ExcelBPSTimeouts: config.ExcelBPSTimeoutConfig{MaxAttempts: 2}}},
 	}
 }
 

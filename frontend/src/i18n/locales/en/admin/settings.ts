@@ -29,7 +29,7 @@ export default {
           bodyLimit: 'Request body limit (MiB)',
           budget: 'Shared resource budget (MiB)',
           maxRequests: 'Maximum in-flight requests',
-          budgetHint: 'Processing budget never grows automatically with concurrency. Defaults: 32 in-flight requests and 512 MiB processing budget, plus a separate decode budget. Changes apply to new requests within the deployment hard limits. Review both budgets and instance memory before increasing concurrency.',
+          budgetHint: 'Processing budget never grows automatically with concurrency. Defaults: 128 in-flight requests and 1024 MiB processing budget, plus a separate decode budget. Changes apply to new requests within the deployment hard limits. Review both budgets and instance memory before increasing concurrency.',
           requestLimitsTitle: 'Request admission limits',
           imageLimitsTitle: 'Image conversion and storage limits',
           limitRange: 'Range: 1–{max}',
@@ -43,7 +43,7 @@ export default {
           retentionHint: 'Supports PNG, JPEG, GIF and WebP with a fixed 64-megapixel safety limit. Counts and decoded sizes include all inline images in the request, including history, tool screenshots and repeated items. Saved limits apply to new conversions. Link lifetime starts at the last submission; existing links keep their expiry until resubmitted. Lowering storage limits preserves live images and blocks new conversions while over quota. Anyone with a valid link can read the image.',
           capacityHint: 'Request admission limits cover OpenAI/Composite Responses, Chat and Messages HTTP requests, including text-only requests. Larger requests allow less concurrency; excess requests receive 503 without being queued in memory. Raising the budget increases memory pressure.',
           invalidBaseUrl: 'Enter a valid HTTPS origin without a path, credentials, query or fragment.',
-          invalidCapacity: 'Set a body limit of 1–64 MiB, a shared budget of 512–2048 MiB at least eight times the body limit, and 1–512 in-flight requests.',
+          invalidCapacity: 'Set a body limit of 1–128 MiB, a shared budget of 512–2048 MiB at least eight times the body limit, and 1–512 in-flight requests.',
         },
         channelMonitor: {
           title: 'Channel Monitor',

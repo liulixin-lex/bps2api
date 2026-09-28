@@ -94,11 +94,11 @@ func TestExcelBPSImageSettingsPersistAndApplyImmediately(t *testing.T) {
 	require.Equal(t, 48, runtime.MaxRequests)
 	require.NoError(t, settings.UpdateSettings(ctx, &SystemSettings{
 		ExcelBPSImageRelayEnabled: true, ExcelBPSImageBaseURL: "https://images.example",
-		ExcelBPSImageBodyLimitMiB: 64, ExcelBPSImageBudgetMiB: 1024, ExcelBPSImageMaxRequests: 512,
+		ExcelBPSImageBodyLimitMiB: 128, ExcelBPSImageBudgetMiB: 1024, ExcelBPSImageMaxRequests: 512,
 	}))
 	runtime, err = settings.GetExcelBPSImageRelaySettings(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 64, runtime.BodyLimitMiB)
+	require.Equal(t, 128, runtime.BodyLimitMiB)
 	require.Equal(t, 1024, runtime.BudgetMiB)
 	require.Equal(t, 512, runtime.MaxRequests)
 	relay, err = gateway.excelBPSImageRelay(ctx)
@@ -177,6 +177,7 @@ func TestExcelBPSImageUnsetCapacityPreservesDeploymentOverrides(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, current.InheritBudget)
 	require.True(t, current.InheritMaxRequests)
+	repo.values[SettingKeyExcelBPSImageBodyLimitMiB] = "64"
 	repo.values[SettingKeyExcelBPSImageBudgetMiB] = "512"
 	repo.values[SettingKeyExcelBPSImageMaxRequests] = "32"
 	current, err = s.GetExcelBPSImageRelaySettings(context.Background())

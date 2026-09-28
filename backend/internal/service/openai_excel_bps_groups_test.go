@@ -110,7 +110,11 @@ func TestExcelBPS403GroupActionTrigger(t *testing.T) {
 				}
 				require.Equal(t, want, actions)
 				require.Equal(t, triggered && !tc.fail, strings.Contains(rec.Body.String(), "account groups were"))
-				require.Len(t, upstream.requests, 1)
+				wantRequests := 1
+				if tc.status == http.StatusInternalServerError {
+					wantRequests = 2
+				}
+				require.Len(t, upstream.requests, wantRequests)
 				require.Equal(t, []int64{1, 2}, account.GroupIDs)
 				require.True(t, account.IsExcelBPSEnabled())
 			})

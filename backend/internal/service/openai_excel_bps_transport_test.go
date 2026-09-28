@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -24,6 +25,46 @@ import (
 )
 
 type bpsTestLease struct{ releases, failures int }
+
+func TestExcelBPSProxyFailoverConsumesSharedRecoveryBudget(t *testing.T) {
+	for _, limit := range []int{1, 2} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			account := excelAccount()
+			account.Extra["openai_excel_bps_mihomo"] = true
+			account.Extra["base_rpm"] = 5
+			calls := 0
+			var sentContext context.Context
+			svc := &OpenAIGatewayService{rpmCache: &openAIRPMTestCache{counts: map[int64]int{}}, httpUpstream: &bpsTestUpstream{send: func(req *http.Request, _ string) (*http.Response, error) {
+				calls++
+				if calls == 1 {
+					httptrace.ContextClientTrace(req.Context()).GetConn("bps.openai.com:443")
+					return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNRESET}
+				}
+				sentContext = req.Context()
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+			}}}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+			acquire := func(context.Context, string, ...string) (string, excelBPSLease, error) {
+				return "http://127.0.0.1:19000", &bpsTestLease{}, nil
+			}
+			recovery := newExcelBPSRecovery(config.ExcelBPSTimeoutConfig{MaxAttempts: limit})
+			resp, lease, _, err := svc.doExcelBPSRequest(context.Background(), c, account, "budget", []byte(`{}`), "token", "account", acquire, recovery)
+			require.Equal(t, limit, calls)
+			if limit == 1 {
+				require.Error(t, err)
+				require.Nil(t, resp)
+			} else {
+				require.NoError(t, err)
+				require.NoError(t, sentContext.Err(), "returning headers must not cancel the response body")
+				require.NoError(t, resp.Body.Close())
+				lease.Release()
+				require.ErrorIs(t, sentContext.Err(), context.Canceled)
+			}
+			require.False(t, recovery.consumeRepair(), "proxy failover exhausts the configured send limit")
+		})
+	}
+}
 
 func (l *bpsTestLease) Release()               { l.releases++ }
 func (l *bpsTestLease) ReportFailure()         { l.failures++ }
@@ -125,6 +166,38 @@ func TestExcelBPSProxyFailoverOnlyBeforeRequestSent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExcelBPSTransportAcquiresRPMBeforeEachSend(t *testing.T) {
+	account := excelAccount()
+	account.Extra["base_rpm"] = 2
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("first"))},
+		{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("second"))},
+	}}
+	cache := &openAIRPMTestCache{counts: map[int64]int{}}
+	svc := &OpenAIGatewayService{httpUpstream: upstream, rpmCache: cache}
+	allowed, state, err := svc.TryAcquireOpenAIOAuthRPM(context.Background(), account)
+	require.NoError(t, err)
+	require.True(t, allowed)
+	ctx := WithOpenAIRPMReservation(context.Background(), account, state)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	acquire := func(context.Context, string, ...string) (string, excelBPSLease, error) {
+		return "", nil, nil
+	}
+	for _, expected := range []string{"first", "second"} {
+		resp, lease, _, err := svc.doExcelBPSRequest(ctx, c, account, "rpm", []byte(`{"model":"gpt-5.6-sol"}`), "token", "account", acquire)
+		require.NoError(t, err)
+		require.Nil(t, lease)
+		body, readErr := io.ReadAll(resp.Body)
+		require.NoError(t, readErr)
+		require.Equal(t, expected, string(body))
+		require.NoError(t, resp.Body.Close())
+	}
+	_, _, _, err = svc.doExcelBPSRequest(ctx, c, account, "rpm", []byte(`{"model":"gpt-5.6-sol"}`), "token", "account", acquire)
+	require.ErrorIs(t, err, ErrOpenAIRPMExhausted)
+	require.Len(t, upstream.requests, 2, "an exhausted send must stop before HTTPUpstream.Do")
+	require.Equal(t, 2, cache.counts[account.ID])
 }
 
 func TestExcelBPSFailoverBudgetAndCancellation(t *testing.T) {

@@ -1132,6 +1132,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			}
 			// cancel/ping stay usable for the admitted in-flight turn. State
 			// mutations and new generations must not feed an ineligible socket.
+			rpmAccount := account
 			if isResponseCreate || eventType == "session.update" || strings.HasPrefix(eventType, "conversation.item.") {
 				latest, err := s.admitOpenAITurn(ctx, c, account, model)
 				if err == nil {
@@ -1147,6 +1148,7 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 					)
 					return payload, nil, err
 				}
+				rpmAccount = latest
 			}
 			out, blocked, policyErr := s.applyOpenAIFastPolicyToWSResponseCreate(ctx, account, model, payload)
 			// 多轮 passthrough usage：仅在成功（non-block / non-err）
@@ -1164,6 +1166,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			//     覆盖（Store(nil)），因为 OpenAI 上游对该帧实际不传
 			//     service_tier 时按 default 处理，billing 应如实反映。
 			if policyErr == nil && blocked == nil && isResponseCreate {
+				if err := s.acquireOpenAIRPMForSend(ctx, rpmAccount); err != nil {
+					return out, nil, err
+				}
 				usageMeta.updateFromResponseCreate(out, model, requestModelForThisFrame)
 				_, actualModel := usageMeta.turnModels(requestModelForThisFrame)
 				SetOpsUpstreamModel(c, actualModel)
@@ -1201,6 +1206,9 @@ func (s *OpenAIGatewayService) proxyResponsesWebSocketV2Passthrough(
 			admissionErr,
 		)
 		return admissionErr
+	}
+	if err := s.acquireOpenAIRPMForSend(ctx, latest); err != nil {
+		return err
 	}
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, s.openAIWSWriteTimeout())
 	firstWriteErr := relayUpstreamFrameConn.WriteFrame(firstWriteCtx, coderws.MessageText, firstClientMessage)

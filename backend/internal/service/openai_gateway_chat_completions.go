@@ -305,7 +305,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	}
 	logger.L().Debug("openai chat_completions: model mapping applied", logFields...)
 
-	if account.IsExcelBPSEnabledForModel(upstreamModel) {
+	// upstreamModel has already passed account model mapping; matching the BPS
+	// scope must not apply that mapping a second time.
+	if account.IsExcelBPSConfiguredForUpstreamModel(upstreamModel) {
 		// Chat Completions is converted to Responses for the same strict BPS
 		// channel. The account setting must never silently select native Codex.
 		c.Header("X-Codex2API-Upstream", "basispoints")

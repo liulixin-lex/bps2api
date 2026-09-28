@@ -1205,9 +1205,9 @@ func TestBuildSchedulerMetadataAccount_KeepsExcelBPSModelSelection(t *testing.T)
 		astra, sol bool
 	}{
 		{"legacy", false, nil, true, true},
-		{"legacy astra metadata", true, []string{"gpt-6-astra"}, true, true},
-		{"empty legacy metadata", true, []string{}, true, true},
-		{"null legacy metadata", true, nil, true, true},
+		{"selected model", true, []string{"gpt-6-astra"}, true, false},
+		{"empty selection", true, []string{}, false, false},
+		{"null selection", true, nil, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			account := service.Account{Platform: service.PlatformOpenAI, Type: service.AccountTypeOAuth, Extra: map[string]any{"openai_excel_bps": true}}

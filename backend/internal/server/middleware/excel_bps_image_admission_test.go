@@ -211,9 +211,9 @@ func TestExcelBPSImageAdmissionLimitsAndDisabled(t *testing.T) {
 		status   int
 		wantRead bool
 	}{
-		{"oversized", bpsImageTestSettings{enabled: true}, 65 << 20, "body", 413, false},
+		{"oversized", bpsImageTestSettings{enabled: true}, 129 << 20, "body", 413, false},
 		{"settings unavailable", bpsImageTestSettings{err: errors.New("private database error")}, 4, "body", 503, false},
-		{"disabled", bpsImageTestSettings{}, 65 << 20, "body", 204, true},
+		{"disabled", bpsImageTestSettings{}, 129 << 20, "body", 204, true},
 		{"understated length", bpsImageTestSettings{enabled: true}, 1, "body", 413, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

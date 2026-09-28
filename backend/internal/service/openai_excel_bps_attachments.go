@@ -41,6 +41,9 @@ func (s *OpenAIGatewayService) uploadExcelBPSAttachment(ctx context.Context, acc
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Accept-Encoding", "identity")
 	req.ContentLength = length
+	if err := s.acquireOpenAIRPMForSend(ctx, account); err != nil {
+		return "", basispoints.PreserveError(err)
+	}
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		return "", fmt.Errorf("excel BPS attachment connection failed")

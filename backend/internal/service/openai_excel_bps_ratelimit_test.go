@@ -391,7 +391,7 @@ func TestExcelBPSCooldownOnlyAffectsBPSRoutedModels(t *testing.T) {
 
 	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-6-astra", false))
 	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-6-astra", true))
-	require.True(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.1", false), "legacy model lists cannot bypass BPS cooldown")
+	require.False(t, svc.isOpenAIAccountRequestRuntimeBlocked(account, "gpt-5.1", false), "unselected native models do not inherit BPS cooldown")
 	require.False(t, svc.isOpenAIAccountRuntimeBlocked(account), "no account-wide block")
 
 	account.Extra["openai_excel_bps"] = false
@@ -482,8 +482,10 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_ExcelBPSCooldownSkipsOn
 			_, err := selectModel("gpt-6-astra")
 			require.ErrorIs(t, err, ErrNoAvailableAccounts)
 			require.Contains(t, err.Error(), excelBPSRateLimitedFilterReason+"=2")
-			_, err = selectModel("gpt-5.1")
-			require.ErrorIs(t, err, ErrNoAvailableAccounts, "all models of configured accounts remain on BPS")
+			selection, err := selectModel("gpt-5.1")
+			require.NoError(t, err, "an unselected model remains eligible for native routing")
+			require.NotNil(t, selection)
+			require.Contains(t, []int64{accounts[0].ID, accounts[1].ID}, selection.Account.ID)
 		})
 	}
 }

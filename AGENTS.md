@@ -17,8 +17,9 @@
 
 ## 现行语义
 
-- `openai_excel_bps` 仅选择实际 OpenAI OAuth 账号的通道；其他供应商、OpenAI API-key 和排除账号按现有逻辑处理。开启后不因工具、历史或旧模型名单静默回退原生。
-- 配置意图与运行暂停分开；403 自动暂停需 opt-in，保留开关。保留 `detail=original` 和工具源码语义；网关不执行客户端 Office/shell 源码。
+- `openai_excel_bps` 仅作用于实际 OpenAI OAuth 账号。账号可按显式模型映射名单选择 BPS 路由；未设置名单表示全部映射模型，设置空名单表示不选择模型。配置意图与运行暂停分开，403 自动暂停需 opt-in。
+- Hosted 工具声明遵循 v0.0.15 自动兼容策略：BPS 请求自动省略上游不支持的托管工具并保留可兼容工具调用，不提供管理员手动省略开关。保留 `detail=original` 和工具源码语义；网关不执行客户端 Office/shell 源码。
+- RPM、图片准入与错误恢复均按实际请求次数和显式容量/时间预算约束；短暂上游失败在响应输出前自动重试，开始向客户端输出后不重放请求。
 - 历史 v0.0.4/v0.0.11 的 native fallback 已被 v0.0.13 覆盖；资源边界和真实上游错误不能被“兼容”掩盖。
 - 源码、生产部署、账号数据库分别留证和回滚；历史授权描述不等于本轮的新操作指令。
 
@@ -26,6 +27,6 @@
 
 遵循用户要求的同输入 BASELINE / MODIFIED / ROLLBACK 验证：修改前保留原字节和哈希，在副本验证；四角色为 `MODIFIED_FILE`、`DIFF_FILE`、`VERIFICATION.txt`、可执行 `ROLLBACK.sh`，报告前逐一重开。同事务后续沿用四路径并追加；不同对象的新事务明确区分。
 
-本次文档事务见 [2026-09-28 会话](docs/development/entries/2026-09-28-development-history.md)。旧 v0.0.13 `/www/...` 四角色本机缺失，不能声称重开；历史索引见 [来源](docs/development/sources/handoff-2026-09-28.json)。
+本次文档事务见 [2026-09-28 会话](docs/development/entries/2026-09-28-development-history.md)。本轮路由、恢复、RPM、质量与图片改动见 [2026-09-28 BPS 能力整合](docs/development/entries/2026-09-28-bps-routing-recovery-rpm-quality.md)。旧 v0.0.13 `/www/...` 四角色本机缺失，不能声称重开；历史索引见 [来源](docs/development/sources/handoff-2026-09-28.json)。
 
 原始附件与运行细节留在被忽略的 `docs-local/` 或独立 artifacts。Git 中只写必要脱敏事实，不复制凭据、完整请求、数据库转储或私有连接参数。
