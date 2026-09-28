@@ -12,8 +12,8 @@
 | 与交接的关系 | 旧分支 `c5a0323b6` 由 PR #11 纳入本轮起点 `2f54db96e`，当时两提交源码树一致；本轮随后增加文档与代码整合；旧 `/www/...` 不是本机目录 |
 | 当前路由 | 实际选中的 OpenAI OAuth 账号开启 BPS 后固定走 BPS；关闭后使用原生，其他供应商不受影响 |
 | 上次生产观察 | 2026-09-28 本机仍为 `sub2api-v013`；已受限核查错误窗口和请求结构并删除采集；本轮未部署、未改生产账号配置 |
-| 当前任务 | 已完成：[择优融合 fork 上游](docs/development/entries/2026-09-28-upstream-integration.md)和[多轮与认证错误](docs/development/entries/2026-09-28-runtime-errors.md)修复；前后端回归、集成、构建、竞态和同输入回滚通过 |
-| 下一动作 | 本轮开发与本地提交已结束；没有自动待执行部署。按下一任务选择发布验证或下列剩余验证 |
+| 当前任务 | 发布中：[0.0.14 上线与发布](docs/development/entries/2026-09-28-release-0.0.14.md)；此前已完成：[择优融合 fork 上游](docs/development/entries/2026-09-28-upstream-integration.md)和[多轮与认证错误](docs/development/entries/2026-09-28-runtime-errors.md)修复；前后端回归、集成、构建、竞态和同输入回滚通过 |
+| 下一动作 | 已授权先上线 0.0.14，验证后推送远端并发版 |
 
 ## 渐进式阅读
 
