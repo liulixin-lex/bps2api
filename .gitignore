@@ -166,3 +166,8 @@ issues/
 /plugins/
 
 !docs/codex-ticket-pinning.md
+
+# 项目长期记忆可跟踪；原始交接与运行证据仍保存在 docs-local/
+!/AGENTS.md
+!/docs/development/
+!/docs/development/**

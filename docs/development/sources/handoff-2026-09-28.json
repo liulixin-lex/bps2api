@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "review_date_utc": "2026-09-28",
+  "scope": "Local documentation and handoff review; no new production or historical test execution",
+  "current_local": {
+    "target": "/bps/bps2api",
+    "branch": "main",
+    "head": "2f54db96e19ca06d54d73c990ccd1d750474ade8",
+    "version": "0.0.13",
+    "handoff_source_tree_matches_head": true
+  },
+  "uploads": [
+    {
+      "filename": "BPS2API_HANDOFF_2026-09-28.zh-CN.md",
+      "bytes": 37963,
+      "sha256": "782888001007ea7f12e63d2b0c42689ad0e1964b892a7fe8510516caad6ab62f",
+      "local_copy": "docs-local/development-history/sources/BPS2API_HANDOFF_2026-09-28.zh-CN.md",
+      "tracked": false,
+      "read_this_turn": true
+    },
+    {
+      "filename": "BPS2API_HANDOFF_2026-09-28.evidence.json",
+      "bytes": 29752,
+      "sha256": "cfeca1dd6f23b1a5b69d0f60b695fa357646ebc364540fa21998a23d9f366a62",
+      "local_copy": "docs-local/development-history/sources/BPS2API_HANDOFF_2026-09-28.evidence.json",
+      "tracked": false,
+      "read_this_turn": true
+    }
+  ],
+  "historical_evidence_recorded_at_utc": "2026-09-28T03:14:49.042731+00:00",
+  "markdown_hash_matches_evidence": true,
+  "historical_roles": [
+    {
+      "role": "MODIFIED_FILE.tar.gz",
+      "historical_path": "/www/bps2api-bps-persistence-20260926/v006-20260927T024100Z/release-deploy-20260927/strict-bps-v013/MODIFIED_FILE.tar.gz",
+      "historical_sha256": "d2b0e76babcac1240287ae5292900789a2c210857361a20425f55b8724fc7ef5",
+      "historical_bytes": 319403,
+      "available_this_workspace": false,
+      "reopened_this_turn": false
+    },
+    {
+      "role": "DIFF_FILE.patch",
+      "historical_path": "/www/bps2api-bps-persistence-20260926/v006-20260927T024100Z/release-deploy-20260927/strict-bps-v013/DIFF_FILE.patch",
+      "historical_sha256": "6149e0911e3e9e867c5808818c4d25d522515cba8548855366d3edc455a8e777",
+      "historical_bytes": 110632,
+      "available_this_workspace": false,
+      "reopened_this_turn": false
+    },
+    {
+      "role": "VERIFICATION.txt",
+      "historical_path": "/www/bps2api-bps-persistence-20260926/v006-20260927T024100Z/release-deploy-20260927/strict-bps-v013/VERIFICATION.txt",
+      "historical_sha256": "e6740f6f06f59a72964df209e746bad1cd3bab0e4b7d23abb24ce4d8ef90f3e8",
+      "historical_bytes": 28091,
+      "available_this_workspace": false,
+      "reopened_this_turn": false
+    },
+    {
+      "role": "ROLLBACK.sh",
+      "historical_path": "/www/bps2api-bps-persistence-20260926/v006-20260927T024100Z/release-deploy-20260927/strict-bps-v013/ROLLBACK.sh",
+      "historical_sha256": "0fe645b06ada747d6b229eaa6c192d2441498d557ba2b99c1293e9f2067f3dc4",
+      "historical_bytes": 412727,
+      "available_this_workspace": false,
+      "reopened_this_turn": false
+    }
+  ],
+  "historical_transaction_events": [
+    {
+      "label": "BASELINE",
+      "exit_status": 1,
+      "source": "historical_transaction_events in uploaded evidence JSON; not rerun"
+    },
+    {
+      "label": "APPLY_PATCH",
+      "exit_status": 0,
+      "source": "historical_transaction_events in uploaded evidence JSON; not rerun"
+    },
+    {
+      "label": "MODIFIED",
+      "exit_status": 0,
+      "source": "historical_transaction_events in uploaded evidence JSON; not rerun"
+    },
+    {
+      "label": "EXECUTE_ROLLBACK",
+      "exit_status": 0,
+      "source": "historical_transaction_events in uploaded evidence JSON; not rerun"
+    },
+    {
+      "label": "ROLLBACK",
+      "exit_status": 1,
+      "source": "historical_transaction_events in uploaded evidence JSON; not rerun"
+    },
+    {
+      "label": "REAPPLY_GOAL",
+      "exit_status": 0,
+      "source": "historical_transaction_events in uploaded evidence JSON; not rerun"
+    }
+  ],
+  "historical_production": {
+    "last_cutover_utc": "2026-09-27T18:56:06Z",
+    "version": "0.0.13",
+    "refreshed_this_turn": false,
+    "handoff_ssh_status_exit": 255
+  },
+  "historical_corrections": [
+    "v0.0.8 was a candidate, not deployed, per repository release notes",
+    "Historical canaries covered Responses/Chat, not Messages or a real Office host",
+    "Failure logs remain failures; later CI is separate evidence",
+    "Old pre-release state.json is not the current continuation action"
+  ],
+  "current_documentation_transaction": "/bps/artifacts/development-history-20260928",
+  "privacy": "Raw uploads unchanged in ignored local storage; this index omits private connection/account identifiers"
+}

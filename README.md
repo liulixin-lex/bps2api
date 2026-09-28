@@ -3,6 +3,11 @@
 基于 [ranxi2001/sub2api](https://github.com/ranxi2001/sub2api) 的独立稳定性改进版本，
 保留上游历史与 [LGPL-3.0 许可证](LICENSE)。原项目源自 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api)。
 
+## 开发历程与接续
+
+从 [开发历程](DEVELOPMENT_HISTORY.md) 读取当前状态，再按需进入架构、版本演进与会话记录。
+参与开发的 agent 按 [维护规则](docs/development/maintenance.md) 主动更新实质变化；项目约定见 [AGENTS.md](AGENTS.md)。
+
 ## 0.0.13
 
 最新版本的通道规则见 [0.0.13 更新说明](docs/bps2api-0.0.13.md)：开启 Excel / BPS 时，
