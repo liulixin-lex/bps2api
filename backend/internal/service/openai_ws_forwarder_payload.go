@@ -387,6 +387,100 @@ func setPreviousResponseIDToRawPayload(payload []byte, previousResponseID string
 	return rebuilt, nil
 }
 
+type openAIWSContextWindowBoundary struct {
+	WindowID                  string
+	Changed                   bool
+	PreviousResponseIDRemoved bool
+}
+
+func openAIWSPayloadCodexWindowID(payload []byte) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	if windowID := strings.TrimSpace(gjson.GetBytes(payload, "client_metadata.x-codex-window-id").String()); windowID != "" {
+		return windowID
+	}
+	turnMetadata := strings.TrimSpace(gjson.GetBytes(payload, "client_metadata.x-codex-turn-metadata").String())
+	if turnMetadata == "" {
+		return ""
+	}
+	return strings.TrimSpace(gjson.Get(turnMetadata, "window_id").String())
+}
+
+// normalizeOpenAIWSContextWindowBoundary breaks a Responses continuation chain
+// when Codex moves to a new local context window. WebSocket response.create can
+// still carry the previous window's previous_response_id after new_context,
+// while HTTP starts the new window without that continuation anchor. The current
+// window must come from the client frame before handshake/identity normalization.
+func normalizeOpenAIWSContextWindowBoundary(
+	payload []byte,
+	previousWindowID string,
+	currentWindowID string,
+) ([]byte, openAIWSContextWindowBoundary, error) {
+	boundary := openAIWSContextWindowBoundary{WindowID: currentWindowID}
+	if previousWindowID == "" || currentWindowID == "" || currentWindowID == previousWindowID {
+		return payload, boundary, nil
+	}
+	boundary.Changed = true
+	updated, removed, err := dropPreviousResponseIDFromRawPayload(payload)
+	if err != nil {
+		return payload, boundary, err
+	}
+	boundary.PreviousResponseIDRemoved = removed
+	return updated, boundary, nil
+}
+
+// restoreOpenAIWSContextWindowToolContext makes a new window self-contained
+// without replaying the previous window's conversation. Only concrete tool calls
+// needed by this frame's outputs may cross the boundary; unrelated calls,
+// messages, reasoning and old outputs must stay behind.
+func restoreOpenAIWSContextWindowToolContext(payload []byte, previousItems []json.RawMessage) ([]byte, error) {
+	items, exists, err := openAIWSExtractNormalizedInputSequence(payload)
+	if err != nil {
+		return nil, err
+	}
+	if !exists || !openAIWSRawItemsHasFunctionCallOutput(items) || openAIWSRawItemsHaveToolCallContextForOutputs(items) {
+		return payload, nil
+	}
+	missing := make(map[string]struct{})
+	for _, item := range items {
+		if !isCodexToolCallOutputItemType(gjson.GetBytes(item, "type").String()) {
+			continue
+		}
+		callID := strings.TrimSpace(gjson.GetBytes(item, "call_id").String())
+		if callID == "" {
+			return nil, errors.New("context window rollover tool output is missing call_id")
+		}
+		missing[callID] = struct{}{}
+	}
+	for _, item := range items {
+		if isCodexToolCallContextItemType(gjson.GetBytes(item, "type").String()) {
+			delete(missing, strings.TrimSpace(gjson.GetBytes(item, "call_id").String()))
+		}
+	}
+	var recovered []json.RawMessage
+	for i := len(previousItems) - 1; i >= 0 && len(missing) > 0; i-- {
+		item := previousItems[i]
+		if !isCodexToolCallContextItemType(gjson.GetBytes(item, "type").String()) {
+			continue
+		}
+		callID := strings.TrimSpace(gjson.GetBytes(item, "call_id").String())
+		if _, needed := missing[callID]; needed {
+			recovered = append(recovered, item)
+			delete(missing, callID)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, errors.New("context window rollover requires matching tool call context; resend the complete tool call and output")
+	}
+	restored := make([]json.RawMessage, 0, len(recovered)+len(items))
+	for i := len(recovered) - 1; i >= 0; i-- {
+		restored = append(restored, recovered[i])
+	}
+	restored = append(restored, items...)
+	return setOpenAIWSPayloadInputSequence(payload, restored, true)
+}
+
 func shouldInferIngressFunctionCallOutputPreviousResponseID(
 	storeDisabled bool,
 	turn int,

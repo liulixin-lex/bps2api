@@ -222,6 +222,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		rawForHash               []byte
 		promptCacheKey           string
 		previousResponseID       string
+		clientWindowID           string
 		originalModel            string
 		imageBillingModel        string
 		imageSizeTier            string
@@ -264,6 +265,14 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		if !gjson.ValidBytes(trimmed) {
 			return openAIWSClientPayload{}, NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "invalid websocket request payload", errors.New("invalid json"))
+		}
+
+		// Keep the client's per-frame window separate from handshake/account identity
+		// normalization. A handshake window can initialize the session, but must
+		// not turn a later omitted window into a rollover back to that old value.
+		clientWindowID := openAIWSPayloadCodexWindowID(trimmed)
+		if turn == 1 && clientWindowID == "" {
+			clientWindowID = strings.TrimSpace(gjson.Get(c.GetHeader(openAIWSTurnMetadataHeader), "window_id").String())
 		}
 
 		values := gjson.GetManyBytes(trimmed, "type", "model", "prompt_cache_key", "previous_response_id")
@@ -505,6 +514,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			rawForHash:               trimmed,
 			promptCacheKey:           promptCacheKey,
 			previousResponseID:       previousResponseID,
+			clientWindowID:           clientWindowID,
 			originalModel:            originalModel,
 			imageBillingModel:        imageBillingModel,
 			imageSizeTier:            imageSizeTier,
@@ -606,6 +616,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			storeDisabled,
 		)
 		currentBridgePayload := firstPayload
+		lastBridgeWindowID := ""
 		// Keep the first turn as the stable conversation seed. The mapped model
 		// is resolved again for each turn below so an in-connection model switch
 		// cannot reuse another model's upstream cache identity.
@@ -661,6 +672,25 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				if bridgeAccountFailoverInputExists {
 					bridgeAccountFailoverInput, _ = stripOpenAIInvalidEncryptedContentFromReplayItems(bridgeAccountFailoverInput, invalidDigests)
 				}
+			}
+			boundaryPayload, contextWindowBoundary, boundaryErr := normalizeOpenAIWSContextWindowBoundary(
+				currentBridgePayload.payloadRaw, lastBridgeWindowID, currentBridgePayload.clientWindowID,
+			)
+			if boundaryErr != nil {
+				return fmt.Errorf("normalize Codex websocket http bridge context-window boundary: %w", boundaryErr)
+			}
+			if contextWindowBoundary.Changed {
+				restored, restoreErr := restoreOpenAIWSContextWindowToolContext(boundaryPayload, bridgeReplayInput)
+				if restoreErr != nil {
+					return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, restoreErr.Error(), restoreErr)
+				}
+				currentBridgePayload.payloadRaw = restored
+				currentBridgePayload.payloadBytes = len(restored)
+				currentBridgePayload.previousResponseID = ""
+				// Both normal replay and failover must start at the new window.
+				// The only retained old items are matching tool calls restored above.
+				bridgeReplayInput, bridgeAccountFailoverInput = nil, nil
+				bridgeReplayInputExists, bridgeAccountFailoverInputExists = false, false
 			}
 			bridgePayloadRaw := currentBridgePayload.payloadRaw
 			bridgePayloadBytes := currentBridgePayload.payloadBytes
@@ -763,6 +793,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 			if result == nil {
 				return errors.New("websocket http bridge turn result is nil")
+			}
+			if contextWindowBoundary.WindowID != "" {
+				lastBridgeWindowID = contextWindowBoundary.WindowID
 			}
 			// turnReplayInput/turnAccountFailoverInput 可能共享同一头数组（转移自
 			// bridgeCurrentItems），保存历史必须经 combine 新建头，禁止就地 append。
@@ -1398,6 +1431,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 
 	currentPayload := firstPayload.payloadRaw
+	currentClientWindowID := firstPayload.clientWindowID
 	currentOriginalModel := firstPayload.originalModel
 	currentImageBillingModel := firstPayload.imageBillingModel
 	currentImageSizeTier := firstPayload.imageSizeTier
@@ -1466,6 +1500,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	turnPrevRecoveryTried := false
 	lastTurnFinishedAt := time.Time{}
 	lastTurnResponseID := ""
+	lastTurnWindowID := ""
 	lastTurnPayload := []byte(nil)
 	var lastTurnStrictState *openAIWSIngressPreviousTurnStrictState
 	lastTurnReplayInput := []json.RawMessage(nil)
@@ -1638,8 +1673,38 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				lastTurnReplayInput, _ = stripOpenAIInvalidEncryptedContentFromReplayItems(lastTurnReplayInput, invalidDigests)
 			}
 		}
+		boundaryPayload, contextWindowBoundary, boundaryErr := normalizeOpenAIWSContextWindowBoundary(
+			currentPayload,
+			lastTurnWindowID,
+			currentClientWindowID,
+		)
+		if boundaryErr != nil {
+			return fmt.Errorf("normalize Codex websocket context-window boundary: %w", boundaryErr)
+		}
+		if contextWindowBoundary.Changed {
+			restored, restoreErr := restoreOpenAIWSContextWindowToolContext(boundaryPayload, lastTurnReplayInput)
+			if restoreErr != nil {
+				return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, restoreErr.Error(), restoreErr)
+			}
+			currentPayload = restored
+			currentPayloadBytes = len(restored)
+			logOpenAIWSModeInfo(
+				"ingress_ws_context_window_changed account_id=%d turn=%d conn_id=%s action=break_previous_response_chain previous_window_id=%s current_window_id=%s previous_response_id_removed=%v",
+				account.ID,
+				turn,
+				truncateOpenAIWSLogValue(sessionConnID, openAIWSIDValueMaxLen),
+				truncateOpenAIWSLogValue(lastTurnWindowID, openAIWSIDValueMaxLen),
+				truncateOpenAIWSLogValue(contextWindowBoundary.WindowID, openAIWSIDValueMaxLen),
+				contextWindowBoundary.PreviousResponseIDRemoved,
+			)
+		}
 		currentPreviousResponseID := openAIWSPayloadStringFromRaw(currentPayload, "previous_response_id")
 		expectedPrev := strings.TrimSpace(lastTurnResponseID)
+		if contextWindowBoundary.Changed {
+			// A context-window rollover is a new Responses root. Do not infer a
+			// continuation anchor from the response produced in the old window.
+			expectedPrev = ""
+		}
 		toolSignals := ToolContinuationSignals{
 			HasFunctionCallOutput: openAIWSRawPayloadHasToolCallOutput(currentPayload),
 		}
@@ -1976,6 +2041,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		}
 		responseID := strings.TrimSpace(result.RequestID)
 		lastTurnResponseID = responseID
+		if contextWindowBoundary.WindowID != "" {
+			lastTurnWindowID = contextWindowBoundary.WindowID
+		}
 		// 正文共享：currentPayload/currentTurnReplayInput 均不可变，历史直接引用；
 		// collector 增量经 combine 合并（新头数组）。
 		lastTurnReplayInput = currentTurnReplayInput
@@ -2095,6 +2163,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 		}
 		currentPayload = nextPayload.payloadRaw
+		currentClientWindowID = nextPayload.clientWindowID
 		currentOriginalModel = nextPayload.originalModel
 		currentImageBillingModel = nextPayload.imageBillingModel
 		currentImageSizeTier = nextPayload.imageSizeTier

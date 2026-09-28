@@ -52,6 +52,64 @@ func TestRateLimitService_ApplyAccountSchedulingThreshold_SetsTempUnschedulable(
 	require.Contains(t, payload["error_message"], "91.5% used >= 80%")
 }
 
+func TestOpenAIGatewayService_SchedulingThresholdPreservesBPSStaleSnapshot(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		enabled, scoped bool
+		models          any
+		stale, blocked  bool
+	}{
+		{"BPS stale snapshot", true, true, []string{"gpt-6-astra"}, true, false},
+		{"BPS fresh snapshot keeps pause", true, true, []string{"gpt-6-astra"}, false, true},
+		{"native stale snapshot keeps future reset pause", false, false, nil, true, true},
+		{"disabled BPS keeps future reset pause", false, true, []string{"gpt-6-astra"}, true, true},
+		{"legacy BPS all models", true, false, nil, true, false},
+		{"empty BPS selection is native", true, true, []string{}, true, true},
+		{"null BPS selection is native", true, true, nil, true, true},
+		{"blank BPS selection is native", true, true, []string{" "}, true, true},
+		{"invalid BPS selection is native", true, true, "gpt-6-astra", true, true},
+		{"JSON BPS selection", true, true, []any{false, " gpt-6-astra "}, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			accountSchedulingThresholdsSF.Forget(SettingKeyAccountSchedulingThresholds)
+			accountSchedulingThresholdsCache.Store(&cachedAccountSchedulingThresholds{})
+			settingsRepo := newMockSettingRepo()
+			settingsRepo.data[SettingKeyAccountSchedulingThresholds] = `{"openai":80}`
+			accountRepo := &rateLimitAccountRepoStub{}
+			rl := NewRateLimitService(accountRepo, nil, &config.Config{}, nil, nil)
+			rl.SetSettingService(NewSettingService(settingsRepo, &config.Config{}))
+			service := &OpenAIGatewayService{rateLimitService: rl}
+			now := time.Now().UTC()
+			updatedAt := now
+			if test.stale {
+				updatedAt = now.Add(-3 * time.Hour)
+			}
+			account := Account{
+				ID: 1001, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true,
+				Extra: map[string]any{
+					"openai_excel_bps": test.enabled, "codex_5h_used_percent": 99.0,
+					"codex_usage_updated_at": updatedAt.Format(time.RFC3339),
+					"codex_5h_reset_at":      now.Add(time.Hour).Format(time.RFC3339),
+				},
+			}
+			if test.scoped {
+				account.Extra["openai_excel_bps_models"] = test.models
+			}
+			accounts := []Account{account}
+			filtered := service.filterOpenAIAccountsBySchedulingThreshold(context.Background(), accounts)
+			if test.blocked {
+				require.Empty(t, filtered)
+				require.Equal(t, 1, accountRepo.tempCalls)
+				require.NotNil(t, accounts[0].TempUnschedulableUntil)
+			} else {
+				require.Len(t, filtered, 1)
+				require.Zero(t, accountRepo.tempCalls, "旧 Codex 快照不能写整个 BPS 账号暂停")
+				require.Nil(t, accounts[0].TempUnschedulableUntil)
+			}
+		})
+	}
+}
+
 func TestRateLimitService_ApplyAccountSchedulingThreshold_UsesAccountOverrideInReason(t *testing.T) {
 	accountSchedulingThresholdsSF.Forget(SettingKeyAccountSchedulingThresholds)
 	accountSchedulingThresholdsCache.Store(&cachedAccountSchedulingThresholds{})

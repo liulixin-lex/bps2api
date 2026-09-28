@@ -584,7 +584,7 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 	// account over its 5h/7d threshold keeps serving the same response chain even though
 	// normal scheduling skips it. Pause is transient, so fall through to normal scheduling
 	// without deleting the binding (the window may reset before the next turn).
-	if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
+	if paused, _ := shouldAutoPauseOpenAIAccountByQuotaForModel(ctx, account, requestedModel); paused {
 		return 0, nil, "", nil
 	}
 	// 分组利润控制：与 quota auto-pause 同语义——利润不合格是暂时
@@ -619,7 +619,7 @@ func (s *OpenAIGatewayService) resolveAccountByPreviousResponseIDForCapability(
 		if !latest.SupportsOpenAIEndpointCapability(requiredCapability) {
 			return 0, nil, "", nil
 		}
-		if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, latest); paused {
+		if paused, _ := shouldAutoPauseOpenAIAccountByQuotaForModel(ctx, latest, requestedModel); paused {
 			return 0, nil, "", nil
 		}
 		// 利润门对最新账号状态复检一次，语义同上：跳过复用、不删绑定。

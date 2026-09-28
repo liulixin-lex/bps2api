@@ -13,12 +13,12 @@ vi.mock('@/components/layout/AppLayout.vue', () => ({ default: { template: '<mai
 vi.mock('vue-i18n', async () => ({ ...await vi.importActual<typeof import('vue-i18n')>('vue-i18n'), useI18n: () => ({ t: (key: string) => key, te: () => true }) }))
 vi.mock('@/api/admin/accountQuality', () => ({ listQualityPlans: vi.fn(), runQualityPlan: vi.fn(), listQualityOperations: vi.fn().mockResolvedValue({items:[],next_cursor:0}) }))
 vi.mock('@/api/admin/scheduledTests', () => ({ default: { create: vi.fn(), update: vi.fn(), delete: vi.fn(), listResults: vi.fn(), getResult: vi.fn() } }))
-vi.mock('@/api/admin/accounts', () => ({ list: vi.fn().mockResolvedValue({ items: [{ id: 1, name: 'Test account' }], total: 1 }) }))
+vi.mock('@/api/admin/accounts', () => ({ list: vi.fn().mockResolvedValue({ items: [{ id: 1, name: 'Test account', platform: 'openai', type: 'oauth' }], total: 1 }) }))
 vi.mock('@/api/admin/groups', () => ({ getModelAllowlistCandidates: vi.fn().mockResolvedValue(["test-judge"]), getAllIncludingInactive: vi.fn().mockResolvedValue([{ id: 21, name: 'Quality pool', status:'active', platform: 'openai' }]) }))
 vi.mock('@/components/account/ModelWhitelistSelector.vue', () => ({ default: { props: ['modelValue'], template: '<div data-testid="model-selector">{{ modelValue.join(",") }}</div>' } }))
 const mountView = () => mount(AccountQualityView, { global: { plugins: [createPinia()], stubs: { Teleport: true, AppLayout: { template: '<main><slot /></main>' } } } })
 describe('quality operations', () => {
-  beforeEach(() => { vi.clearAllMocks(); vi.mocked(scheduledTests.update).mockReset(); vi.mocked(accountsAPI.list).mockReset().mockResolvedValue({ items: [{ id: 1, name: 'Test account' }], total: 1 } as any); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({items:[],next_cursor:0}) })
+  beforeEach(() => { vi.clearAllMocks(); vi.mocked(scheduledTests.update).mockReset(); vi.mocked(accountsAPI.list).mockReset().mockResolvedValue({ items: [{ id: 1, name: 'Test account', platform: 'openai', type: 'oauth' }], total: 1 } as any); vi.mocked(listQualityPlans).mockResolvedValue([]); vi.mocked(listQualityOperations).mockResolvedValue({items:[],next_cursor:0}) })
   const rules = (): ScheduledTestPlan[] => [1, 2, 3].map(id => ({
     id, account_id: id, account_name: `Account ${id}`, model_id: `model-${id}`, cron_expression: '*/30 * * * *', enabled: true,
     max_results: 100, auto_recover: false, last_run_at: null, next_run_at: null, created_at: '', updated_at: '',
@@ -40,7 +40,84 @@ describe('quality operations', () => {
     expect(wrapper.get('[data-plan-id="2"] .rule-checkbox input').element).toHaveProperty('checked', true)
     expect(wrapper.get('[data-plan-id="3"] .rule-checkbox input').element).toHaveProperty('checked', false)
     await wrapper.get('[data-testid="quality-clear-rules"]').trigger('click')
-    expect(wrapper.get('[data-testid="quality-bulk-edit"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-testid="quality-bulk-edit"]').attributes('disabled')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('opens bulk editing without preselection and selects only matching accounts with rules across pages', async () => {
+    vi.mocked(listQualityPlans).mockResolvedValue(rules())
+    vi.mocked(accountsAPI.list).mockResolvedValue({ items: [{ id: 2, name: 'Account 2' }, { id: 4, name: 'No rule' }], total: 51 } as any)
+    const wrapper = mountView(); await flushPromises()
+    await wrapper.get('[data-testid="quality-bulk-edit"]').trigger('click'); await flushPromises()
+    expect(wrapper.get('button[form="quality-rule-form"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('#quality-rule-form input[type="checkbox"][value="4"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="quality-account-group"]').setValue('21')
+    await wrapper.get('[data-testid="quality-account-type"]').setValue('apikey')
+    await wrapper.get('#quality-account-search').setValue('matching')
+    await wrapper.get('#quality-account-search').trigger('keydown', { key: 'Enter' }); await flushPromises()
+    vi.mocked(accountsAPI.list).mockClear()
+      .mockResolvedValueOnce({ items: [{ id: 2 }, { id: 4 }], total: 51 } as any)
+      .mockResolvedValueOnce({ items: [{ id: 3 }, { id: 2 }], total: 51 } as any)
+    await wrapper.get('[data-testid="quality-select-all"]').trigger('click'); await flushPromises()
+    expect(accountsAPI.list).toHaveBeenLastCalledWith(2, 50, expect.objectContaining({ group: '21', type: 'apikey', search: 'matching' }))
+    expect((wrapper.vm as any).bulkRuleIds).toEqual([2, 3])
+    await wrapper.get('[data-testid="quality-account-type"]').setValue('oauth'); await flushPromises()
+    expect((wrapper.vm as any).bulkRuleIds).toEqual([2, 3])
+    await wrapper.get('[data-testid="quality-bulk-field-model"]').setValue(true)
+    await wrapper.get('input[placeholder="gpt-6-astra"]').setValue('new-model')
+    await wrapper.get('#quality-rule-form').trigger('submit'); await flushPromises()
+    expect(vi.mocked(scheduledTests.update).mock.calls).toEqual([[2, { model_id: 'new-model' }], [3, { model_id: 'new-model' }]])
+    expect(scheduledTests.create).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('removes unsupported selections when switching to probes and excludes them from select all', async () => {
+    const accounts = [
+      { id: 1, name: 'OAuth', platform: 'openai', type: 'oauth' },
+      { id: 2, name: 'Key', platform: 'openai', type: 'apikey' },
+      { id: 3, name: 'Claude', platform: 'anthropic', type: 'oauth' },
+      { id: 4, name: 'Setup', platform: 'openai', type: 'setup-token' },
+      { id: 5, name: 'Synthetic', platform: 'openai', type: 'oauth', extra: { synthetic_ui_test: true } },
+      { id: 6, name: 'Identity', platform: 'openai', type: 'oauth', credentials: { auth_mode: ' AgentIdentity ' } },
+    ]
+    vi.mocked(accountsAPI.list).mockResolvedValue({ items: accounts, total: 4 } as any)
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.newPlan(); await flushPromises()
+    await wrapper.get('[data-testid="quality-select-page"]').trigger('click')
+    expect(vm.selectedAccounts).toEqual([1, 2, 3, 4, 5, 6])
+    await wrapper.get('[data-testid="quality-question-kind"]').setValue('state_probe')
+    expect(vm.selectedAccounts).toEqual([1, 4])
+    expect(wrapper.get('#quality-rule-form input[type="checkbox"][value="2"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-testid="quality-select-all"]').trigger('click'); await flushPromises()
+    expect(vm.selectedAccounts).toEqual([1, 4])
+    vm.form.pelican_config.quality.action = 'disable_scheduling'
+    await vm.save()
+    expect(vi.mocked(scheduledTests.create).mock.calls.map(([request]) => request.account_id)).toEqual([1, 4])
+    wrapper.unmount()
+  })
+
+  it('preserves managed BPS probe selection and validates unsupported selections before writes', async () => {
+    vi.mocked(accountsAPI.list).mockResolvedValue({ items: [
+      { id: 1, name: 'Paused BPS', platform: 'openai', type: 'oauth', extra: { openai_excel_bps: true, openai_excel_bps_models: ['gpt-6-astra'], openai_excel_bps_paused_on_403_at: '2026-09-28T00:00:00Z' } },
+      { id: 2, name: 'Key', platform: 'openai', type: 'apikey' },
+    ], total: 2 } as any)
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    vm.newPlan(); await flushPromises()
+    await wrapper.get('[data-testid="quality-question-kind"]').setValue('state_probe')
+    vm.form.pelican_config.quality.action = 'enable_bps'
+    await wrapper.get('[data-testid="quality-select-page"]').trigger('click')
+    expect(vm.selectedAccounts).toEqual([1])
+    vm.selectedAccounts = [1, 2]
+    await vm.save()
+    expect(scheduledTests.create).not.toHaveBeenCalled()
+    expect(vm.error).toBe('qualityOps.probeAccountUnsupported')
+    vm.selectedAccounts = [1]
+    await vm.save()
+    expect(scheduledTests.create).toHaveBeenCalledTimes(1)
+    const request = vi.mocked(scheduledTests.create).mock.calls[0][0] as any
+    expect(request.account_id).toBe(1)
+    expect(request.pelican_config.quality.action).toBe('enable_bps')
+    expect(request.pelican_config.quality.bps).not.toHaveProperty('omit_unsupported_tools')
     wrapper.unmount()
   })
 
@@ -60,7 +137,7 @@ describe('quality operations', () => {
     const wrapper = mountView(); await flushPromises()
     await wrapper.get('[data-testid="quality-select-rules"]').setValue(true)
     await wrapper.get('[data-testid="quality-bulk-edit"]').trigger('click'); await flushPromises()
-    expect(accountsAPI.list).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="quality-account-group"]').exists()).toBe(true)
     expect(wrapper.get('button[form="quality-rule-form"]').attributes('disabled')).toBeDefined()
     await wrapper.get('[data-testid="quality-bulk-field-model"]').setValue(true)
     await wrapper.get('input[placeholder="gpt-6-astra"]').setValue('new-model')

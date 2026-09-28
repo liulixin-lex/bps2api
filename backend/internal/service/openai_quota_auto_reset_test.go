@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -100,6 +101,65 @@ func TestShouldAutoPauseOpenAIAccountByQuota_AutoResetCreditStates(t *testing.T)
 	})
 }
 
+func TestNotifyOpenAIAutoResetFromScheduler_CoolsDownPerAccount(t *testing.T) {
+	svc := &OpenAIQuotaAutoResetService{ctx: context.Background(), queue: make(chan int64, 8)}
+	setOpenAIAutoResetNotifier(svc)
+	t.Cleanup(func() { clearOpenAIAutoResetNotifier(svc) })
+
+	const accountA, accountB int64 = 9_900_001, 9_900_002
+	t.Cleanup(func() {
+		openAIAutoResetSchedulerNotifiedAt.Delete(accountA)
+		openAIAutoResetSchedulerNotifiedAt.Delete(accountB)
+	})
+	drain := func() []int64 {
+		var got []int64
+		for {
+			select {
+			case id := <-svc.queue:
+				svc.pending.Delete(id)
+				got = append(got, id)
+			default:
+				return got
+			}
+		}
+	}
+
+	base := time.Now()
+	require.True(t, notifyOpenAIAutoResetFromSchedulerAt(accountA, base))
+	require.Equal(t, []int64{accountA}, drain())
+
+	require.False(t, notifyOpenAIAutoResetFromSchedulerAt(accountA, base.Add(10*time.Second)), "冷却期内同一账号不重复通知")
+	require.Empty(t, drain())
+
+	require.True(t, notifyOpenAIAutoResetFromSchedulerAt(accountB, base.Add(10*time.Second)), "冷却按账号独立")
+	require.Equal(t, []int64{accountB}, drain())
+
+	require.True(t, notifyOpenAIAutoResetFromSchedulerAt(accountA, base.Add(openAIAutoResetSchedulerNotifyCooldown)))
+	require.Equal(t, []int64{accountA}, drain())
+}
+
+func TestNotifyOpenAIAutoResetFromScheduler_ConcurrentCallsShareCooldown(t *testing.T) {
+	const accountID int64 = 9_900_003
+	t.Cleanup(func() { openAIAutoResetSchedulerNotifiedAt.Delete(accountID) })
+	base := time.Now()
+	for _, now := range []time.Time{base, base.Add(openAIAutoResetSchedulerNotifyCooldown)} {
+		start := make(chan struct{})
+		var admitted atomic.Int32
+		var workers sync.WaitGroup
+		for range 64 {
+			workers.Go(func() {
+				<-start
+				if notifyOpenAIAutoResetFromSchedulerAt(accountID, now) {
+					admitted.Add(1)
+				}
+			})
+		}
+		close(start)
+		workers.Wait()
+		require.Equal(t, int32(1), admitted.Load(), "同一冷却窗口仅允许一次通知")
+	}
+}
+
 func TestSelectOpenAIAutoResetCandidate_FailsClosed(t *testing.T) {
 	candidates := []openAIAutoResetCreditCandidate{
 		{ID: "later", ExpiresAt: "2026-09-02T00:00:00Z"},
@@ -181,9 +241,15 @@ type autoResetTestQuota struct {
 	mu           sync.Mutex
 	resetArgs    [][2]string
 	failFirst    bool
+	queryCalls   atomic.Int32
+	queryErr     error
 }
 
 func (q *autoResetTestQuota) QueryUsage(context.Context, int64) (*OpenAIQuotaUsage, error) {
+	q.queryCalls.Add(1)
+	if q.queryErr != nil {
+		return nil, q.queryErr
+	}
 	copy := *q.usage
 	return &copy, nil
 }
@@ -333,4 +399,215 @@ func TestOpenAIQuotaAutoResetService_TimeoutRetryReusesRequestBody(t *testing.T)
 	quota.mu.Unlock()
 	require.Len(t, args, 2)
 	require.Equal(t, args[0], args[1], "超时重试必须复用相同 credit_id 与 redeem_request_id")
+}
+
+// newResetThresholdTestFixture 构造一个 7d 用量已过用卡阈值、处于停调中的账号。
+func newResetThresholdTestFixture(t *testing.T, state *OpenAIAutoResetCreditState, availableCredits int) (*OpenAIQuotaAutoResetService, *autoResetTestAccountRepo, *autoResetTestQuota) {
+	t.Helper()
+	now := time.Now().UTC()
+	extra := map[string]any{
+		OpenAIAutoResetCreditEnabledExtraKey:     true,
+		OpenAIAutoResetCredit5hThresholdExtraKey: 0.95,
+		OpenAIAutoResetCredit7dThresholdExtraKey: 0.95,
+		"codex_7d_used_percent":                  99.0,
+		"codex_usage_updated_at":                 now.Format(time.RFC3339),
+		"codex_7d_reset_at":                      now.Add(48 * time.Hour).Format(time.RFC3339),
+	}
+	if state != nil {
+		extra[OpenAIAutoResetCreditStateExtraKey] = state
+	}
+	account := &Account{ID: 501, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true, Extra: extra}
+	repo := &autoResetTestAccountRepo{account: account}
+	quota := &autoResetTestQuota{usage: &OpenAIQuotaUsage{
+		FetchedAt: now.Unix(),
+		RateLimit: &OpenAIRateLimit{
+			SecondaryWindow: &OpenAIRateLimitWindow{UsedPercent: 99, LimitWindowSeconds: 7 * 24 * 60 * 60, ResetAfterSeconds: 48 * 3600, ResetAt: now.Add(48 * time.Hour).Unix()},
+		},
+		RateLimitResetCredits: &OpenAIRateLimitResetCredits{AvailableCount: availableCredits},
+	}}
+	idempotencyConfig := DefaultIdempotencyConfig()
+	idempotencyConfig.ObserveOnly = false
+	service := NewOpenAIQuotaAutoResetService(repo, quota, autoResetTestRecoverer{},
+		NewIdempotencyCoordinator(newInMemoryIdempotencyRepo(), idempotencyConfig), nil, nil, nil)
+	return service, repo, quota
+}
+
+func (r *autoResetTestAccountRepo) setExtraForTest(key string, value any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.account.Extra[key] = value
+}
+
+func (r *autoResetTestAccountRepo) stateForTest() *OpenAIAutoResetCreditState {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return openAIAutoResetStateFromExtra(r.account.Extra)
+}
+
+func TestOpenAIQuotaAutoResetService_ResetThresholdSkipsRequeryWhileNoCreditIsFresh(t *testing.T) {
+	now := time.Now().UTC()
+	service, repo, quota := newResetThresholdTestFixture(t, &OpenAIAutoResetCreditState{
+		Status: OpenAIAutoResetStatusNoCredit, TriggerWindow: "7d", CheckedAt: now.Format(time.RFC3339), ErrorCode: "NO_RESET_CREDIT",
+	}, 0)
+
+	for i := 0; i < 3; i++ {
+		require.NoError(t, service.evaluateAccount(context.Background(), 501))
+	}
+	require.Zero(t, quota.queryCalls.Load(), "10 分钟内已确认无卡，调度通知不应再触发上游查询")
+
+	stale := now.Add(-openAIAutoResetSnapshotTTL - time.Minute).Format(time.RFC3339)
+	repo.setExtraForTest(OpenAIAutoResetCreditStateExtraKey, &OpenAIAutoResetCreditState{
+		Status: OpenAIAutoResetStatusNoCredit, TriggerWindow: "7d", CheckedAt: stale, ErrorCode: "NO_RESET_CREDIT",
+	})
+	repo.setExtraForTest("codex_usage_updated_at", stale)
+	require.NoError(t, service.evaluateAccount(context.Background(), 501))
+	require.Equal(t, int32(1), quota.queryCalls.Load(), "无卡结论过期后应重新查询，以便发现新发放的卡")
+	require.Equal(t, OpenAIAutoResetStatusNoCredit, repo.stateForTest().Status)
+}
+
+func TestOpenAIQuotaAutoResetService_ResetThresholdStillQueriesWhenCreditAvailable(t *testing.T) {
+	now := time.Now().UTC()
+	service, _, quota := newResetThresholdTestFixture(t, &OpenAIAutoResetCreditState{
+		Status: OpenAIAutoResetStatusAvailable, AvailableCount: 1, TriggerWindow: "7d", CheckedAt: now.Format(time.RFC3339),
+	}, 0)
+
+	require.NoError(t, service.evaluateAccount(context.Background(), 501))
+	require.Equal(t, int32(1), quota.queryCalls.Load(), "有卡时到达用卡阈值必须立即查询并进入用卡流程")
+}
+
+func TestOpenAIQuotaAutoResetService_QueryFailureBacksOffBeforeRetry(t *testing.T) {
+	service, repo, quota := newResetThresholdTestFixture(t, nil, 0)
+	quota.queryErr = errors.New("upstream EOF")
+
+	require.Error(t, service.evaluateAccount(context.Background(), 501))
+	require.Equal(t, int32(1), quota.queryCalls.Load())
+	state := repo.stateForTest()
+	require.Equal(t, OpenAIAutoResetStatusFailed, state.Status)
+	require.Equal(t, "RESET_CREDIT_QUERY_FAILED", state.ErrorCode)
+
+	for i := 0; i < 3; i++ {
+		require.NoError(t, service.evaluateAccount(context.Background(), 501))
+	}
+	require.Equal(t, int32(1), quota.queryCalls.Load(), "查询失败后一分钟内不应重复打上游")
+
+	state.LastResultAt = time.Now().UTC().Add(-openAIAutoResetQueryFailureRetryAfter - time.Second).Format(time.RFC3339)
+	repo.setExtraForTest(OpenAIAutoResetCreditStateExtraKey, state)
+	quota.queryErr = nil
+	require.NoError(t, service.evaluateAccount(context.Background(), 501))
+	require.Equal(t, int32(2), quota.queryCalls.Load(), "重试间隔过后应恢复查询")
+	require.Equal(t, OpenAIAutoResetStatusNoCredit, repo.stateForTest().Status)
+}
+
+func TestOpenAIQuotaAutoResetService_QueryFailureBackoffSurvivesWindowReset(t *testing.T) {
+	now := time.Now().UTC()
+	failed := &OpenAIAutoResetCreditState{
+		Status: OpenAIAutoResetStatusFailed, TriggerWindow: "7d",
+		CheckedAt: now.Format(time.RFC3339), LastResultAt: now.Format(time.RFC3339),
+		ErrorCode: "RESET_CREDIT_QUERY_FAILED",
+	}
+	service, repo, quota := newResetThresholdTestFixture(t, failed, 0)
+	repo.setExtraForTest("codex_usage_updated_at", now.Add(-openAIAutoResetSnapshotTTL-time.Minute).Format(time.RFC3339))
+	repo.setExtraForTest("codex_7d_reset_at", now.Add(-time.Second).Format(time.RFC3339))
+	for range 3 {
+		require.NoError(t, service.evaluateAccount(context.Background(), 501))
+	}
+	require.Zero(t, quota.queryCalls.Load(), "过期用量快照不得绕过查询失败退避")
+	require.Equal(t, failed, repo.stateForTest(), "窗口重置不能清掉仍在退避期的失败状态")
+
+	failed.LastResultAt = now.Add(-openAIAutoResetQueryFailureRetryAfter - time.Second).Format(time.RFC3339)
+	repo.setExtraForTest(OpenAIAutoResetCreditStateExtraKey, failed)
+	require.NoError(t, service.evaluateAccount(context.Background(), 501))
+	require.Equal(t, int32(1), quota.queryCalls.Load())
+}
+
+func TestOpenAIAutoResetQueryFailureBackoffOnlyAppliesToQueryStage(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, test := range []struct {
+		name, code, lastResultAt string
+		want                     bool
+	}{
+		{"query failed", "RESET_CREDIT_QUERY_FAILED", now.Format(time.RFC3339), true},
+		{"snapshot write failed", "USAGE_SNAPSHOT_WRITE_FAILED", now.Format(time.RFC3339), true},
+		{"details unavailable", "RESET_CREDIT_DETAILS_UNAVAILABLE", now.Format(time.RFC3339), true},
+		{"redemption failed", "RESET_FAILED", now.Format(time.RFC3339), false},
+		{"expired", "RESET_CREDIT_QUERY_FAILED", now.Add(-openAIAutoResetQueryFailureRetryAfter).Format(time.RFC3339), false},
+		{"invalid timestamp", "RESET_CREDIT_QUERY_FAILED", "invalid", false},
+		{"future timestamp", "RESET_CREDIT_QUERY_FAILED", now.Add(time.Second).Format(time.RFC3339), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := &OpenAIAutoResetCreditState{Status: OpenAIAutoResetStatusFailed, ErrorCode: test.code, LastResultAt: test.lastResultAt}
+			require.Equal(t, test.want, openAIAutoResetQueryFailureBackoffActive(state, now))
+		})
+	}
+}
+
+func TestShouldAutoPauseOpenAIAccountByQuota_BPSWithoutCodexUsage(t *testing.T) {
+	account := &Account{
+		Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true,
+		Extra: map[string]any{
+			"openai_excel_bps": true, "openai_excel_bps_models": []string{"gpt-6-astra"},
+			"auto_pause_5h_threshold": 0.8, "auto_pause_7d_threshold": 0.8,
+			OpenAIAutoResetCreditEnabledExtraKey: true,
+		},
+	}
+	paused, _ := shouldAutoPauseOpenAIAccountByQuota(context.Background(), account)
+	require.False(t, paused, "BPS 启用或自动用卡启用本身不是 Codex 额度信号")
+	require.True(t, account.IsExcelBPSEnabledForModel("gpt-6-astra"))
+	require.False(t, account.IsExcelBPSEnabledForModel("gpt-6-sol"))
+
+	account.Extra[OpenAIExcelBPSPausedOn403AtExtraKey] = time.Now().UTC().Format(time.RFC3339)
+	require.False(t, account.IsSchedulable(), "额度可用不解除 BPS 403 暂停")
+}
+
+func TestShouldAutoPauseOpenAIAccountByQuotaForModel_PreservesBPSStaleSnapshotBehavior(t *testing.T) {
+	now := time.Now().UTC()
+	for _, test := range []struct {
+		name, requestedModel string
+		models               any
+		stale                bool
+		wantPause            bool
+		disabled             bool
+		legacy               bool
+	}{
+		{"BPS mapped model keeps stale snapshot self-heal", "public-bps", []string{"gpt-6-astra"}, true, false, false, false},
+		{"native model retains future quota pause", "public-native", []string{"gpt-6-astra"}, true, true, false, false},
+		{"empty BPS selection remains native", "public-bps", []string{}, true, true, false, false},
+		{"null BPS selection remains native", "public-bps", nil, true, true, false, false},
+		{"blank BPS selection remains native", "public-bps", []string{" "}, true, true, false, false},
+		{"invalid BPS selection remains native", "public-bps", "gpt-6-astra", true, true, false, false},
+		{"disabled BPS remains native", "public-bps", []string{"gpt-6-astra"}, true, true, true, false},
+		{"JSON BPS selection uses mapped model", "public-bps", []any{" gpt-6-astra "}, true, false, false, false},
+		{"legacy unscoped BPS retains self-heal", "public-native", nil, true, false, false, true},
+		{"fresh BPS snapshot retains existing pause", "public-bps", []string{"gpt-6-astra"}, false, true, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			updatedAt := now
+			if test.stale {
+				updatedAt = now.Add(-3 * time.Hour)
+			}
+			account := &Account{
+				Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true,
+				Credentials: map[string]any{"model_mapping": map[string]any{"public-bps": "gpt-6-astra", "public-native": "gpt-6-sol"}},
+				Extra: map[string]any{
+					"openai_excel_bps": !test.disabled, "openai_excel_bps_models": test.models,
+					"codex_usage_updated_at": updatedAt.Format(time.RFC3339),
+					"codex_5h_used_percent":  99.0, "codex_5h_reset_at": now.Add(time.Hour).Format(time.RFC3339),
+					"auto_pause_5h_threshold": 0.95,
+				},
+			}
+			if test.legacy {
+				delete(account.Extra, "openai_excel_bps_models")
+			}
+			paused, _ := shouldAutoPauseOpenAIAccountByQuotaForModel(context.Background(), account, test.requestedModel)
+			require.Equal(t, test.wantPause, paused)
+			legacyReason := openAICompatibleAccountEligibilityFailureReasonBeforeProfit(context.Background(), account, nil, PlatformOpenAI, test.requestedModel, false, "")
+			if test.wantPause {
+				require.Equal(t, "quota_auto_pause_5h", legacyReason)
+			} else {
+				require.Empty(t, legacyReason, "BPS 旧快照不可在后续 eligibility 复查时再次被排除")
+				account.Extra[OpenAIExcelBPSPausedOn403AtExtraKey] = now.Format(time.RFC3339)
+				require.Equal(t, "not_schedulable", openAICompatibleAccountEligibilityFailureReasonBeforeProfit(context.Background(), account, nil, PlatformOpenAI, test.requestedModel, false, ""))
+			}
+		})
+	}
 }
