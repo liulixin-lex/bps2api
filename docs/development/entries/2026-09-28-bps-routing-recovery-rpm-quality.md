@@ -26,7 +26,7 @@
 - 修复图片递归恢复前未释放真实代理 lease 的单槽自等待；重试前释放真实所有权，延迟清理只执行一次，HTTP、EOF、transport 三种场景均有回归覆盖。
 - Retry-After 不再使用旧硬编码 2 秒门槛，统一由最大退避配置和剩余时间预算判断，不缩短上游要求的等待时间。
 - 质量规则加入 BPS 自动启用/恢复，保留 403 暂停和旧数据兼容。
-- 本轮工作仍是本地候选，尚未推送或部署；不能据此描述生产已启用模型名单路由或新恢复机制。
+- 本地验收阶段尚未推送或部署；后续用户明确要求先平滑切换再推送，并指定版本 0.0.16。实际生产结果见下方“部署与仓库同步”。
 
 ## 验证与执行记录
 
@@ -42,7 +42,18 @@
   - `ROLLBACK.sh`：`/bps/artifacts/development-history-20260928/ROLLBACK.sh`
 - 同一 Go 探针和输入已观察到：BASELINE 的显式/空模型名单均仍走全量 BPS，500 后只发送 1 次并返回 500；MODIFIED 的显式名单只选择所选模型，空名单不选择，500 后发送 2 次并返回 200；ROLLBACK 恢复 BASELINE 行为。三者的 hosted 自动省略与客户端函数兼容完全一致，回滚源码哈希等于 baseline。最终封包、补丁重建和四角色重读结果记录在固定 `VERIFICATION.txt`。
 - 回滚演练最初因 tar 解包将 0664 规范为 0644 而触发模式校验，退出 2；按 Git 可执行位语义修正后重跑通过，SHA256 字节校验未放宽，失败保留在 ledger。
-- 交付源码位于 `feat/bps-configurable-recovery`；提交身份以该分支 Git 历史与事务 `state.json` 为准。本轮不代表推送、发版、部署或生产压力验收完成。
+- 交付源码位于 `feat/bps-configurable-recovery`；实现提交 `81809a5ebf0bcb31047a45c72bd9973485c28841`，版本提交 `9b76a651f2f52cebb8bb74fa4b70bc88b81d9678`。本地测试本身不代表生产压力验收，部署和仓库同步另行留证。
+
+## 部署与仓库同步
+
+- 用户要求“无感替换线上服务，然后进行仓库推送”。首次使用构建标识 `0.0.15+81809a5`，在 2026-09-28 10:29:39 UTC 切至 8091；随后用户明确要求 `0.0.16`，因此修改唯一版本源 `backend/cmd/server/VERSION`，重新嵌入前端、编译并核验二进制版本，而非只修改容器标签。
+- 0.0.16 实际运行源码为 `9b76a651f2f52cebb8bb74fa4b70bc88b81d9678`；本机镜像 ID 为 `sha256:2d3337220fffc674b901aeb4562ff84c2cded8312b9cad21d6e09061b64d9899`。后续部署文档提交不改变运行源码。
+- 2026-09-28 **10:35:05 UTC** 通过 Caddy 热加载切至 `sub2api-v016` / `127.0.0.1:8092`。旧 8091、8090 及全部旧图片 owner 仍保留，原容器身份不变；保留 `stream_close_delay 1h`，没有停止旧服务。相对于基线没有数据库 migration 变更。
+- 新实例的文本、required tool、Chat SSE、原图输入 4 项验证通过；公网同样 4 项加上 function/custom/namespace 3 类客户端工具回传均通过，使用 OpenAI OAuth BPS。切换期间 **30 次健康检查无失败**，切换前已开始的真实 SSE 在切换后收到唯一 `[DONE]` 和正常 stop；这属于限定实测，不等于所有连接及压力场景均已验证。
+- 首次 8091 公网复验曾失败，记录不覆盖：10:30:16 UTC 上游返回请求级 `403: This request was blocked by our usage policy.`，触发 v0.0.15 已有的账号 BPS 暂停，随后无可用账号而产生 503；不是 RPM 拒绝，也不是 `basispoints_model_access_changed`。该暂停实现与旧版字节一致，回滚二进制不会恢复共享 DB 状态。另一有效账号接替后已观察到真实 200，0.0.16 最终公网验证通过；本轮没有强制解除暂停或关闭 403 保护。
+- 部署入口和回滚入口为 `/opt/sub2api/deploy-v016.py` 的 `cutover` / `rollback`；回滚保留新实例图片 owner，旧配置与 `.env` 快照保存在权限受限的 `/opt/sub2api/backups/v016-20260928/transaction`。三态配置校验与源码副本回滚独立记录，不能将配置校验说成已执行生产回滚。
+- 新证据位于 `/bps/artifacts/development-history-20260928/configurable-recovery-20260928/rollout-v016/`，首次切换与 503 脱敏根因保存在相邻 `rollout-81809a5/`。仍沿用既有四个固定角色，追加部署证据并刷新版本/文档封包。
+- 按“先部署、后推送”顺序，部署记录随实现正常快进同步到 `origin/main`；实际远端提交和推送退出码以 `rollout-v016/state.json`、`push-result.json` 及固定验证 ledger 为准。不得提前以文档声明代替推送执行。本次版本号为 **0.0.16**，不把部署等同于已创建新的 GitHub Release/tag。
 
 ## 注意事项
 
