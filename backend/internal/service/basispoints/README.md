@@ -88,3 +88,7 @@ The gateway shares one pre-output recovery budget across this path, known-target
 # Client tool selection
 
 The adapter accepts auto, none, required, exact function/custom/namespace choices and allowed_tools with auto/required mode. Keep the complete catalog for history replay; store current-response selection separately. A developer instruction communicates that constraint to BPS, and local validation enforces selected identities, required calls, exact single-tool cardinality and parallel-call limits before committing any replay writes or emitting client tool events. Violations fail the whole batch. Hosted tools remain unavailable; unsupported choices never reroute to native Codex.
+
+## 可选托管声明与客户端执行
+
+与参考上游一致，可选 hosted 声明不会使整个客户端工具目录失效。适配器保留 function/custom/namespace 调用，省略 BPS 不可执行的 hosted 声明并给模型明确的能力提示。`OmitUnsupportedTools` 是兼容旧调用签名的弃用选项，false 不再恢复额外拒绝。`OmittedHostedToolTypes()` 提供排序后的固定类型诊断；网关通过 `X-BPS-Omitted-Hosted-Tools` 响应头公开。已有强制客户端选择、源码保真和完整历史重建继续有效；不伪造托管工具执行结果。

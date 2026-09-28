@@ -118,7 +118,6 @@ describe('BulkEditAccountModal', () => {
       openai_excel_bps_cache_creation_as_input: false,
       openai_excel_bps_ignore_images: false,
       openai_excel_bps_ignore_encrypted_content: false,
-      openai_excel_bps_omit_unsupported_tools: false,
       openai_excel_bps_auto_disable_on_403: false,
       openai_excel_bps_auto_move_on_403: false,
       openai_excel_bps_403_target_group_id: null
@@ -166,17 +165,14 @@ describe('BulkEditAccountModal', () => {
       })
     })
 
-    it('saves the hosted tool omission opt-in in bulk', async () => {
+    it('uses automatic tool compatibility without writing a legacy switch', async () => {
       const wrapper = mountModal(oauthProps)
       await enableBPS(wrapper)
-      await wrapper.get('[data-testid="bulk-excel-bps-omit-unsupported-tools"]').setValue(true)
+      expect(wrapper.find('[data-testid="bulk-excel-bps-omit-unsupported-tools"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="bulk-excel-bps-tool-compatibility"]').exists()).toBe(true)
       await submit(wrapper)
-      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], {
-        extra: {
-          ...defaultExtra,
-          openai_excel_bps_omit_unsupported_tools: true
-        }
-      })
+      expect(adminAPI.accounts.bulkUpdate).toHaveBeenCalledWith([1, 2], { extra: defaultExtra })
+      expect(vi.mocked(adminAPI.accounts.bulkUpdate).mock.calls[0]?.[1]?.extra).not.toHaveProperty('openai_excel_bps_omit_unsupported_tools')
     })
 
     it.each([
@@ -245,7 +241,6 @@ describe('BulkEditAccountModal', () => {
     it('explicitly disables BPS and clears subordinate settings', async () => {
       const wrapper = mountModal(oauthProps)
       await enableBPS(wrapper)
-      await wrapper.get('[data-testid="bulk-excel-bps-omit-unsupported-tools"]').setValue(true)
       await wrapper.get('[data-testid="bulk-excel-bps-cache-creation-as-input"]').setValue(true)
       await wrapper.get('[data-testid="excel-bps-mihomo"]').setValue(true)
       await wrapper.get('[data-testid="bulk-excel-bps-auto-disable-on-403"]').setValue(true)
@@ -267,7 +262,6 @@ describe('BulkEditAccountModal', () => {
     it('resets BPS controls when the modal is reopened', async () => {
       const wrapper = mountModal(oauthProps)
       await enableBPS(wrapper)
-      await wrapper.get('[data-testid="bulk-excel-bps-omit-unsupported-tools"]').setValue(true)
       await wrapper.get('[data-testid="bulk-excel-bps-cache-creation-as-input"]').setValue(true)
       await wrapper.get('[data-testid="excel-bps-mihomo"]').setValue(true)
       await wrapper.get('[data-testid="bulk-excel-bps-auto-disable-on-403"]').setValue(true)

@@ -387,9 +387,9 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 	var upstreamBody []byte
 	var bridge *basispoints.Bridge
 	if images != nil {
-		upstreamBody, bridge, err = images.PrepareWithCatalog(scope, replay, catalog, basispoints.PrepareOptions{OmitUnsupportedTools: account.IsExcelBPSOmitUnsupportedToolsEnabled()})
+		upstreamBody, bridge, err = images.PrepareWithCatalog(scope, replay, catalog)
 	} else {
-		upstreamBody, bridge, err = basispoints.PrepareWithCatalog(body, scope, replay, catalog, basispoints.PrepareOptions{OmitUnsupportedTools: account.IsExcelBPSOmitUnsupportedToolsEnabled()})
+		upstreamBody, bridge, err = basispoints.PrepareWithCatalog(body, scope, replay, catalog)
 	}
 	if err != nil {
 		var contentErr *basispoints.ContentValidationError
@@ -398,6 +398,10 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gi
 		}
 		return fail(400, "basispoints_request_invalid", err.Error())
 	}
+	if omitted := bridge.OmittedHostedToolTypes(); len(omitted) > 0 {
+		c.Header("X-BPS-Omitted-Hosted-Tools", strings.Join(omitted, ","))
+	}
+
 	token, _, err := s.GetAccessToken(ctx, account)
 	if err != nil {
 		if isExcelBPSClientCancellation(c, err) {

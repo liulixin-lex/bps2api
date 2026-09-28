@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUpstreamMergeExtensionsRequireExplicitOptIn(t *testing.T) {
+func TestUpstreamMergeMediaOptInAndDefaultHostedCompatibility(t *testing.T) {
 	source := testSource()
 	source["input"] = []any{object{"role": "user", "content": []any{object{"type": "input_image", "file_id": "file-explicit", "detail": "original"}}}}
 	raw, err := json.Marshal(source)
@@ -29,8 +29,9 @@ func TestUpstreamMergeExtensionsRequireExplicitOptIn(t *testing.T) {
 	source["tools"] = []any{object{"type": "web_search"}}
 	raw, err = json.Marshal(source)
 	require.NoError(t, err)
-	_, _, err = Prepare(raw, "scope", nil)
-	require.Error(t, err)
+	_, bridge, err = Prepare(raw, "scope", nil)
+	require.NoError(t, err)
+	require.Len(t, bridge.Warnings, 1)
 	_, bridge, err = Prepare(raw, "scope", nil, PrepareOptions{OmitUnsupportedTools: true})
 	require.NoError(t, err)
 	require.Len(t, bridge.Warnings, 1)

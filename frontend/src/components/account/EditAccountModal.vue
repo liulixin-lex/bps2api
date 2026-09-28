@@ -1782,13 +1782,7 @@
             @click="excelBPSPausedOn403At = null">{{ t('admin.accounts.openai.excelBPSResume') }}</button>
         </div>
         <div v-if="excelBPSEnabled" class="mt-3">
-          <label class="flex items-center gap-2">
-            <input v-model="excelBPSOmitUnsupportedTools" type="checkbox"
-              data-testid="excel-bps-omit-unsupported-tools"
-              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-500" />
-            <span class="text-sm">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedTools') }}</span>
-          </label>
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedToolsDesc') }}</p>
+          <p data-testid="excel-bps-tool-compatibility" class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.accounts.openai.excelBPSOmitUnsupportedToolsDesc') }}</p>
         </div>
         <div v-if="excelBPSEnabled" class="mt-3">
           <label class="flex items-center gap-2">
@@ -3879,7 +3873,6 @@ const excelBPSProxySource = ref<'mihomo' | 'ip_pool'>('mihomo')
 const excelBPSCacheCreationAsInput = ref(false)
 const excelBPSAutoDisableOn403 = ref(false)
 const excelBPSPausedOn403At = ref<string | null>(null)
-const excelBPSOmitUnsupportedTools = ref(false)
 const excelBPSIgnoreImages = ref(false)
 const excelBPSIgnoreEncryptedContent = ref(false)
 const excelBPSAutoMoveOn403 = ref(false)
@@ -4389,7 +4382,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   excelBPSCacheCreationAsInput.value = false
   excelBPSAutoDisableOn403.value = false
   excelBPSPausedOn403At.value = null
-  excelBPSOmitUnsupportedTools.value = false
   excelBPSIgnoreImages.value = false
   excelBPSIgnoreEncryptedContent.value = false
   excelBPSAutoMoveOn403.value = false
@@ -4420,7 +4412,6 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     excelBPSAutoDisableOn403.value = newAccount.type === 'oauth' && extra?.openai_excel_bps_auto_disable_on_403 === true
     excelBPSPausedOn403At.value = excelBPSEnabled.value && typeof extra?.openai_excel_bps_paused_on_403_at === 'string'
       ? extra.openai_excel_bps_paused_on_403_at : null
-    excelBPSOmitUnsupportedTools.value = excelBPSEnabled.value && extra?.openai_excel_bps_omit_unsupported_tools === true
     excelBPSIgnoreImages.value = excelBPSEnabled.value && extra?.openai_excel_bps_ignore_images === true
     excelBPSIgnoreEncryptedContent.value = excelBPSEnabled.value && extra?.openai_excel_bps_ignore_encrypted_content === true
     excelBPSAutoMoveOn403.value = newAccount.type === 'oauth' && extra?.openai_excel_bps_auto_move_on_403 === true
@@ -5941,11 +5932,7 @@ const handleSubmit = async () => {
       } else {
         delete newExtra.openai_excel_bps_cache_creation_as_input
       }
-      if (newExtra.openai_excel_bps === true && excelBPSOmitUnsupportedTools.value) {
-        newExtra.openai_excel_bps_omit_unsupported_tools = true
-      } else {
-        delete newExtra.openai_excel_bps_omit_unsupported_tools
-      }
+
       if (newExtra.openai_excel_bps === true && excelBPSIgnoreImages.value) {
         newExtra.openai_excel_bps_ignore_images = true
       } else {

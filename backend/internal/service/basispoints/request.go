@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -20,7 +19,9 @@ type object = map[string]any
 
 // PrepareOptions controls explicitly enabled extensions to the strict default.
 type PrepareOptions struct {
-	NativeAttachments    bool
+	NativeAttachments bool
+	// Deprecated: optional hosted declarations always use upstream-compatible omission.
+	// Retained for source compatibility; false never rejects a valid client catalog.
 	OmitUnsupportedTools bool
 }
 
@@ -199,11 +200,7 @@ func prepare(raw []byte, scope string, replay *ReplayCache, nativeToolImages map
 			"\nEnd of catalog. Invoke native run_officejs once. Follow each tool's specified transport: FUNCTION uses a JSON envelope; FUNCTION_CODE uses raw code plus metadata JSON in extended_summary; FUNCTION_CMD uses raw cmd plus metadata JSON; CUSTOM uses its exact marker and raw input. No Office code is executed by the proxy."
 	}
 	if len(b.unsupportedTools) > 0 {
-		kinds := make([]string, 0, len(b.unsupportedTools))
-		for kind := range b.unsupportedTools {
-			kinds = append(kinds, kind)
-		}
-		sort.Strings(kinds)
+		kinds := b.OmittedHostedToolTypes()
 		warning := "Hosted tools unavailable through Basispoints: " + strings.Join(kinds, ", ")
 		b.Warnings = append(b.Warnings, warning)
 		protocol += "\n" + warning + ". These declarations were omitted. Do not claim to have used them. If the task requires one, explain the limitation or use a suitable declared client tool."

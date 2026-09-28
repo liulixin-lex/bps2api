@@ -12,8 +12,8 @@
 | 与交接的关系 | 旧分支 `c5a0323b6` 由 PR #11 纳入本轮起点 `2f54db96e`，当时两提交源码树一致；本轮随后增加文档与代码整合；旧 `/www/...` 不是本机目录 |
 | 当前路由 | 实际选中的 OpenAI OAuth 账号开启 BPS 后固定走 BPS；关闭后使用原生，其他供应商不受影响 |
 | 当前生产 | 2026-09-28 06:08:17 UTC 切至 `sub2api-v014` / 8089；公网文本/SSE 验证通过，旧版及图片路径保留；随后账号被上游撤销；06:21 UTC 已出现新可调度账号，另有 hosted tools 升级回归待修 |
-| 当前任务 | 已定位 [hosted tools 升级回归](docs/development/entries/2026-09-28-hosted-tools-root-cause.md)，本轮未改业务代码/策略；此前已完成：[0.0.14 上线与发布](docs/development/entries/2026-09-28-release-0.0.14.md)；此前已完成：[择优融合 fork 上游](docs/development/entries/2026-09-28-upstream-integration.md)和[多轮与认证错误](docs/development/entries/2026-09-28-runtime-errors.md)修复；前后端回归、集成、构建、竞态和同输入回滚通过 |
-| 下一动作 | hosted tools 根因已确认；待后续兼容性修复，不把配置省略当成实现托管能力 |
+| 当前任务 | 正在修复 [工具兼容与执行链路](docs/development/entries/2026-09-28-hosted-tools-fix.md)；已定位 [hosted tools 升级回归](docs/development/entries/2026-09-28-hosted-tools-root-cause.md)，根因轮仅定位；本轮已获授权修复；此前已完成：[0.0.14 上线与发布](docs/development/entries/2026-09-28-release-0.0.14.md)；此前已完成：[择优融合 fork 上游](docs/development/entries/2026-09-28-upstream-integration.md)和[多轮与认证错误](docs/development/entries/2026-09-28-runtime-errors.md)修复；前后端回归、集成、构建、竞态和同输入回滚通过 |
+| 下一动作 | 完成工具混合目录回归、构建与回滚验证，部署兼容修复 |
 
 ## 渐进式阅读
 

@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -225,9 +226,6 @@ func (b *Bridge) collectToolsAtDepth(value any, namespace string, depth int) ([]
 			continue
 		}
 		if isUnsupportedHostedTool(kind) {
-			if !b.options.OmitUnsupportedTools {
-				return nil, fmt.Errorf("basispoints does not support hosted tools; explicitly enable omission or select a compatible channel")
-			}
 			if b.unsupportedTools == nil {
 				b.unsupportedTools = make(map[string]bool)
 			}
@@ -311,6 +309,17 @@ func toolDefinitionFingerprint(item object) string {
 		}
 	}
 	return fingerprint(definition)
+}
+
+// OmittedHostedToolTypes reports only fixed, recognized protocol names.
+// Callers can expose this diagnostic without tool descriptions or arguments.
+func (b *Bridge) OmittedHostedToolTypes() []string {
+	kinds := make([]string, 0, len(b.unsupportedTools))
+	for kind := range b.unsupportedTools {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	return kinds
 }
 
 // Hosted capabilities cannot be relayed as client function calls. Ignore known

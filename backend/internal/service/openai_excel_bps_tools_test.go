@@ -76,12 +76,7 @@ func TestExcelBPSToolFallbackPolicy(t *testing.T) {
 					c.Header("X-Codex2API-Upstream", "codex")
 					_, err = svc.Forward(ctx, c, account, body)
 					forced := tc.choice != nil && choice == ""
-					if !omit && choice != "none" {
-						require.Error(t, err)
-						require.Equal(t, http.StatusBadRequest, rec.Code)
-						require.Contains(t, rec.Body.String(), "does not support hosted tools")
-						require.Empty(t, upstream.requests)
-					} else if forced {
+					if forced {
 						require.Error(t, err)
 						require.Equal(t, http.StatusBadRequest, rec.Code)
 						require.Contains(t, rec.Body.String(), "basispoints tool_choice cannot select hosted or unsupported tools")
@@ -96,10 +91,12 @@ func TestExcelBPSToolFallbackPolicy(t *testing.T) {
 						if choice != "none" {
 							require.Contains(t, string(upstream.lastBody), "Hosted tools unavailable through Basispoints: "+fmt.Sprint(tc.tool["type"]))
 							require.Contains(t, string(upstream.lastBody), "Do not claim to have used them")
+							require.Equal(t, fmt.Sprint(tc.tool["type"]), rec.Header().Get("X-BPS-Omitted-Hosted-Tools"))
 							require.Contains(t, string(upstream.lastBody), "lookup_client")
 						} else {
 							require.NotContains(t, string(upstream.lastBody), "Hosted tools unavailable through Basispoints")
 							require.NotContains(t, string(upstream.lastBody), "lookup_client")
+							require.Empty(t, rec.Header().Get("X-BPS-Omitted-Hosted-Tools"))
 						}
 					}
 					entries := logs.FilterMessage("excel_bps.native_fallback").All()
@@ -112,13 +109,13 @@ func TestExcelBPSToolFallbackPolicy(t *testing.T) {
 	}
 }
 
-func TestExcelBPSOmitUnsupportedToolsRequiresExplicitOptIn(t *testing.T) {
+func TestExcelBPSHostedCompatibilityIgnoresLegacyOptIn(t *testing.T) {
 	var missing *Account
 	require.False(t, missing.IsExcelBPSOmitUnsupportedToolsEnabled())
 	for _, value := range []any{nil, false, "true", 1, true} {
 		account := excelAccount()
 		account.Extra[ExcelBPSOmitUnsupportedToolsKey] = value
-		require.Equal(t, value == true, account.IsExcelBPSOmitUnsupportedToolsEnabled())
+		require.True(t, account.IsExcelBPSOmitUnsupportedToolsEnabled())
 		account.Extra["openai_excel_bps"] = false
 		require.False(t, account.IsExcelBPSOmitUnsupportedToolsEnabled())
 		account.Extra["openai_excel_bps"] = true

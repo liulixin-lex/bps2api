@@ -737,7 +737,7 @@ export default {
         oauthPassthrough: '自动透传（仅替换认证）',
         excelBPS: 'Excel / BPS 协议',
         excelBPSOmitUnsupportedTools: '保持 BPS，省略不支持的托管工具',
-        excelBPSOmitUnsupportedToolsDesc: '默认关闭。不支持的托管工具声明在 BPS 通道上明确报错。开启后省略适配层不支持的托管工具，并向模型说明能力不可用；不会因此获得联网搜索或图片生成能力，客户端函数工具不受影响。不支持的强制工具选择仍返回 400。此选项不会把请求切换到原生 Codex。',
+        excelBPSOmitUnsupportedToolsDesc: '工具兼容自动启用：客户端 function/custom 工具正常调用，BPS 不支持的可选托管声明不会阻断请求，并向模型说明能力限制。无需额外开关；不会因此获得托管搜索或图片生成能力，也不会切换到原生 Codex。',
         excelBPSIgnoreImages: '图片支持关闭时忽略图片输入',
         excelBPSIgnoreImagesDesc: '默认关闭。仅在系统设置中的 Excel / BPS 图片支持关闭时生效：转发前将当前及历史消息、工具结果中的每张图片替换为不可用提示，保留文本和工具调用关系，避免历史截图反复报错导致会话无法继续。图片混合文本的结果也会明确告知模型无法看到图片，图片支持关闭期间不要重试 view_image 或其他读图工具。重新开启图片支持后恢复正常图片处理。',
         excelBPSCacheCreationAsInput: '创建缓存按普通输入计费',

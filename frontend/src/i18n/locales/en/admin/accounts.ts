@@ -619,7 +619,7 @@ export default {
         oauthPassthrough: 'Auto passthrough (auth only)',
         excelBPS: 'Excel / BPS protocol',
         excelBPSOmitUnsupportedTools: 'Keep BPS and omit unsupported hosted tools',
-        excelBPSOmitUnsupportedToolsDesc: 'Disabled by default. Unsupported hosted tool declarations fail explicitly on the BPS channel. Enable to omit unsupported hosted tools and tell the model they are unavailable. This does not add web search or image generation support; client function tools are unaffected. Unsupported forced tool choices still return 400. This option never switches requests to native Codex.',
+        excelBPSOmitUnsupportedToolsDesc: 'Tool compatibility is automatic: client function/custom tools remain callable. Unsupported optional hosted declarations do not block the request; the model receives a capability notice. No extra switch is required. This does not implement hosted search or image generation or switch to native Codex.',
         excelBPSIgnoreImages: 'Ignore image inputs when image support is disabled',
         excelBPSIgnoreImagesDesc: 'Disabled by default. Only applies while Excel / BPS image support is off in system settings. Replaces every image in current and historical messages and tool results with an unavailable notice before forwarding, preserving text and tool call pairing so old screenshots cannot repeatedly block the conversation. Even mixed text/image results tell the model it cannot see the image and should not retry view_image or other image-reading tools while image support is disabled. Enabling image support restores normal image handling.',
         excelBPSCacheCreationAsInput: 'Bill cache creation as regular input',

@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-func TestHostedToolOmissionIsExplicitAndDeterministic(t *testing.T) {
+func TestHostedToolCompatibilityIsDefaultAndDeterministic(t *testing.T) {
 	source := testSource()
 	source["tools"] = []any{object{"type": "function", "name": "get_weather", "parameters": object{"type": "object"}}, object{"type": "web_search"}, object{"type": "image_generation"}}
-	body, bridge := mustPrepare(t, source, "scope", nil, PrepareOptions{OmitUnsupportedTools: true})
+	body, bridge := mustPrepare(t, source, "scope", nil)
 	if len(bridge.Warnings) != 1 || !strings.Contains(bridge.Warnings[0], "image_generation, web_search") {
 		t.Fatalf("missing capability warning: %v", bridge.Warnings)
 	}

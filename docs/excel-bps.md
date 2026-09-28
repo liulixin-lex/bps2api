@@ -6,17 +6,20 @@
 
 ## 托管工具策略
 
-账号编辑和批量编辑中可开启 **保持 BPS，省略不支持的托管工具**，对应账号配置 `extra.openai_excel_bps_omit_unsupported_tools: true`。默认关闭。BPS 请求不会因托管工具声明自动回退到原生 Codex；需要省略声明时，明确为所选账号开启该选项。
+工具兼容自动启用，与参考上游 `ranxi2001/sub2api` 的处理一致。客户端 function/custom/namespace 工具继续转换和回放；请求夹带 web_search、image_generation、tool_search 等可选托管声明时，不会阻断整条请求，也不需要为账号另开开关。
 
-| 请求声明 | 默认策略 | 开启保持 BPS |
-| --- | --- | --- |
-| `web_search` 及其 preview/日期变体，`external_web_access=true` 或 `search_context_size=high` | BPS，返回不支持错误 | BPS，省略声明并添加能力不可用提示 |
-| `image_generation` | BPS，返回不支持错误 | BPS，省略声明并添加能力不可用提示 |
-| 普通搜索声明，无上述实时或高上下文字段 | BPS，返回不支持错误 | BPS，省略声明并添加能力不可用提示 |
-| `tool_choice=none` | BPS，本轮不启用工具 | 相同行为 |
-| 强制指定托管搜索或图片生成工具 | 返回 HTTP 400，不调用上游 | 返回 HTTP 400，不调用上游 |
+| 请求声明 | 处理方式 |
+| --- | --- |
+| 可选托管工具 + auto，包含实时/高上下文搜索选项 | 保持 BPS，省略无法执行的托管声明，向模型说明能力限制，保留客户端工具 |
+| required / 指定 function、custom、namespace / allowed_tools | 保留并校验客户端工具选择、参数、数量和工具结果续接 |
+| tool_choice=none | 本轮不启用工具，不清除已有客户端目录 |
+| 明确强制执行上游不可用的托管工具，或没有可执行客户端工具的 required | 不能伪造工具调用/结果；仍返回准确能力错误 |
 
-省略模式仅删除 BPS 不支持的声明并添加能力不可用提示，不提供网关搜索或图片生成执行能力。客户端 function/custom 工具继续可用。适配层支持 `tool_choice=auto/none/required`、明确的 function/custom/namespace 选择和 `allowed_tools` 的 auto/required 模式；完整目录保留用于历史回放，当前选择作为独立约束。工具结果在交付前按约束整批校验，违反必选、数量或工具身份时返回失败，不静默改为 auto。托管搜索、图片生成等上游原生工具不能通过该机制强制执行。
+响应头 `X-BPS-Omitted-Hosted-Tools` 列出本次未转交的固定托管类型；模型同时收到不得假装已使用这些工具的提示。客户端可执行的函数工具不会因名称包含 web、search、image、shell 等词而被省略，判断依据是声明的 type。
+
+历史账号字段 `openai_excel_bps_omit_unsupported_tools` 保留作为兼容元数据，缺失、false、true 均不再造成额外拦截；界面改为自动兼容说明。无需迁移或批量改写账号 extra。不因工具声明改用原生 Codex，也不会把任意客户端源码放在网关主机执行。
+
+BPS 和参考上游并未提供这些托管能力的实际执行服务；这里恢复的是客户端工具正常调用和可选声明兼容，不能声称托管搜索、图片生成已经执行。完整目录保留用于历史回放，选择约束独立；工具输出经过整批校验后交给客户端执行。
 
 ## BPS 403 自动调整分组
 
@@ -90,7 +93,7 @@ multi-agent v2 覆盖后新建会话。不要改写类型、删除历史部件�
 恢复嵌套消息内容。`encrypted_function_args: []` 表示来源明确声明工具参数是明文，字段缺失
 或 `null` 都不等价；Sub2API 会保留真实的非空加密声明。
 
-`max`/`ultra` 映射 `xhigh`，`none`/`minimal` 映射 `low`，实际 effort 出现在响应/用量中。拒绝强制指定工具与仅 previous_response_id 的增量历史。结构化输出通过提示和本地终态校验实现，详见协议包 README。不要把 HTTP 200 当作模型能力证明。
+`max`/`ultra` 映射 `xhigh`，`none`/`minimal` 映射 `low`，实际 effort 出现在响应/用量中。支持明确的客户端工具选择；无法执行的强制托管工具与仅 previous_response_id 的增量历史仍需准确报错。结构化输出通过提示和本地终态校验实现，详见协议包 README。不要把 HTTP 200 当作模型能力证明。
 
 图片支持 HTTPS URL 和格式有效的原生附件 `file_id`. 需要发送 base64 图片时, 可选择服务器临时图片中转或原生上传模式. 本地转换通过不等于真实上游视觉已验收, 账号权限或模型限制仍可能导致上游拒绝.
 
