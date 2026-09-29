@@ -15,6 +15,6 @@
 
 ## 验证与证据
 
-原始命令、stdout、stderr、退出状态和基线哈希保存于 /bps/artifacts/selected-integration-20260929/quality/。本轮 pristine 前端 67 项通过；扩展前端 84 项、语言完整性 3 项、类型检查通过。基线后端 focused 45 个顶层测试通过；含通道证据的最终 focused 后端通过。相同回归输入验证 BASELINE exit 1（不接受观察动作，401 写账号错误、429 写配额快照）→ MODIFIED exit 0 → ROLLBACK exit 1，恢复同样旧行为；原始源文件 4,850 个哈希恢复相等。补丁重建 4,859 个修改后文件哈希一致。独立 PostgreSQL/Redis 集成验证已启动，初次代码提交时尚未结束，结果另记 integration 账本。一次默认内存编译 exit 137 留证后，限制 Go GC 内存的重试通过；前端测试辅助默认值冲突也保留失败及修正记录。
+原始命令、stdout、stderr、退出状态和基线哈希保存于 /bps/artifacts/selected-integration-20260929/quality/。本轮 pristine 前端 67 项通过；扩展前端 84 项、语言完整性 3 项、类型检查通过。基线后端 focused 45 个顶层测试通过；含通道证据的最终 focused 后端通过。相同回归输入验证 BASELINE exit 1（不接受观察动作，401 写账号错误、429 写配额快照）→ MODIFIED exit 0 → ROLLBACK exit 1，恢复同样旧行为；原始源文件 4,850 个哈希恢复相等。补丁重建 4,859 个修改后文件哈希一致。独立 PostgreSQL 18 / Redis 8.4 集成验证随后于 2026-09-29 06:21 UTC 完成，13 个顶层测试全部通过；包括三范围共存、先恢复再转观察、旧快照防抢占及 403 暂停保护，结果见 integration 账本。一次默认内存编译 exit 137 留证后，限制 Go GC 内存的重试通过；前端测试辅助默认值冲突也保留失败及修正记录。
 
 本条目由根集成记录统一更新最终提交、三态及四角色路径；原仓库和生产保持原状态。
