@@ -66,4 +66,12 @@
 
 应用标签上的独立 CI 实际发现两条新增 Go 1.27 vet：测试直接把 HTTP/2 指针错误交给 fmt %w，以及一条新增 QF1001。已保留原失败日志，不能把该次 CI 说成仅旧问题或全绿。
 
-后续 main 修正让测试通过 error 接口包装指针，仍验证 wrapped-pointer 恢复；QF1001 改为等价布尔表达式，保持模型冷却语义。默认 vet 同输入三态已经实际通过：应用原版与回滚版均重现相同两条诊断、exit 1，修改版 stdout/stderr 均空、exit 0；独立副本回滚哈希相等。14:49:27 UTC，默认 vet 完整 service + basispoints unit exit 0：service 8,442 顶层通过、4 顶层跳过，含子测试 17,021 通过、4 跳过；basispoints 269 顶层、611 节点全部通过，合计 17,632 通过、4 跳过、零失败。完整 lint 14:49:53 UTC 仅剩与原基线一致的 5 项（3 errcheck、1 原 QF1003、1 unused），新增 QF1001 已消失；不能称 lint 全绿。此次后续 main 推送后仍需读取其远端 CI 实际结果。应用二进制和 v0.0.19 标签不因此重写。
+后续 main 修正让测试通过 error 接口包装指针，仍验证 wrapped-pointer 恢复；QF1001 改为等价布尔表达式，保持模型冷却语义。默认 vet 同输入三态已经实际通过：应用原版与回滚版均重现相同两条诊断、exit 1，修改版 stdout/stderr 均空、exit 0；独立副本回滚哈希相等。14:49:27 UTC，默认 vet 完整 service + basispoints unit exit 0：service 8,442 顶层通过、4 顶层跳过，含子测试 17,021 通过、4 跳过；basispoints 269 顶层、611 节点全部通过，合计 17,632 通过、4 跳过、零失败。完整 lint 14:49:53 UTC 仅剩与原基线一致的 5 项（3 errcheck、1 原 QF1003、1 unused），新增 QF1001 已消失；不能称 lint 全绿。后续 main 修正提交 68da2c42e75f3f6fed035b5dc0aa8c19a5ca3fd3 已推送并完成远端复核：CI 36585910830 的 Unit success，lint 精确保留原 5 项，Integration 仅重现原 TestAccountRepoSuite/TestBulkUpdate_ExcelBPSModelScope（account_repo_integration_test.go:1778，expected true / actual false），无新增失败；因此总体 CI 仍 failure，不能称全绿。Timing 36585910900、Security 36585911112 均 success，其他 CI jobs 全部 success。应用二进制和 v0.0.19 标签不因此重写。
+
+## 最终复核与边界
+
+截至 2026-09-29 15:02:28 UTC，切换后的新容器共完成 807 个推理 POST：799 个 HTTP 200、7 个 HTTP 400、1 个 HTTP 503。HTTP 200 内仍分别有最终 429 六条、502 五条、503 一条、504 一条；六条 429 均为 gpt-6-sol 的 40,000,000 TPM 配额不足。这个窗口没有显式记录的 429 成功恢复，不能用 HTTP 成功码或测试通过替代流终态事实。新容器未重启；这是实际观察边界，不是压力基准或“零错误”承诺。
+
+本轮已完成代码、同输入三态、默认 vet 全量 unit、竞态检查、无感切换、main/tag 推送、正式发版、18 项产物验收与远端新增 CI 问题修正。原有 5 条 lint 和 1 个集成断言仍作为历史技术债保留；容量、代理健康、输出后流中断及无效结构化输出不会因重试而无条件消失。未提高本地 RPM/TPM、解暂停、替换模型或启用原生回退。
+
+固定四角色仍绑定应用标签源码 3f79c13e0，CI 补丁的同输入 vet 三态、补丁重建、独立回滚和 main 提交身份追加进 VERIFICATION.txt。文档收尾提交只修改本条目和根索引，沿用已验证的 68da 源码树，不重部署或移动应用标签。原始 /bps/bps2api HEAD 与三份既有文档哈希均再次确认未变。
