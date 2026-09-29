@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service/basispoints"
 	"github.com/Wei-Shaw/sub2api/internal/util/transportdiag"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 	"go.uber.org/zap"
 )
 
@@ -158,10 +159,14 @@ func (s *OpenAIGatewayService) doExcelBPSRequest(ctx context.Context, c *gin.Con
 	}
 	var lastError error
 	var retryCancel context.CancelFunc
+	var quotaCancel context.CancelFunc
 	handedOff := false
 	defer func() {
 		if retryCancel != nil && !handedOff {
 			retryCancel()
+		}
+		if quotaCancel != nil && !handedOff {
+			quotaCancel()
 		}
 	}()
 	for attempt := 1; attempt <= 2; attempt++ {
@@ -174,11 +179,23 @@ func (s *OpenAIGatewayService) doExcelBPSRequest(ctx context.Context, c *gin.Con
 		if err := ctx.Err(); err != nil {
 			return nil, nil, proxy, err
 		}
+		var recoveryState *excelBPSRecovery
+		if len(recovery) > 0 {
+			recoveryState = recovery[0]
+		}
+		sendCtx, cancelSend, sendErr := s.excelBPSQuotaSendContext(ctx, account, gjson.GetBytes(body, "model").String(), recoveryState)
+		if sendErr != nil {
+			return nil, nil, proxy, sendErr
+		}
+		quotaCancel = cancelSend
 		var lease excelBPSLease
 		if managed {
 			var err error
-			proxy, lease, err = acquire(ctx, scope, excluded...)
+			proxy, lease, err = acquire(sendCtx, scope, excluded...)
 			if err != nil {
+				if errors.Is(context.Cause(sendCtx), errExcelBPSRequestTimeout) {
+					return nil, nil, proxy, errExcelBPSRequestTimeout
+				}
 				if ctx.Err() != nil {
 					return nil, nil, proxy, ctx.Err()
 				}
@@ -187,7 +204,7 @@ func (s *OpenAIGatewayService) doExcelBPSRequest(ctx context.Context, c *gin.Con
 				return nil, nil, proxy, err
 			}
 		}
-		req, err := newExcelBPSRequest(ctx, body, token, accountID)
+		req, err := newExcelBPSRequest(sendCtx, body, token, accountID)
 		if err != nil {
 			if lease != nil {
 				lease.Release()
@@ -196,25 +213,38 @@ func (s *OpenAIGatewayService) doExcelBPSRequest(ctx context.Context, c *gin.Con
 		}
 		// Admission reserves the first slot; every actual BPS send, including
 		// transport retries, acquires a slot immediately before Do.
-		if err := s.acquireOpenAIRPMForSend(ctx, account); err != nil {
+		evidence := &excelBPSWriteEvidence{}
+		resp, err := s.sendExcelBPSWithQuota(c, account, gjson.GetBytes(body, "model").String(), evidence.request(req), proxy, recoveryState)
+		if err != nil && errors.Is(context.Cause(sendCtx), errExcelBPSRequestTimeout) {
+			err = errExcelBPSRequestTimeout
+		}
+		var quotaWait *excelBPSQuotaWaitError
+		if err != nil && (IsOpenAIRPMError(err) || errors.As(err, &quotaWait) || errors.Is(err, errExcelBPSRequestTimeout)) {
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
 			if lease != nil {
 				lease.Release()
 			}
+			cancelSend()
 			return nil, nil, proxy, err
 		}
-		c.Set("excel_bps_upstream_attempt", c.GetInt("excel_bps_upstream_attempt")+1)
-		evidence := &excelBPSWriteEvidence{}
-		resp, err := s.httpUpstream.Do(evidence.request(req), proxy, account.ID, account.Concurrency)
 		if err == nil {
-			if retryCancel != nil && resp != nil && resp.Body != nil {
-				resp.Body = &excelBPSRecoveryBody{ReadCloser: resp.Body, cancel: retryCancel}
+			if resp != nil && resp.Body != nil {
+				resp.Body = &excelBPSRecoveryBody{ReadCloser: resp.Body, cancel: func() {
+					cancelSend()
+					if retryCancel != nil {
+						retryCancel()
+					}
+				}}
 				handedOff = true
 			}
 			return resp, lease, proxy, nil
 		}
 		lastError = err
+		cancelSend()
 		// Even an unusual response+error result makes replay unsafe.
-		retry := managed && attempt == 1 && resp == nil && evidence.unsent() && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+		retry := managed && attempt == 1 && resp == nil && evidence.unsent() && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errExcelBPSRequestTimeout)
 		if resp != nil && resp.Body != nil {
 			_ = resp.Body.Close()
 		}
@@ -264,6 +294,22 @@ func recordExcelBPSTransportFailure(ctx context.Context, c *gin.Context, account
 	diagnostics := map[string]any{
 		"error_kind": kind, "error_type": fmt.Sprintf("%T", err),
 		"proxy_port": port, "session_hash": sessionHash, "attempt": attempt, "retry_before_send": retry,
+		"output_committed": c.GetBool("excel_bps_output_committed"),
+	}
+	if stored, ok := c.Get("excel_bps_shared_recovery"); ok {
+		if recovery, ok := stored.(*excelBPSRecovery); ok {
+			recovery.mu.Lock()
+			diagnostics["remaining_attempts"] = recovery.remaining
+			remaining := recovery.budget
+			if !recovery.deadline.IsZero() {
+				remaining = time.Until(recovery.deadline)
+				if remaining < 0 {
+					remaining = 0
+				}
+			}
+			diagnostics["budget_remaining_ms"] = remaining.Milliseconds()
+			recovery.mu.Unlock()
+		}
 	}
 	if len(evidence) > 0 && evidence[0] != nil {
 		diagnostics["transport"] = evidence[0].Snapshot()
