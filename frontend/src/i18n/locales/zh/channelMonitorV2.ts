@@ -1,6 +1,23 @@
 /** Channel Monitor V2 (user + admin passive monitor UI) */
 export default {
   channelMonitorV2: {
+    "cards": {
+        "showCards": "卡片视图",
+        "showAnalytics": "详细数据",
+        "passive": "V2 被动用量 · 缓存率与可用率",
+        "cache": "缓存率",
+        "availability": "可用率",
+        "ttft": "首 TOKEN",
+        "windows": "近 {count} 个时间段",
+        "refreshIn": "{seconds}s 后刷新",
+        "trafficHistory": "真实请求健康状态时间线",
+        "health": {
+            "healthy": "正常",
+            "warning": "降级",
+            "critical": "异常",
+            "unknown": "样本不足"
+        }
+    },
     title: '渠道监控',
     updating: '正在更新数据',
     updatedTo: '更新至 {time}',

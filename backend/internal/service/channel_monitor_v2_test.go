@@ -477,6 +477,7 @@ func TestRedactChannelMonitorV2MetricKeepsRates(t *testing.T) {
 	upstream := int64(3)
 	m.UpstreamAffectedRequests = &upstream
 	redactChannelMonitorV2Metric(&m, false)
+	require.True(t, m.HasSamples)
 	require.Zero(t, m.RequestCount)
 	require.Zero(t, m.ErrorRequests)
 	require.Zero(t, m.TokenCount)
@@ -490,6 +491,10 @@ func TestRedactChannelMonitorV2MetricKeepsRates(t *testing.T) {
 	require.Equal(t, int64(100), *m.TTFT.P50Ms)
 
 	redactChannelMonitorV2Metric(&m, true)
+	require.True(t, m.HasSamples, "sample evidence must survive repeated redaction")
+	empty := ChannelMonitorV2Metric{}
+	redactChannelMonitorV2Metric(&empty, true)
+	require.False(t, empty.HasSamples)
 	require.Zero(t, m.RPM)
 	require.Zero(t, m.TPM)
 	require.InDelta(t, 0.1, m.ErrorRate, 0.0001)

@@ -27,7 +27,7 @@ func TestReadGuardResultReturnsWithoutEOF(t *testing.T) {
 	cfg := defaultAccountTokenGuardConfig()
 	cfg.ProbeEndpoint = server.URL
 	cfg.ProbeTimeoutSeconds = 5
-	account := &Account{ID: 1, Name: "test@example.com", Type: AccountTypeOAuth, Platform: PlatformOpenAI,
+	account := &Account{ID: 1, Name: "test@example.com", Status: StatusActive, Type: AccountTypeOAuth, Platform: PlatformOpenAI,
 		Credentials: map[string]any{"access_token": "access-token-canary"}}
 
 	started := time.Now()
@@ -53,7 +53,7 @@ func TestProbeClassifiesHTTP401AsTransient(t *testing.T) {
 	svc := &AccountTokenGuardService{httpClient: server.Client()}
 	cfg := defaultAccountTokenGuardConfig()
 	cfg.ProbeEndpoint = server.URL
-	account := &Account{ID: 1, Name: "test@example.com", Type: AccountTypeOAuth, Platform: PlatformOpenAI,
+	account := &Account{ID: 1, Name: "test@example.com", Status: StatusActive, Type: AccountTypeOAuth, Platform: PlatformOpenAI,
 		Credentials: map[string]any{"access_token": "token"}}
 
 	result := svc.probe(context.Background(), cfg, account)
@@ -86,7 +86,7 @@ func TestProbeOnlyExplicitProtocolCodeTriggersRelogin(t *testing.T) {
 			svc := &AccountTokenGuardService{httpClient: server.Client()}
 			cfg := defaultAccountTokenGuardConfig()
 			cfg.ProbeEndpoint = server.URL
-			account := &Account{ID: 1, Name: "test@example.com", Type: AccountTypeOAuth, Platform: PlatformOpenAI,
+			account := &Account{ID: 1, Name: "test@example.com", Status: StatusActive, Type: AccountTypeOAuth, Platform: PlatformOpenAI,
 				Credentials: map[string]any{"access_token": "token"}}
 			result := svc.probe(context.Background(), cfg, account)
 			if result.State != tt.state {
@@ -129,7 +129,7 @@ func TestRunCycleIgnoresCallerCancellationAfterAcceptance(t *testing.T) {
 	defer server.Close()
 
 	repo := &guardMemoryRepo{}
-	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Type: AccountTypeOAuth, Platform: PlatformOpenAI,
+	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Status: StatusActive, Type: AccountTypeOAuth, Platform: PlatformOpenAI,
 		Credentials: map[string]any{"access_token": "token"}}}}
 	svc := NewAccountTokenGuardService(nil, repo, accounts, nil, nil)
 	cfg := defaultAccountTokenGuardConfig()
@@ -157,7 +157,7 @@ func TestStartRunDeduplicatesAndCanCancel(t *testing.T) {
 	defer server.Close()
 
 	repo := &guardMemoryRepo{}
-	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Type: AccountTypeOAuth, Platform: PlatformOpenAI,
+	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Status: StatusActive, Type: AccountTypeOAuth, Platform: PlatformOpenAI,
 		Credentials: map[string]any{"access_token": "token"}}}}
 	svc := NewAccountTokenGuardService(nil, repo, accounts, nil, nil)
 	cfg := defaultAccountTokenGuardConfig()
@@ -197,7 +197,7 @@ func TestRunCycleReportsPersistenceErrors(t *testing.T) {
 	defer server.Close()
 
 	repo := &guardMemoryRepo{upsertErr: errors.New("store unavailable")}
-	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Type: AccountTypeOAuth, Platform: PlatformOpenAI,
+	accounts := &guardMemoryAccounts{items: []Account{{ID: 1, Name: "test@example.com", Status: StatusActive, Type: AccountTypeOAuth, Platform: PlatformOpenAI,
 		Credentials: map[string]any{"access_token": "token"}}}}
 	svc := NewAccountTokenGuardService(nil, repo, accounts, nil, nil)
 	cfg := defaultAccountTokenGuardConfig()
@@ -257,6 +257,18 @@ func (r *guardMemoryRepo) UpsertState(_ context.Context, state AccountTokenGuard
 	if r.upsertErr != nil {
 		return r.upsertErr
 	}
+	for i, previous := range r.states {
+		if previous.AccountID != state.AccountID {
+			continue
+		}
+		if state.LastFixAt == nil {
+			state.LastFixAt = previous.LastFixAt
+			state.LastFixAction = previous.LastFixAction
+			state.LastFixResult = previous.LastFixResult
+		}
+		r.states[i] = state
+		return nil
+	}
 	r.states = append(r.states, state)
 	return nil
 }
@@ -287,3 +299,7 @@ func (a *guardMemoryAccounts) ListByPlatform(context.Context, string) ([]Account
 }
 func (a *guardMemoryAccounts) ClearError(context.Context, int64) error           { return nil }
 func (a *guardMemoryAccounts) SetSchedulable(context.Context, int64, bool) error { return nil }
+
+func (a *guardMemoryAccounts) ListAllWithFilters(context.Context, string, string, string, string, int64, string) ([]Account, error) {
+	return a.items, nil
+}

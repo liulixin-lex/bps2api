@@ -34,6 +34,8 @@ export interface LatencyMetric {
 }
 
 export interface MonitorMetric {
+  /** Sample presence survives volume redaction without exposing counts. */
+  has_samples?: boolean
   success_requests: number
   error_requests: number
   request_count: number

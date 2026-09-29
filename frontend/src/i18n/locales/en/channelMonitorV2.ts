@@ -1,6 +1,23 @@
 /** Channel Monitor V2 (user + admin passive monitor UI) */
 export default {
   channelMonitorV2: {
+    "cards": {
+        "showCards": "Cards",
+        "showAnalytics": "Detailed data",
+        "passive": "V2 passive traffic · cache and availability",
+        "cache": "Cache rate",
+        "availability": "Availability",
+        "ttft": "First token",
+        "windows": "Last {count} time windows",
+        "refreshIn": "Refresh in {seconds}s",
+        "trafficHistory": "Observed request health timeline",
+        "health": {
+            "healthy": "Healthy",
+            "warning": "Degraded",
+            "critical": "Unhealthy",
+            "unknown": "Insufficient samples"
+        }
+    },
     title: 'Channel Monitor',
     updating: 'Updating data',
     updatedTo: 'Updated to {time}',
