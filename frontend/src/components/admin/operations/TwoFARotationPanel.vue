@@ -27,7 +27,7 @@
               <div class="flex flex-wrap gap-2">
                 <button v-if="job.retryable" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || disabled" @click="verify(job)">{{ t('tokenGuard.rotation.verify') }}</button>
                 <button v-if="job.status === 'success' && job.login_verified" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id" @click="copyResult(job)">{{ t('tokenGuard.rotation.copy') }}</button>
-                <button v-if="job.status === 'success' && job.login_verified" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || disabled" @click="apply(job)">{{ t('tokenGuard.rotation.apply') }}</button>
+                <button v-if="showApply && job.status === 'success' && job.login_verified" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || disabled" @click="apply(job)">{{ t('tokenGuard.rotation.apply') }}</button>
               </div>
             </td>
           </tr>
@@ -42,11 +42,11 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { TokenGuardReloginAccount } from '@/api/admin/accountTokenGuard'
 import {
-  getTwoFARotationResult, listTwoFARotations, parseTwoFARotationText,
+  formatTwoFARotationCredentials, getTwoFARotationResult, listTwoFARotations, parseTwoFARotationText,
   startTwoFARotation, verifyTwoFARotation, type TwoFARotationJob, type TwoFARotationResult
 } from '@/api/admin/accountTwoFARotation'
 
-const props = defineProps<{ configured: boolean; disabled?: boolean }>()
+const props = withDefaults(defineProps<{ configured: boolean; disabled?: boolean; showApply?: boolean }>(), { showApply: true })
 const emit = defineEmits<{ apply: [result: TwoFARotationResult] }>()
 const { t } = useI18n()
 const input = ref(''), confirmed = ref(false), message = ref(''), actionBusy = ref('')
@@ -124,7 +124,7 @@ async function copyResult(job: TwoFARotationJob) {
   try {
     const result = await getTwoFARotationResult(job.id)
     if (!alive) return
-    await navigator.clipboard.writeText(result.mfa_secret)
+    await navigator.clipboard.writeText(formatTwoFARotationCredentials(result))
     message.value = t('tokenGuard.rotation.copied')
   } catch { if (alive) message.value = t('tokenGuard.rotation.actionFailed') }
   finally { actionBusy.value = '' }

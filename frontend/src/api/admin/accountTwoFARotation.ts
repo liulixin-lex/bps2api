@@ -15,6 +15,7 @@ export interface TwoFARotationJob {
 export interface TwoFARotationResult {
   id: string
   email: string
+  password: string
   mfa_secret: string
   login_verified: boolean
 }
@@ -41,6 +42,13 @@ export async function verifyTwoFARotation(id: string): Promise<TwoFARotationJob>
 
 export async function getTwoFARotationResult(id: string): Promise<TwoFARotationResult> {
   return (await apiClient.get(path + '/' + encodeURIComponent(id) + '/result')).data
+}
+
+export function formatTwoFARotationCredentials(result: TwoFARotationResult): string {
+  if (!result.login_verified || !result.email || !result.password || !result.mfa_secret?.trim()) {
+    throw new Error('incomplete_verified_credentials')
+  }
+  return [result.email, result.password, result.mfa_secret].join('----')
 }
 
 // Update only an existing, uniquely matched re-login entry. Do not add accounts,

@@ -129,7 +129,9 @@ def test_verify_only_retry_and_latest_verified_result(client, runtime):
     assert client.post(f"/jobs/{job.id}/verify").status_code == 409
     job.status, job.login_verified, job.rotated_pending_verify = "success", True, False
     result = client.get(f"/jobs/{job.id}/result")
-    assert result.json()["mfa_secret"] == NEW_SECRET
+    assert result.json() == {"id": job.id, "email": job.email, "password": job.password, "mfa_secret": NEW_SECRET, "login_verified": True}
+    assert client.get(f"/jobs/{job.id}/result", headers={"Authorization": ""}).status_code == 401
+    assert job.password not in client.get("/jobs").text
     assert result.headers["cache-control"] == "no-store"
     assert client.post("/jobs", json=entry(mfa_secret=NEW_SECRET)).status_code == 202
     assert client.get(f"/jobs/{job.id}/result").status_code == 409
@@ -200,6 +202,11 @@ def test_pinned_engine_sqlite_checkpoint_verify_and_recovery(tmp_path):
     asyncio.run(manager._run(job))
     assert fake.rotates == 1 and fake.verifies == 1
     assert rt.result(job.id)["mfa_secret"] == NEW_SECRET
+    assert rt.result(job.id)["password"] == "private-password"
+    restored = TwoFAJobManager(repo, get_settings_repo(engine), service=fake)
+    restored_result = Runtime(restored, sqlite3.connect(":memory:"), b"key")
+    assert restored_result.result(job.id) == rt.result(job.id)
+    restored_result.requests.close()
     repo.update_status(job.id, "running")
     repo.recover_interrupted()
     recovered = TwoFAJobManager(repo, get_settings_repo(engine), service=fake)

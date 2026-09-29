@@ -87,7 +87,7 @@ func TestTwoFARotationProtocol(t *testing.T) {
 		case "POST /jobs/" + rotationTestID + "/verify":
 			_, _ = io.WriteString(w, "{\"id\":\""+rotationTestID+"\",\"status\":\"queued\"}")
 		case "GET /jobs/" + rotationTestID + "/result":
-			_, _ = io.WriteString(w, "{\"id\":\""+rotationTestID+"\",\"email\":\"test@example.com\",\"mfa_secret\":\"NEWSEED\",\"login_verified\":true,\"password\":\"must-not-forward\"}")
+			_, _ = io.WriteString(w, "{\"id\":\""+rotationTestID+"\",\"email\":\"test@example.com\",\"mfa_secret\":\"NEWSEED\",\"login_verified\":true,\"password\":\"original-password\",\"access_token\":\"must-not-forward\"}")
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
@@ -106,8 +106,11 @@ func TestTwoFARotationProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(result)
+	if result.Password != "original-password" || !strings.Contains(string(encoded), "original-password") {
+		t.Fatal("verified credential export lost the original password")
+	}
 	if strings.Contains(string(encoded), "must-not-forward") {
-		t.Fatal("forwarded non-whitelisted field")
+		t.Fatal("forwarded a field outside the credential export contract")
 	}
 	if calls != 4 {
 		t.Fatalf("calls=%d", calls)

@@ -17,7 +17,7 @@
 
 ## 本地 PR 开发
 
-[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR 保持 open；当前测试站为 main 2dfb76d7 + PR 修复提交 f273b2a7，版本 0.0.18-pr12.f273b2a7。初始化 403 被忽略导致 409、前置登录失败误报“结果不确定”的代码问题已修复上线；本机/公网接口、源码回滚和实际镜像回切通过，任务原始记录未改写。真实登录仍在 OpenAI 初始化处被 403 拒绝，尚未更换真实 2FA；用户浏览器登录情况待确认。详见[测试部署及修复记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。原 XY2API 及数据保留，不改变远端生产事实。
+[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR 已推送至 4921adc1，保持 open、未合并；测试站应用/前端为 0.0.18-pr12.f273b2a7，独立 worker 为 fe4267f3。初始化 403 后错误推进登录、前置失败误报“结果不确定”的问题已修复；正式 worker 镜像已通过无人值守 Camoufox 真实登录、身份校验及 MFA 只读查询（200），已部署并完成实际镜像回滚验证。49 个 worker 离线用例通过；用户已于 16:40 UTC 提交真实任务并反馈成功；只读复核确认 success/login_verified=true，3 个旧失败任务未自动重试。当前正在实现完整凭据复制和默认页面精简，尚未部署此增量。用户已确认同一账号在常用浏览器可正常登录，不再以人工设备授权作为方案。GitHub 合并状态仍报告 dirty，与本地 merge-tree 无冲突结果不一致，尚未处理合并。详见[测试部署及修复记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。原 XY2API 及数据保留，远端生产未改。
 
 ## 本次 429 修复进度
 

@@ -5,14 +5,14 @@
       <header class="ops-heading">
         <div>
           <p class="eyebrow">{{ t('accountOps.smartTitle') }}</p>
-          <h2>{{ t('tokenGuard.title') }}</h2>
-          <p class="subtitle">{{ t('tokenGuard.description') }}</p>
+          <h2>{{ t(viewMode === 'rotation' ? 'tokenGuard.rotation.title' : 'tokenGuard.title') }}</h2>
+          <p class="subtitle">{{ t(viewMode === 'rotation' ? 'tokenGuard.rotation.focusHint' : 'tokenGuard.description') }}</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <button class="btn btn-secondary inline-flex items-center gap-2" :disabled="loading" @click="load()">
             <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />{{ t('tokenGuard.refresh') }}
           </button>
-          <button class="btn btn-primary inline-flex items-center gap-2" :disabled="running || loading" @click="run">
+          <button v-if="viewMode === 'guard'" class="btn btn-primary inline-flex items-center gap-2" :disabled="running || loading" @click="run">
             <Icon name="play" size="sm" />{{ t(running ? 'tokenGuard.running' : 'tokenGuard.runNow') }}
           </button>
         </div>
@@ -21,16 +21,35 @@
       <p v-if="error" role="alert" class="error-banner">{{ error }}</p>
       <p v-if="notice" role="status" class="success-banner">{{ notice }}</p>
 
-      <section class="summary-grid">
+      <nav class="mb-5 flex flex-wrap gap-2" :aria-label="t('tokenGuard.rotation.sections')">
+        <button type="button" class="btn" :class="viewMode === 'rotation' ? 'btn-primary' : 'btn-secondary'" :aria-pressed="viewMode === 'rotation'" data-testid="rotation-tab" @click="viewMode = 'rotation'">{{ t('tokenGuard.rotation.tab') }}</button>
+        <button type="button" class="btn" :class="viewMode === 'guard' ? 'btn-primary' : 'btn-secondary'" :aria-pressed="viewMode === 'guard'" data-testid="guard-tab" @click="viewMode = 'guard'">{{ t('tokenGuard.rotation.guardTab') }}</button>
+      </nav>
+
+      <section v-show="viewMode === 'rotation'" class="stack" data-testid="rotation-workspace">
+        <TwoFARotationPanel v-if="remote" :configured="Boolean(remote.config.two_fa_rotation_endpoint)" :disabled="dirty || saving" :show-apply="false" @apply="applyRotation" />
+        <details v-if="draft" class="settings-card" :open="!remote?.config.two_fa_rotation_endpoint">
+          <summary class="cursor-pointer px-5 py-4 text-sm font-medium">{{ t('tokenGuard.rotation.serviceSettings') }}</summary>
+          <form class="settings-form" @submit.prevent="save">
+            <fieldset :disabled="saving">
+              <label class="field-label">{{ t('tokenGuard.rotation.endpoint') }}<input v-model.trim="draft.two_fa_rotation_endpoint" class="input w-full" placeholder="http://twofa-worker:8080" /></label>
+              <label class="field-label">{{ t('tokenGuard.rotation.token') }}<input v-model.trim="draft.two_fa_rotation_token" type="password" autocomplete="new-password" class="input w-full" /></label>
+              <p class="field-hint">{{ t('tokenGuard.rotation.endpointHint') }}</p>
+              <div class="settings-actions"><span>{{ dirty ? t('tokenGuard.unsaved') : t('tokenGuard.saved') }}</span><button class="btn btn-primary" :disabled="saving || !dirty">{{ t(saving ? 'qualityOps.saving' : 'tokenGuard.save') }}</button></div>
+            </fieldset>
+          </form>
+        </details>
+      </section>
+      <p v-if="viewMode === 'guard'" class="text-sm text-gray-500">{{ t('tokenGuard.rotation.guardHint') }}</p>
+
+      <section v-if="viewMode === 'guard'" class="summary-grid">
         <article class="summary-card"><span>{{ t('tokenGuard.statsProbed') }}</span><strong>{{ remote?.runtime.stats.probed ?? 0 }}</strong><small>{{ remote?.runtime.job?.status === 'running' ? `${remote.runtime.job.completed}/${remote.runtime.job.total}` : `${t('tokenGuard.interval')} ${draft?.interval_seconds ?? 0}s` }}</small></article>
         <article class="summary-card"><span>{{ t('tokenGuard.statsBad') }}</span><strong>{{ badCount }}</strong><small>{{ t('tokenGuard.failStreak') }} ≥ {{ draft?.fail_streak_threshold ?? 1 }}</small></article>
         <article class="summary-card"><span>{{ t('tokenGuard.statsRepaired') }}</span><strong>{{ remote?.runtime.stats.repaired ?? 0 }}</strong><small>{{ t('tokenGuard.stateFixed') }} {{ remote?.runtime.stats.state_fixed ?? 0 }}</small></article>
         <article class="summary-card"><span>{{ t('tokenGuard.lastRun') }}</span><strong class="text-base">{{ remote?.runtime.last_run ? date(remote.runtime.last_run) : t('tokenGuard.never') }}</strong><small>{{ remote?.runtime.last_message || '-' }}</small></article>
       </section>
 
-      <TwoFARotationPanel v-if="remote" :configured="Boolean(remote.config.two_fa_rotation_endpoint)" :disabled="dirty || saving" @apply="applyRotation" />
-
-      <div class="ops-columns">
+      <div v-show="viewMode === 'guard'" class="ops-columns" data-testid="guard-workspace">
         <section class="settings-card">
           <div class="section-title"><span class="icon-tile"><Icon name="shield" size="md" /></span><div><h3>{{ t('tokenGuard.title') }}</h3><p>{{ t('tokenGuard.enabledHint') }}</p></div></div>
           <form v-if="draft" class="settings-form" @submit.prevent="save">
@@ -74,10 +93,6 @@
               <label class="field-label">{{ t('tokenGuard.reloginAccounts') }}</label>
               <textarea v-model="reloginText" rows="7" class="input w-full font-mono text-xs" placeholder="user@example.com----password----JBSWY3DPEHPK3PXP"></textarea>
               <p class="field-hint">{{ t('tokenGuard.reloginAccountsHint') }}</p>
-
-              <label class="field-label">{{ t('tokenGuard.rotation.endpoint') }}<input v-model.trim="draft.two_fa_rotation_endpoint" class="input w-full" placeholder="http://twofa-worker:8080" /></label>
-              <label class="field-label">{{ t('tokenGuard.rotation.token') }}<input v-model.trim="draft.two_fa_rotation_token" type="password" autocomplete="new-password" class="input w-full" /></label>
-              <p class="field-hint">{{ t('tokenGuard.rotation.endpointHint') }}</p>
 
               <div class="grid-2">
                 <label class="field-label">{{ t('tokenGuard.barkKey') }}<input v-model.trim="draft.bark_key" class="input w-full" placeholder="留空则不推送" /></label>
@@ -161,6 +176,7 @@ import {
 } from '@/api/admin/accountTokenGuard'
 
 const { t } = useI18n()
+const viewMode = ref<'rotation' | 'guard'>('rotation')
 const remote = ref<TokenGuardStatus | null>(null)
 const draft = ref<TokenGuardConfig | null>(null)
 const reloginText = ref('')

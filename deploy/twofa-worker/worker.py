@@ -198,7 +198,7 @@ class Runtime:
         latest = next((self.manager.jobs[key] for key in reversed(self.manager.order) if self.manager.jobs[key].email == job.email), None)
         if latest is not job:
             raise HTTPException(409, "result_superseded")
-        return {"id": job.id, "email": job.email, "mfa_secret": job.secret, "login_verified": True}
+        return {"id": job.id, "email": job.email, "password": job.password, "mfa_secret": job.secret, "login_verified": True}
 
 
 def build_runtime() -> tuple[Runtime, Any]:

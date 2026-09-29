@@ -20,7 +20,7 @@ beforeEach(() => {
   vi.mocked(api.listTwoFARotations).mockResolvedValue([])
   vi.mocked(api.startTwoFARotation).mockResolvedValue(job)
 })
-afterEach(() => { wrapper?.unmount(); wrapper = undefined })
+afterEach(() => { wrapper?.unmount(); wrapper = undefined; vi.unstubAllGlobals() })
 
 async function inputAndConfirm() {
   await wrapper!.get('textarea').setValue('u@example.com----pass----JBSWY3DPEHPK3PXP')
@@ -91,4 +91,36 @@ describe('explicit 2FA rotation workflow', () => {
     expect(wrapper.text()).not.toContain('private-secret')
   })
 
+})
+
+
+describe('copy updated credentials', () => {
+  it('loads an existing successful task after remount and copies all three fields without another rotation', async () => {
+    const success = { ...job, status: 'success', login_verified: true }
+    vi.mocked(api.listTwoFARotations).mockResolvedValue([success])
+    vi.mocked(api.getTwoFARotationResult).mockResolvedValue({ id: job.id, email: job.email, password: 'p|a,ss$[]+', mfa_secret: 'NEW_SECRET', login_verified: true })
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true, showApply: false } })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('rotation.apply')
+    await wrapper.findAll('button').find(button => button.text() === 'tokenGuard.rotation.copy')!.trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith('u@example.com----p|a,ss$[]+----NEW_SECRET')
+    expect(wrapper.text()).toContain('rotation.copied')
+    expect(wrapper.text()).not.toContain('p|a,ss$[]+')
+    expect(api.startTwoFARotation).not.toHaveBeenCalled()
+  })
+  it('does not overwrite the clipboard if a legacy worker omits the password', async () => {
+    vi.mocked(api.listTwoFARotations).mockResolvedValue([{ ...job, status: 'success', login_verified: true }])
+    vi.mocked(api.getTwoFARotationResult).mockResolvedValue({ id: job.id, email: job.email, mfa_secret: 'NEW_SECRET', login_verified: true } as api.TwoFARotationResult)
+    const writeText = vi.fn()
+    vi.stubGlobal('navigator', { clipboard: { writeText } })
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'tokenGuard.rotation.copy')!.trigger('click')
+    await flushPromises()
+    expect(writeText).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('rotation.actionFailed')
+  })
 })

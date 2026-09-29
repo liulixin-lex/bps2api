@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { applyTwoFARotationResult, parseTwoFARotationText } from '../accountTwoFARotation'
+import { applyTwoFARotationResult, formatTwoFARotationCredentials, parseTwoFARotationText } from '../accountTwoFARotation'
 import type { TokenGuardConfig } from '../accountTokenGuard'
 
-const result = { id: 'job', email: 'User@example.com', mfa_secret: 'NEW_SECRET', login_verified: true }
+const result = { id: 'job', email: 'User@example.com', password: 'original-password', mfa_secret: 'NEW_SECRET', login_verified: true }
 const config = {
   enabled: true,
   relogin_headers: { Authorization: 'unchanged' },
@@ -36,5 +36,19 @@ describe('2FA rotation input and verified result application', () => {
   it('rejects missing and duplicate matches', () => {
     expect(() => applyTwoFARotationResult(config, { ...result, email: 'missing@example.com' })).toThrow('unique_saved_account_required')
     expect(() => applyTwoFARotationResult({ ...config, relogin_accounts: [...config.relogin_accounts, config.relogin_accounts[0]] }, result)).toThrow('unique_saved_account_required')
+  })
+})
+
+
+describe('verified account credential export', () => {
+  it('copies the exact email----password----new-secret format and preserves password characters', () => {
+    expect(formatTwoFARotationCredentials({ ...result, password: ' p|a,ss$[]+----word ' })).toBe('User@example.com---- p|a,ss$[]+----word ----NEW_SECRET')
+  })
+  it.each([
+    { ...result, login_verified: false }, { ...result, email: '' },
+    { ...result, password: '' }, { ...result, mfa_secret: '' },
+    { ...result, password: undefined } as unknown as typeof result
+  ])('does not copy incomplete or unverified credentials', value => {
+    expect(() => formatTwoFARotationCredentials(value)).toThrow('incomplete_verified_credentials')
   })
 })
