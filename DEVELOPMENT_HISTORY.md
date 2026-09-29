@@ -17,7 +17,7 @@
 
 ## 本地 PR 开发
 
-[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：独立本地开发与隔离验证完成，PR 保持 open。用户追加授权后，已将 main 2dfb76d7 + PR 的 a7106a31 部署到测试站；应用版本 0.0.18-pr12.a7106a31，旧 XY2API 保留，域名回切实测通过。详见[测试部署记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。用户已阅读同意并明确授权确认首次声明，worker 接线、本机与公网管理接口验收通过。用户随后提交的真实测试任务在初始 OpenAI 登录处失败（409 invalid_state），未进入 2FA 更换；只读诊断见测试部署记录，已定位初始化 403 被忽略导致后续 409；登录前置检查、阶段分类和明确提示的修复候选已通过隔离回归，部署验收继续。以上不改变主分支生产部署事实。
+[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR 保持 open；当前测试站为 main 2dfb76d7 + PR 修复提交 f273b2a7，版本 0.0.18-pr12.f273b2a7。初始化 403 被忽略导致 409、前置登录失败误报“结果不确定”的代码问题已修复上线；本机/公网接口、源码回滚和实际镜像回切通过，任务原始记录未改写。真实登录仍在 OpenAI 初始化处被 403 拒绝，尚未更换真实 2FA；用户浏览器登录情况待确认。详见[测试部署及修复记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。原 XY2API 及数据保留，不改变远端生产事实。
 
 ## 本次 429 修复进度
 
@@ -64,7 +64,7 @@
 
 | 日期（UTC） | 背景与目标 | 实际进展 |
 | --- | --- | --- |
-| 2026-09-29 | [PR #12 测试部署](docs/development/entries/2026-09-29-twofa-pr12-preview.md) | 最新 main + PR 已部署独立测试实例；域名回切、容器健康、精确前端与管理员登录通过；声明已授权确认、worker 接线及本机/公网管理接口验收通过；真实账号轮换待专项测试 |
+| 2026-09-29 | [PR #12 测试部署](docs/development/entries/2026-09-29-twofa-pr12-preview.md) | 最新 main + PR 已部署独立测试实例；域名回切、容器健康、精确前端与管理员登录通过；403→409 控制流和前置失败提示已修复上线，回切/数据不变验证通过；真实登录仍受初始化 403 阻塞 |
 | 2026-09-29 | [账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md) | PR #12；管理员界面/接口、私有加密 worker、定向回归和源码回滚验证完成；后续测试部署另记 |
 | 2026-09-29 | [0.0.18 429 候选缓存修复与发布](docs/development/entries/2026-09-29-bps-429-stale-candidate.md) | 10:34 UTC 无感切换、10:53:43 UTC 正式发布；39 节点同输入通过且回滚重现原缺陷，4 次实际 429 恢复 200，18 项产物验收通过；独立 CI 仅剩已核对的原有 5 条 lint 与 1 条集成断言 |
 | 2026-09-29 | [0.0.17 无感上线与远端发布](docs/development/entries/2026-09-29-release-0.0.17.md) | 先上线验收，再原子推送 main/tag，08:28:23 UTC 正式发布，18 项产物验收通过；应用标签固定 041947a69；独立 CI 与静态清理另记 |

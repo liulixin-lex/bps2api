@@ -2,7 +2,7 @@
 
 [返回开发历程](../../../DEVELOPMENT_HISTORY.md)
 
-> 状态：部署、worker 接线、本机/公网接口与回切验收完成。最后实测 2026-09-29 12:21 UTC；真实账号端到端待专项测试。
+> 状态：初始化控制流与提示修复已部署，最后实测 2026-09-29 14:44 UTC；真实自动登录仍受 OpenAI 初始化 403 阻塞，未完成真实轮换。
 > 证据：本轮实测；未执行真实账号端到端。
 
 ## 背景与目标
@@ -13,7 +13,7 @@
 
 - 仓库 liulixin-lex/bps2api；分支 feat/account-twofa-rotation-20260929。
 - 已同步并复核的 main：2dfb76d7fb361a42824545cc406f9c2ef92ff8ac。
-- 实际部署业务代码：a7106a31aef11ae8cb7328c5449e3d2def1380eb；版本 0.0.18-pr12.a7106a31。此后的记录提交仅改文档，不能混作二进制 revision。
+- 初次部署业务代码：a7106a31aef11ae8cb7328c5449e3d2def1380eb；版本 0.0.18-pr12.a7106a31。此后的记录提交仅改文档，不能混作二进制 revision。
 - 构建嵌入已验证前端，Go 1.27.0、CGO_ENABLED=0；runtime 使用官方 0.0.18 固定 digest。worker 固定上游提交 9fa8b481a2e5252ce2782833f6d1e0623c68fdce。
 - 原测试域名反代 xy2api-promotion-preview-app:8080；新反代 bps2api-twofa-preview-app:8080。
 
@@ -90,3 +90,13 @@ worker.py 的 summary 将未进入已保存新密钥待验证状态的通用 tec
 候选阶段补充实测：Go 定向 28 个顶层用例及三个相关包通过，前端生产构建通过，worker 镜像完成。一次独立只读挂载真实任务数据的登录诊断，修复版在首次 auth 初始化 403 处返回 login_access_denied，未发送 authorize/continue 或密码验证请求，没有真实 2FA 操作。解码后 CSRF body 与 cookie 匹配；外部访问拒绝仍存在，不能称真实登录已修复成功。
 
 初次镜像构建因既有 .dockerignore 未放行新增模块而失败，补齐精确文件白名单后构建通过；原失败日志保留。本轮源码四角色以 d7df53f3 为基线，在独立副本恢复原字节并复现旧 403→409 行为，再重施补丁复现新行为；完整输出在 docs-local/twofa-login-fix/。
+
+## 2026-09-29 14:44 UTC：修复版上线及当前边界
+
+测试站应用和 worker 已更新到业务提交 f273b2a7cc2c323287a9bcfa2e75559392814e27，版本 0.0.18-pr12.f273b2a7。后续交付记录提交只改文档，不改变部署二进制来源。当前管理员列表把用户原任务显示为 login_failed / login_state_invalid（“ChatGPT 登录失败，未更换 2FA”）；历史原始加密行未改写，也未自动重试。
+
+实际执行 BASELINE → MODIFIED → ROLLBACK.sh → ROLLBACK → FINAL：本机和公网健康、管理员登录、精确版本、任务状态、no-store、未登录 401 与未确认提交 400 均通过；候选的 TokenGuardView 资源与构建字节一致。旧版恢复 needs_review，新版恢复 login_failed，说明行为来自代码而非写库改结果。整个任务表前后哈希和行数完全一致。Caddy 配置、原 XY2API 容器及健康状态保持不变，PG/Redis 未重建。
+
+部署事务四角色位于 /opt/bps2api-twofa-preview/evidence/login-fix-20260929/。其中 ROLLBACK.sh 已实际执行，只恢复本次前的 BPS 应用/worker 镜像并保留数据；/opt/bps2api-twofa-preview/ROLLBACK.sh 仍用于把域名回切到原 XY2API，两种回滚对象不同。应用与 worker 旧镜像均保留。
+
+当前边界：修复了错误地在 403 后推进登录状态和过度笼统的报错，没有解除 OpenAI 的访问拒绝。修复版真实登录诊断在初始化 403 处停止，密码验证请求和 2FA 更换请求均为零；尚未取得登录成功或真实轮换成功结果。已询问用户同一账号在常用浏览器的登录情况，待回答后区分是否需要人工验证或处理登录环境；没有通过轮换代理、指纹或重复提交来规避拒绝。
