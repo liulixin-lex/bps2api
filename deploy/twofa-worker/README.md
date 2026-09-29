@@ -6,7 +6,7 @@
 
 这不是 OAuth token 导入器。BPS2API 原有「2FA 登录导入」与自动重登继续使用各自配置的重登服务；本 worker 不冒充重登接口，也不会改已有账号的 OAuth token。更换成功后可复制新密钥，或单独点击回写已有的、邮箱唯一匹配的重登配置项。
 
-## 部署（需要另外安排，本 PR 不部署）
+## 部署
 
 在本目录执行 `docker compose build`。复制 `.env.example` 为 `.env`，用 `umask 077` 和 `chmod 600 .env` 限制读取。
 
