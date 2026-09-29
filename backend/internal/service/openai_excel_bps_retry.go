@@ -320,7 +320,7 @@ func (s *OpenAIGatewayService) excelBPSReserveAccountSwitch(ctx context.Context,
 	return false
 }
 
-var excelBPSRetryHint = regexp.MustCompile("(?i)(?:try again in|retry after)\\s+([0-9]+(?:\\.[0-9]+)?)\\s*(milliseconds?|ms|seconds?|s)\\b")
+var excelBPSRetryHint = regexp.MustCompile(`(?i)(?:try again in|retry after)\s+([0-9]+(?:\.[0-9]+)?)\s*(milliseconds?|ms|seconds?|s)\b`)
 
 // HTTP status is sufficient for transient transport errors; an HTTP 200 SSE
 // terminal needs a recognized provider code or explicit error status. Quota,
