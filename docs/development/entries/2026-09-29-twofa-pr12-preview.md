@@ -108,3 +108,19 @@ worker.py 的 summary 将未进入已保存新密钥待验证状态的通用 tec
 独立标准 Chromium 无凭据访问 ChatGPT 登录页也停在 challenge，无可见邮箱字段。根据用户建议，核对本仓库 PKCE 配置及官方 openai/codex 源码（18194bfd3534ca567d886eac454028dafaa68b6c），再分别用现有 HTTP 客户端和标准 Chromium 访问 /oauth/authorize；二者均遇到 challenge，未进入密码、MFA、workspace select 或 token exchange。官方设备授权 usercode 在宿主标准客户端得到 530，在 worker 既有客户端得到 200 并签发设备代码；这只证明该接口可达，不能证明令牌能更换 2FA。已向用户发送独立的临时设备授权，仅准备在账号身份匹配后只读查询 mfa_info，禁止轮换与令牌持久化，等待用户完成官方授权。
 
 本轮小修复把明确 challenge 信号的判定提前到通用 403 之前，返回现有白名单 login_interaction_required；普通 403 不变。33 个 worker 离线测试与非 root/只读/无外网镜像 smoke 通过，尚未部署此增量。诊断失败也保留：浏览器镜像未完成时的首次启动失败、只读 home 导致 crashpad 启动失败；改用独立 tmpfs home 后才完成浏览器实测，未更换指纹、代理或操作验证码。证据在 docs-local/twofa-access-diagnosis/；上一轮日志和真实任务保持原样。
+
+## 2026-09-29 15:48 UTC：挑战分类增量部署与上游完整调用链审计
+
+worker 已部署 c09a6233，应用仍为 0.0.18-pr12.f273b2a7。独立 BASELINE→MODIFIED→ROLLBACK→FINAL 验证通过：明确 challenge 从 login_access_denied 变为 login_interaction_required；管理 API、真实任务哈希、Caddy 与应用/PG/Redis/原 XY2API 容器不变。四角色在 /opt/bps2api-twofa-preview/evidence/challenge-worker-20260929/，回滚已实际执行。
+
+设备授权阶段补充：usercode 签发 200 后，轮询 deviceauth/token 返回 cf-mitigated=challenge 的 403，因此诊断立即停止，没有换取令牌或查询 MFA。已通知用户不再使用该代码。不能把代码签发成功等同于设备授权登录成功。用户随后明确要求完全无人操作；后续不再以手工授权作为解决方案。
+
+重新查询上游 main 仍为固定的 9fa8b481a2e5252ce2782833f6d1e0623c68fdce（提交日期 2026-08-22），核心六个源文件与原部署固定源码逐字一致。实际调用链为 server→TwoFAJobManager→TwoFAService._resolve_dependencies→get_session_pure_request→rotate_2fa；默认并未自动使用 Camoufox。HTTP 实现使用 curl_cffi、统一浏览器请求特征、NextAuth、Sentinel、密码与 TOTP 验证，再取得 ChatGPT 会话与 Cookie；真正的更换调用 ChatGPT backend-api 的 mfa_info、disable_in_house、enroll、activate_enrollment，之后以新密钥重新登录。
+
+上游的 HTTP 指纹回退仅覆盖 TLS 错误及 ChatGPT prime/CSRF 的特定 403；不覆盖当前 auth authorize 的挑战。浏览器函数虽存在，但引用的 browser_phase.py 没有发布在该提交中，不能简单切换函数就称默认更换流程已具备浏览器回退。README 中的 Camoufox 安装说明与默认纯 HTTP 调用链必须分开看。
+
+按上游依赖和固定浏览器版本构建独立诊断镜像：camoufox 0.5.4、playwright 1.60.0、official/stable/152.0.4-beta.28。沿原 NextAuth browser helper 初始化，标准 Chromium 仍遇到挑战；Camoufox 无人工操作得到 auth 302→200，并显示正常邮箱输入框。仅为诊断以普通 page.goto 补足缺失的导航函数，没有修改线上 worker 引擎。
+
+一次真实账号浏览器登录诊断已得到 password/verify 200、mfa/issue_challenge 200、mfa/verify 200，各提交一次；没有更换请求，jobs 表哈希不变。但上游等待 ChatGPT session-token Cookie 超时，所以尚未取得可用会话或验证 MFA 设置读取。正在检查登录后的回调/workspace/会话识别，不能把密码和 TOTP 校验成功写成整条登录与更换成功。证据保存在 docs-local/twofa-access-diagnosis/。
+
+随后一次保留浏览器上下文的诊断成功取得分片 NextAuth Cookie 和正确账号的 /api/auth/session，密码/TOTP 各验证一次均 200；用会话令牌与导出的 Cookie 只读 GET mfa_info 同样 200，显示 MFA 已启用，数据库不变，轮换数仍为零。第一轮 Cookie 超时记录保留，尚不能断言该超时的唯一原因。已确认配套 Camoufox 可以在当前网络无人操作地完成登录，下一步是在桥接层补足缺失导航模块、隔离浏览器配置并接入该引擎，而非要求用户手工授权。
