@@ -1,0 +1,5 @@
+*
+!Dockerfile
+!worker.py
+!requirements.txt
+!requirements-bridge.txt

@@ -28,6 +28,8 @@
         <article class="summary-card"><span>{{ t('tokenGuard.lastRun') }}</span><strong class="text-base">{{ remote?.runtime.last_run ? date(remote.runtime.last_run) : t('tokenGuard.never') }}</strong><small>{{ remote?.runtime.last_message || '-' }}</small></article>
       </section>
 
+      <TwoFARotationPanel v-if="remote" :configured="Boolean(remote.config.two_fa_rotation_endpoint)" :disabled="dirty || saving" @apply="applyRotation" />
+
       <div class="ops-columns">
         <section class="settings-card">
           <div class="section-title"><span class="icon-tile"><Icon name="shield" size="md" /></span><div><h3>{{ t('tokenGuard.title') }}</h3><p>{{ t('tokenGuard.enabledHint') }}</p></div></div>
@@ -72,6 +74,10 @@
               <label class="field-label">{{ t('tokenGuard.reloginAccounts') }}</label>
               <textarea v-model="reloginText" rows="7" class="input w-full font-mono text-xs" placeholder="user@example.com----password----JBSWY3DPEHPK3PXP"></textarea>
               <p class="field-hint">{{ t('tokenGuard.reloginAccountsHint') }}</p>
+
+              <label class="field-label">{{ t('tokenGuard.rotation.endpoint') }}<input v-model.trim="draft.two_fa_rotation_endpoint" class="input w-full" placeholder="http://twofa-worker:8080" /></label>
+              <label class="field-label">{{ t('tokenGuard.rotation.token') }}<input v-model.trim="draft.two_fa_rotation_token" type="password" autocomplete="new-password" class="input w-full" /></label>
+              <p class="field-hint">{{ t('tokenGuard.rotation.endpointHint') }}</p>
 
               <div class="grid-2">
                 <label class="field-label">{{ t('tokenGuard.barkKey') }}<input v-model.trim="draft.bark_key" class="input w-full" placeholder="留空则不推送" /></label>
@@ -136,6 +142,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
+import TwoFARotationPanel from '@/components/admin/operations/TwoFARotationPanel.vue'
+import { applyTwoFARotationResult, type TwoFARotationResult } from '@/api/admin/accountTwoFARotation'
 import Icon from '@/components/icons/Icon.vue'
 import Select from '@/components/common/Select.vue'
 import { groupsAPI } from '@/api/admin/groups'
@@ -283,6 +291,25 @@ async function save() {
   } finally {
     saving.value = false
   }
+}
+
+async function applyRotation(result: TwoFARotationResult) {
+  if (saving.value || dirty.value) return
+  saving.value = true; error.value = ''; notice.value = ''
+  try {
+    const latest = await getTokenGuardStatus()
+    const config = applyTwoFARotationResult(latest.config, result)
+    const saved = await saveTokenGuardConfig(config)
+    if (!alive) return
+    remote.value = { ...latest, config: saved }
+    draft.value = { ...saved }
+    reloginText.value = reloginTextOf(saved)
+    probeHeadersText.value = headersTextOf(saved.probe_headers)
+    reloginHeadersText.value = headersTextOf(saved.relogin_headers)
+    notice.value = t('tokenGuard.rotation.applied')
+  } catch {
+    if (alive) error.value = t('tokenGuard.rotation.applyFailed')
+  } finally { saving.value = false }
 }
 
 async function run() {

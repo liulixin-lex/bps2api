@@ -1,0 +1,35 @@
+name: Private 2FA worker
+on:
+  pull_request:
+    paths:
+      - 'deploy/twofa-worker/**'
+      - '.github/workflows/twofa-worker.yml'
+  push:
+    paths:
+      - 'deploy/twofa-worker/**'
+      - '.github/workflows/twofa-worker.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Fetch the pinned upstream engine
+        run: |
+          git init /tmp/change2fa-engine
+          git -C /tmp/change2fa-engine remote add origin https://github.com/zixfelw/Change-2fa-Password-GPT-Auto.git
+          git -C /tmp/change2fa-engine fetch --depth 1 origin 9fa8b481a2e5252ce2782833f6d1e0623c68fdce
+          git -C /tmp/change2fa-engine checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/change2fa-engine rev-parse HEAD)" = 9fa8b481a2e5252ce2782833f6d1e0623c68fdce
+      - name: Install HTTP engine and test dependencies
+        run: python -m pip install -r deploy/twofa-worker/requirements.txt -r deploy/twofa-worker/requirements-test.txt
+      - name: Exercise persistence and orchestration without real accounts
+        env:
+          CHANGE2FA_SOURCE_DIR: /tmp/change2fa-engine
+        run: python -m pytest -q deploy/twofa-worker/test_worker.py

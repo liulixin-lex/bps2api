@@ -1,0 +1,75 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import TwoFARotationPanel from '../TwoFARotationPanel.vue'
+import * as api from '@/api/admin/accountTwoFARotation'
+
+vi.mock('vue-i18n', async importOriginal => ({
+  ...await importOriginal<typeof import('vue-i18n')>(),
+  useI18n: () => ({ t: (key: string) => key })
+}))
+vi.mock('@/api/admin/accountTwoFARotation', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/admin/accountTwoFARotation')>()
+  return { ...actual, startTwoFARotation: vi.fn(), listTwoFARotations: vi.fn(), verifyTwoFARotation: vi.fn(), getTwoFARotationResult: vi.fn() }
+})
+
+let wrapper: VueWrapper | undefined
+const job = { id: '0123456789abcdef0123456789abcdef', email: 'u@example.com', status: 'queued', login_verified: false, rotated_pending_verify: false, retryable: false, created_at: 1 }
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(api.listTwoFARotations).mockResolvedValue([])
+  vi.mocked(api.startTwoFARotation).mockResolvedValue(job)
+})
+afterEach(() => { wrapper?.unmount(); wrapper = undefined })
+
+async function inputAndConfirm() {
+  await wrapper!.get('textarea').setValue('u@example.com----pass----JBSWY3DPEHPK3PXP')
+  await wrapper!.get('input[type="checkbox"]').setValue(true)
+}
+
+describe('explicit 2FA rotation workflow', () => {
+  it('requires confirmation and saved worker configuration', async () => {
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await wrapper.get('textarea').setValue('u@example.com----pass----JBSWY3DPEHPK3PXP')
+    await wrapper.get('form').trigger('submit')
+    expect(api.startTwoFARotation).not.toHaveBeenCalled()
+    await inputAndConfirm()
+    await wrapper.setProps({ disabled: true })
+    await wrapper.get('form').trigger('submit')
+    expect(api.startTwoFARotation).not.toHaveBeenCalled()
+    await wrapper.setProps({ disabled: false, configured: false })
+    await wrapper.get('form').trigger('submit')
+    expect(api.startTwoFARotation).not.toHaveBeenCalled()
+  })
+  it('reuses the original request id and payload after a lost response', async () => {
+    vi.mocked(api.startTwoFARotation).mockRejectedValueOnce(new Error('lost response'))
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await inputAndConfirm()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    const [firstEntry, firstID] = vi.mocked(api.startTwoFARotation).mock.calls[0]
+    const originalEntry = { ...firstEntry }
+    expect((wrapper.get('textarea').element as HTMLTextAreaElement).value).toBe('')
+    const retry = wrapper.findAll('button').find(button => button.text().includes('retrySubmit'))!
+    await retry.trigger('click')
+    await flushPromises()
+    expect(api.startTwoFARotation).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(api.startTwoFARotation).mock.calls[1][1]).toBe(firstID)
+    // Submitted secrets are erased from component memory after acceptance.
+    expect(originalEntry.password).toBe('pass')
+    expect(firstEntry.password).toBe('')
+    expect(wrapper.text()).not.toContain('retrySubmit')
+  })
+  it('uses the verification endpoint for a checkpointed job, never starts another rotation', async () => {
+    vi.mocked(api.listTwoFARotations).mockResolvedValue([{ ...job, status: 'error', rotated_pending_verify: true, retryable: true }])
+    vi.mocked(api.verifyTwoFARotation).mockResolvedValue(job)
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('rotation.copy')
+    const verify = wrapper.findAll('button').find(button => button.text() === 'tokenGuard.rotation.verify')!
+    await verify.trigger('click')
+    await flushPromises()
+    expect(api.verifyTwoFARotation).toHaveBeenCalledWith(job.id)
+    expect(api.startTwoFARotation).not.toHaveBeenCalled()
+  })
+})

@@ -1,4 +1,28 @@
 export default {
+  "rotation": {
+    "title": "Rotate account 2FA",
+    "description": "Rotate TOTP through your private worker and verify login. Separate from automatic re-login; passwords and OAuth tokens are unchanged.",
+    "configureFirst": "Save your private 2FA worker URL and access token below first.",
+    "saveFirst": "Save or discard pending configuration edits first.",
+    "endpoint": "2FA worker URL",
+    "token": "2FA worker access token",
+    "endpointHint": "Leave blank to disable. Use your own twofa-worker; public connections require HTTPS.",
+    "input": "One email----password----current TOTP secret per line; up to 100 entries. Pipe separators also supported.",
+    "confirm": "I manage these accounts and authorize replacing their current 2FA secrets.",
+    "start": "Submit rotation jobs",
+    "retrySubmit": "Continue with original request IDs",
+    "status": "Rotation status",
+    "verify": "Verify the new secret",
+    "copy": "Copy verified new secret",
+    "apply": "Update saved re-login credentials",
+    "copied": "New secret copied. Store it securely.",
+    "applied": "Updated the matching saved re-login credential.",
+    "applyFailed": "Update incomplete: a unique saved re-login account is required. Refresh and check configuration.",
+    "loadFailed": "Could not read jobs. Check your private worker and refresh.",
+    "submitUncertain": "Submission unconfirmed. Original request IDs are retained. Refresh jobs and continue with the same IDs; do not create the batch again.",
+    "actionFailed": "Action incomplete. Refresh status; unverified or superseded secrets cannot be exported.",
+    "states": { "queued": "Queued", "running": "Running", "success": "Rotated and verified", "error": "Incomplete", "cancelled": "Cancelled; review required", "needs_review": "Uncertain; manual review required", "pendingVerify": "Rotated; awaiting verification" }
+  },
   "twoFA": {
   "title": "2FA login and import",
   "label": "Initial login with email, password and 2FA",

@@ -1,0 +1,150 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+const rotationTestID = "0123456789abcdef0123456789abcdef"
+const rotationTestToken = "test-worker-token-with-at-least-32-characters"
+
+func rotationTestService(t *testing.T, handler http.HandlerFunc) *AccountTokenGuardService {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	svc := &AccountTokenGuardService{httpClient: server.Client()}
+	svc.config.Store(AccountTokenGuardConfig{TwoFARotationEndpoint: server.URL, TwoFARotationToken: rotationTestToken})
+	return svc
+}
+
+func TestTwoFARotationConfiguration(t *testing.T) {
+	for _, tt := range []struct {
+		endpoint, token string
+		valid           bool
+	}{
+		{"", "", true}, {"http://twofa-worker:8080", rotationTestToken, true},
+		{"http://127.0.0.1:8080", rotationTestToken, true}, {"http://10.0.0.2", rotationTestToken, true},
+		{"https://worker.example.com", rotationTestToken, true},
+		{"http://worker.example.com", rotationTestToken, false},
+		{"https://user:pass@worker.example.com", rotationTestToken, false},
+		{"https://worker.example.com?token=secret", rotationTestToken, false},
+		{"https://worker.example.com#fragment", rotationTestToken, false},
+		{"ftp://worker.example.com", rotationTestToken, false},
+		{"https://worker.example.com", "short", false},
+		{"https://worker.example.com", rotationTestToken + "\nInjected", false},
+		{"", rotationTestToken, false},
+	} {
+		if err := validateTwoFARotationConfig(AccountTokenGuardConfig{TwoFARotationEndpoint: tt.endpoint, TwoFARotationToken: tt.token}); (err == nil) != tt.valid {
+			t.Errorf("configuration %q valid=%v error=%v", tt.endpoint, tt.valid, err)
+		}
+	}
+}
+
+func TestTwoFARotationRequestValidation(t *testing.T) {
+	req := AccountTwoFARotationRequest{AccountTokenGuardReloginAccount: AccountTokenGuardReloginAccount{Email: "test@example.com", Password: "p|a,ss", MFASecret: "JBSWY3DPEHPK3PXP"}, RequestID: rotationTestID, Confirmed: true}
+	if err := ValidateAccountTwoFARotationRequest(req); err != nil {
+		t.Fatal(err)
+	}
+	req.Confirmed = false
+	if ValidateAccountTwoFARotationRequest(req) == nil {
+		t.Fatal("missing explicit confirmation accepted")
+	}
+	req.Confirmed = true
+	for _, id := range []string{"", "../result", strings.Repeat("-", 32), "abcdef0123456789abcdef0123456789ab----"} {
+		req.RequestID = id
+		if ValidateAccountTwoFARotationRequest(req) == nil {
+			t.Errorf("invalid id accepted: %q", id)
+		}
+	}
+}
+
+func TestTwoFARotationProtocol(t *testing.T) {
+	req := AccountTwoFARotationRequest{AccountTokenGuardReloginAccount: AccountTokenGuardReloginAccount{Email: "TEST@example.com", Password: "p|a,ss", MFASecret: "JBSWY3DPEHPK3PXP"}, RequestID: rotationTestID, Confirmed: true}
+	calls := 0
+	svc := rotationTestService(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Header.Get("Authorization") != "Bearer "+rotationTestToken {
+			t.Error("missing worker authentication")
+		}
+		switch r.Method + " " + r.URL.Path {
+		case "POST /jobs":
+			var received AccountTwoFARotationRequest
+			if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+				t.Fatal(err)
+			}
+			if received != req {
+				t.Errorf("request changed: %+v", received)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(w, "{\"id\":\""+rotationTestID+"\",\"email\":\"test@example.com\",\"status\":\"queued\"}")
+		case "GET /jobs":
+			_, _ = io.WriteString(w, "{\"jobs\":[]}")
+		case "POST /jobs/" + rotationTestID + "/verify":
+			_, _ = io.WriteString(w, "{\"id\":\""+rotationTestID+"\",\"status\":\"queued\"}")
+		case "GET /jobs/" + rotationTestID + "/result":
+			_, _ = io.WriteString(w, "{\"id\":\""+rotationTestID+"\",\"email\":\"test@example.com\",\"mfa_secret\":\"NEWSEED\",\"login_verified\":true,\"password\":\"must-not-forward\"}")
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	})
+	if _, err := svc.StartTwoFARotation(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, err := svc.TwoFARotationJobs(context.Background()); err != nil || len(jobs) != 0 {
+		t.Fatalf("jobs=%v err=%v", jobs, err)
+	}
+	if _, err := svc.RetryTwoFARotation(context.Background(), rotationTestID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.TwoFARotationResult(context.Background(), rotationTestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(result)
+	if strings.Contains(string(encoded), "must-not-forward") {
+		t.Fatal("forwarded non-whitelisted field")
+	}
+	if calls != 4 {
+		t.Fatalf("calls=%d", calls)
+	}
+}
+
+func TestTwoFARotationRejectsRedirectsAndSanitizesErrors(t *testing.T) {
+	leaked := false
+	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { leaked = true }))
+	defer destination.Close()
+	for _, status := range []int{307, 308, 401, 403, 404, 409, 500} {
+		svc := rotationTestService(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", destination.URL)
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, "sensitive-password-and-seed")
+		})
+		_, err := svc.TwoFARotationJobs(context.Background())
+		if err == nil || strings.Contains(err.Error(), "sensitive-password") {
+			t.Fatalf("status=%d error=%v", status, err)
+		}
+	}
+	if leaked {
+		t.Fatal("followed credential-bearing redirect")
+	}
+}
+
+func TestTwoFARotationRejectsUnverifiedMismatchedOrOversizedResults(t *testing.T) {
+	for _, body := range []string{
+		"{\"id\":\"" + rotationTestID + "\",\"email\":\"test@example.com\",\"mfa_secret\":\"SECRET\",\"login_verified\":false}",
+		"{\"id\":\"wrong\",\"email\":\"test@example.com\",\"mfa_secret\":\"SECRET\",\"login_verified\":true}",
+		"{\"id\":\"" + rotationTestID + "\",\"email\":\"test@example.com\",\"mfa_secret\":\"\",\"login_verified\":true}",
+		"invalid-json-sensitive-data", strings.Repeat("x", (2<<20)+1),
+	} {
+		svc := rotationTestService(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) })
+		_, err := svc.TwoFARotationResult(context.Background(), rotationTestID)
+		if err == nil || strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "sensitive-data") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+}

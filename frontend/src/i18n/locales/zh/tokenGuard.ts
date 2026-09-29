@@ -1,4 +1,28 @@
 export default {
+  "rotation": {
+    "title": "更换账号 2FA",
+    "description": "使用自托管维护服务更换 TOTP 密钥并验证登录。此操作独立于自动重登，不修改账号密码或 OAuth Token。",
+    "configureFirst": "请先在下方保存自托管 2FA 维护服务地址和密钥。",
+    "saveFirst": "请先保存或撤销下方未保存的配置。",
+    "endpoint": "2FA 维护服务地址",
+    "token": "2FA 维护服务访问密钥",
+    "endpointHint": "留空关闭。仅连接自己部署的 twofa-worker；公网连接必须使用 HTTPS。",
+    "input": "每行：邮箱----密码----当前 2FA 密钥，最多 100 条；也支持竖线分隔。",
+    "confirm": "我确认这些是我管理的账号，并授权更换它们当前的 2FA 密钥。",
+    "start": "提交更换任务",
+    "retrySubmit": "用原任务标识继续提交",
+    "status": "更换状态",
+    "verify": "继续验证新密钥",
+    "copy": "复制已验证的新密钥",
+    "apply": "同步到已保存的重登配置",
+    "copied": "新密钥已复制，请妥善保存。",
+    "applied": "新密钥已同步到对应账号的重登配置。",
+    "applyFailed": "同步未完成：需要唯一匹配的已保存重登账号，请刷新配置后核对。",
+    "loadFailed": "任务读取未完成，请检查自托管维护服务后刷新。",
+    "submitUncertain": "提交未确认，已保留原请求标识。请先刷新任务，再用原标识继续；不要重新创建同一批。",
+    "actionFailed": "操作未完成，请刷新任务状态；尚未验证或已被后续任务替换的密钥不能导出。",
+    "states": { "queued": "排队中", "running": "执行中", "success": "更换并验证成功", "error": "未完成", "cancelled": "已取消，需核查", "needs_review": "结果不确定，需人工核查", "pendingVerify": "已更换，等待验证" }
+  },
   "twoFA": {
   "title": "2FA 登录导入",
   "label": "邮箱、密码与 2FA 首次登录",

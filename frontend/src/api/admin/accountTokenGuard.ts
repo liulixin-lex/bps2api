@@ -77,6 +77,8 @@ export interface TokenGuardConfig {
   relogin_endpoint: string
   relogin_headers: Record<string, string>
   relogin_accounts: TokenGuardReloginAccount[]
+  two_fa_rotation_endpoint?: string
+  two_fa_rotation_token?: string
   restore_schedulable: boolean
   fail_streak_threshold: number
   bark_key: string

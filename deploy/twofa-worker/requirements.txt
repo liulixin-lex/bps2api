@@ -1,0 +1,6 @@
+# Minimal HTTP login/rotation dependencies. Core versions match pinned upstream.
+fastapi==0.136.1
+uvicorn==0.47.0
+curl_cffi==0.15.0
+pyotp==2.9.0
+-r requirements-bridge.txt
