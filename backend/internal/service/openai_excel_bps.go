@@ -334,7 +334,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 	failoverRateLimited := func(retryAfter string, modelScoped ...bool) (*OpenAIForwardResult, error) {
 		c.Set("excel_bps_recovery_last_status", http.StatusTooManyRequests)
 		retryAfter = excelBPSRetryAfterHeader(retryAfter)
-		if !isQualityObservation(ctx) && !(len(modelScoped) > 0 && modelScoped[0]) {
+		if !isQualityObservation(ctx) && (len(modelScoped) == 0 || !modelScoped[0]) {
 			s.coolDownExcelBPS(ctx, account, retryAfter)
 		}
 		if isExcelBPSClientCancellation(c, ctx.Err()) {

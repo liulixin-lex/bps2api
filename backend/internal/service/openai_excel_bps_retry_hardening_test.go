@@ -94,6 +94,8 @@ func (r *bpsHardeningFaultReader) Read([]byte) (int, error) {
 }
 
 func TestBPSRecoveryHardeningHTTP2Forward(t *testing.T) {
+	// Custom transports may supply pointer errors through an error interface.
+	wrapReadError := func(err error) error { return fmt.Errorf("read: %w", err) }
 	metadata := incidentBPSFrame("response.created", map[string]any{"response": map[string]any{"id": "resp_attempt_failed"}})
 	text := incidentBPSFrame("response.output_text.delta", map[string]any{"delta": "already delivered"})
 	for _, tc := range []struct {
@@ -103,10 +105,10 @@ func TestBPSRecoveryHardeningHTTP2Forward(t *testing.T) {
 		calls   int
 	}{
 		{"internal_before_output", http2.StreamError{StreamID: 1, Code: http2.ErrCodeInternal}, false, 2},
-		{"wrapped_pointer_before_output", fmt.Errorf("read: %w", &http2.StreamError{StreamID: 1, Code: http2.ErrCodeInternal}), false, 2},
+		{"wrapped_pointer_before_output", wrapReadError(&http2.StreamError{StreamID: 1, Code: http2.ErrCodeInternal}), false, 2},
 		{"refused_before_output", http2.StreamError{StreamID: 1, Code: http2.ErrCodeRefusedStream}, false, 2},
 		{"graceful_goaway_before_output", http2.GoAwayError{LastStreamID: 1, ErrCode: http2.ErrCodeNo}, false, 2},
-		{"internal_goaway_before_output", fmt.Errorf("read: %w", &http2.GoAwayError{LastStreamID: 1, ErrCode: http2.ErrCodeInternal}), false, 2},
+		{"internal_goaway_before_output", wrapReadError(&http2.GoAwayError{LastStreamID: 1, ErrCode: http2.ErrCodeInternal}), false, 2},
 		{"cancel_before_output", http2.StreamError{StreamID: 1, Code: http2.ErrCodeCancel}, false, 1},
 		{"protocol_before_output", http2.StreamError{StreamID: 1, Code: http2.ErrCodeProtocol}, false, 1},
 		{"protocol_goaway_before_output", http2.GoAwayError{LastStreamID: 1, ErrCode: http2.ErrCodeProtocol}, false, 1},
