@@ -102,6 +102,46 @@ def test_reserved_request_is_not_resubmitted_after_uncertain_handoff(client, run
     assert "secret from engine" not in repeated.text
 
 
+@pytest.mark.parametrize("http_status,code", [(500, "rotation_disable_server_error"),
+                                              (502, "rotation_disable_server_error"),
+                                              (403, "rotation_disable_rejected")])
+def test_disable_error_explanation_does_not_relax_mutation_guards(client, runtime, http_status, code):
+    first = client.post('/jobs', json=entry()).json()
+    job = runtime.manager.jobs[first['id']]
+    job.status = 'error'
+    job.error_kind = 'technical_error'
+    job.error = f'Đổi 2FA thất bại: disable old 2FA failed HTTP {http_status}'
+    original = copy.deepcopy(vars(job))
+    response = client.get('/jobs')
+    summary = response.json()['jobs'][0]
+    assert summary['status'] == 'needs_review'
+    assert summary['error_code'] == code and not summary['retryable']
+    assert response.headers['cache-control'] == 'no-store'
+    assert job.error not in response.text and SECRET not in response.text
+    assert client.post(f'/jobs/{job.id}/verify').status_code == 409
+    assert client.get(f'/jobs/{job.id}/result').status_code == 409
+    assert client.post('/jobs', json=entry()).status_code == 409
+    assert vars(job) == original
+    assert runtime.manager.add_calls == 1 and runtime.manager.retry_calls == 0
+
+
+@pytest.mark.parametrize('overrides', [
+    {'error': 'Đổi 2FA thất bại: disable old 2FA failed HTTP 500 private-secret'},
+    {'error': 'Đổi 2FA thất bại: enroll failed HTTP 500'},
+    {'error_kind': 'rotation_interrupted'},
+    {'rotated_pending_verify': True},
+    {'login_verified': True},
+    {'password_changed': True},
+    {'status': 'running'},
+])
+def test_disable_error_classifier_rejects_ambiguous_or_later_stages(overrides):
+    from rotation_service import rotation_failure_code
+    fields = dict(status='error', error_kind='technical_error', login_verified=False,
+                  rotated_pending_verify=False, password_changed=False,
+                  error='Đổi 2FA thất bại: disable old 2FA failed HTTP 500')
+    assert rotation_failure_code(SimpleNamespace(**{**fields, **overrides})) == ''
+
+
 def test_idempotency_survives_runtime_restart(tmp_path):
     database = tmp_path / "requests.db"
     manager = Manager()

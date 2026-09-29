@@ -26,8 +26,9 @@
             <td class="p-2">
               <div class="flex flex-wrap gap-2">
                 <button v-if="job.retryable" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || disabled" @click="verify(job)">{{ t('tokenGuard.rotation.verify') }}</button>
-                <button v-if="job.status === 'success' && job.login_verified" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id" @click="copyResult(job)">{{ t('tokenGuard.rotation.copy') }}</button>
-                <button v-if="showApply && job.status === 'success' && job.login_verified" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || disabled" @click="apply(job)">{{ t('tokenGuard.rotation.apply') }}</button>
+                <button v-if="latestVerified(job)" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id" @click="copyResult(job)">{{ t('tokenGuard.rotation.copy') }}</button>
+                <button v-if="showApply && latestVerified(job)" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || disabled" @click="apply(job)">{{ t('tokenGuard.rotation.apply') }}</button>
+                <span v-if="job.status === 'success' && job.login_verified && !latestVerified(job)" class="max-w-xs text-xs text-gray-500">{{ t('tokenGuard.rotation.superseded') }}</span>
               </div>
             </td>
           </tr>
@@ -62,12 +63,23 @@ function stateText(job: TwoFARotationJob) {
 }
 
 function failureText(job: TwoFARotationJob) {
+  if (job.status === 'needs_review' && !job.rotated_pending_verify) {
+    const allowed = ['rotation_disable_server_error', 'rotation_disable_rejected']
+    const code = allowed.includes(job.error_code ?? '') ? job.error_code : 'rotation_unconfirmed'
+    return t('tokenGuard.rotation.errors.' + code)
+  }
   if (!['login_failed', 'preflight_failed'].includes(job.status) || job.rotated_pending_verify) return ''
   const allowed = ['login_access_denied', 'login_rate_limited', 'login_bootstrap_rejected',
     'login_interaction_required', 'login_state_invalid', 'invalid_credentials', 'account_die',
     'login_failed', 'preflight_failed']
   const code = allowed.includes(job.error_code ?? '') ? job.error_code : 'login_failed'
   return t('tokenGuard.rotation.errors.' + code)
+}
+
+function latestVerified(job: TwoFARotationJob) {
+  // The worker returns newest first and restricts result export to that job.
+  return job.status === 'success' && job.login_verified
+    && jobs.value.find(candidate => candidate.email === job.email)?.id === job.id
 }
 
 async function refresh() {

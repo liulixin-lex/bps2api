@@ -1,6 +1,7 @@
 """Explicitly distinguish failures before mutation from uncertain rotations."""
 import asyncio
 import os
+import re
 
 from login_guard import LoginBootstrapError
 
@@ -10,6 +11,19 @@ LOGIN_CODES = frozenset({
     "account_die", "login_failed", "preflight_failed",
 })
 PREFIX = "pre_rotation:"
+
+
+def rotation_failure_code(job) -> str:
+    """Explain an exact pinned-engine failure without relaxing mutation guards."""
+    if (job.status != "error" or job.rotated_pending_verify or job.login_verified
+            or getattr(job, "password_changed", False)
+            or job.error_kind != "technical_error"):
+        return ""
+    error = str(getattr(job, "error", "") or "")
+    match = re.fullmatch(r"Đổi 2FA thất bại: disable old 2FA failed HTTP ([45][0-9]{2})", error)
+    if match:
+        return "rotation_disable_server_error" if match[1].startswith("5") else "rotation_disable_rejected"
+    return ""
 
 
 def classify_login_error(exc: Exception) -> str:

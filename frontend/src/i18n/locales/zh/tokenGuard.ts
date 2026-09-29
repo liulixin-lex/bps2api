@@ -27,7 +27,8 @@ export default {
     "loadFailed": "任务读取未完成，请检查自托管维护服务后刷新。",
     "submitUncertain": "提交未确认，已保留原请求标识。请先刷新任务，再用原标识继续；不要重新创建同一批。",
     "actionFailed": "操作未完成，请刷新任务状态；尚未验证或已被后续任务替换的密钥不能导出。",
-    "errors": {"login_access_denied": "OpenAI 登录初始化被拒绝（403）。请检查登录环境；如需额外验证，请在浏览器中完成。", "login_rate_limited": "OpenAI 限制了登录请求（429），请稍后再试。", "login_bootstrap_rejected": "登录会话初始化失败，已停止后续操作。", "login_interaction_required": "登录需要浏览器或邮箱等额外验证，当前自动流程无法完成。", "login_state_invalid": "OpenAI 登录状态无效（409 invalid_state），尚未执行 2FA 更换。", "invalid_credentials": "登录凭据或当前 2FA 验证失败，请核对输入。", "account_die": "OpenAI 返回账号停用状态，未执行更换。", "login_failed": "登录未完成，尚未执行 2FA 更换。", "preflight_failed": "更换前检查未通过，尚未修改 2FA。"},
+    "superseded": "该记录之后已有更换任务，已停用旧凭据的复制，请先核查最新任务。",
+    "errors": {"rotation_disable_server_error": "关闭旧 2FA 的接口返回服务器错误（5xx），流程尚未进入新密钥生成步骤。旧密钥是否仍有效需核验，请勿重复提交。", "rotation_disable_rejected": "关闭旧 2FA 的请求被上游拒绝（4xx），流程尚未进入新密钥生成步骤。请先核查账号状态，勿重复提交。", "rotation_unconfirmed": "更换流程中断，尚不能确认账号当前的 2FA 状态。系统已停止自动重试，请先核查，勿重复提交。", "login_access_denied": "OpenAI 登录初始化被拒绝（403）。请检查登录环境；如需额外验证，请在浏览器中完成。", "login_rate_limited": "OpenAI 限制了登录请求（429），请稍后再试。", "login_bootstrap_rejected": "登录会话初始化失败，已停止后续操作。", "login_interaction_required": "登录需要浏览器或邮箱等额外验证，当前自动流程无法完成。", "login_state_invalid": "OpenAI 登录状态无效（409 invalid_state），尚未执行 2FA 更换。", "invalid_credentials": "登录凭据或当前 2FA 验证失败，请核对输入。", "account_die": "OpenAI 返回账号停用状态，未执行更换。", "login_failed": "登录未完成，尚未执行 2FA 更换。", "preflight_failed": "更换前检查未通过，尚未修改 2FA。"},
     "states": {"login_failed": "ChatGPT 登录失败，未更换 2FA", "preflight_failed": "更换前检查失败，未更换 2FA",  "queued": "排队中", "running": "执行中", "success": "更换并验证成功", "error": "未完成", "cancelled": "已取消，需核查", "needs_review": "结果不确定，需人工核查", "pendingVerify": "已更换，等待验证" }
   },
   "twoFA": {

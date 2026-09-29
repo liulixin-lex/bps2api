@@ -153,10 +153,14 @@ func TestTwoFARotationRejectsUnverifiedMismatchedOrOversizedResults(t *testing.T
 }
 
 func TestTwoFARotationSafeFailureCodes(t *testing.T) {
-	for _, code := range []string{"login_access_denied", "login_state_invalid", "sensitive-password-or-token"} {
+	for _, code := range []string{"login_access_denied", "login_state_invalid", "rotation_disable_server_error", "rotation_disable_rejected", "sensitive-password-or-token"} {
+		status := "login_failed"
+		if strings.HasPrefix(code, "rotation_disable_") {
+			status = "needs_review"
+		}
 		svc := rotationTestService(t, func(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"jobs": []map[string]any{{
-				"id": rotationTestID, "email": "test@example.com", "status": "login_failed",
+				"id": rotationTestID, "email": "test@example.com", "status": status,
 				"error_code": code, "error": "sensitive-upstream-body",
 			}}})
 		})
@@ -168,7 +172,7 @@ func TestTwoFARotationSafeFailureCodes(t *testing.T) {
 			if jobs[0].ErrorCode != "" {
 				t.Fatal("unrecognized diagnostic leaked")
 			}
-		} else if jobs[0].ErrorCode != code || jobs[0].Status != "login_failed" {
+		} else if jobs[0].ErrorCode != code || jobs[0].Status != status {
 			t.Fatal("lost safe failure classification")
 		}
 		encoded, _ := json.Marshal(jobs)

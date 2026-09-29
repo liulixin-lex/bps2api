@@ -26,7 +26,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
-from rotation_service import StagedRotationService, pre_rotation_failure
+from rotation_service import StagedRotationService, pre_rotation_failure, rotation_failure_code
 
 
 class RotationInput(BaseModel):
@@ -144,7 +144,7 @@ class Runtime:
             "login_verified": job.login_verified,
             "rotated_pending_verify": job.rotated_pending_verify,
             "retryable": job.status == "error" and job.rotated_pending_verify and job.retryable,
-            "created_at": job.created_at, "error_code": failure or "",
+            "created_at": job.created_at, "error_code": failure or rotation_failure_code(job),
         }
 
     async def submit(self, entry: RotationInput) -> dict:

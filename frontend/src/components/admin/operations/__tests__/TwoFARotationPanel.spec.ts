@@ -91,6 +91,41 @@ describe('explicit 2FA rotation workflow', () => {
     expect(wrapper.text()).not.toContain('private-secret')
   })
 
+  it('explains a disable server error while keeping the uncertain task blocked', async () => {
+    vi.mocked(api.listTwoFARotations).mockResolvedValue([{ ...job, status: 'needs_review', error_code: 'rotation_disable_server_error' }])
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('rotation.states.needs_review')
+    expect(wrapper.text()).toContain('rotation.errors.rotation_disable_server_error')
+    expect(wrapper.text()).not.toContain('rotation.verify')
+    expect(wrapper.text()).not.toContain('rotation.copy')
+    expect(api.startTwoFARotation).not.toHaveBeenCalled()
+  })
+
+  it('uses a generic explanation for unknown rotation errors without exposing text', async () => {
+    vi.mocked(api.listTwoFARotations).mockResolvedValue([{ ...job, status: 'needs_review', error_code: 'private-upstream-token' }])
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('rotation.errors.rotation_unconfirmed')
+    expect(wrapper.text()).not.toContain('private-upstream-token')
+  })
+
+  it('hides superseded credential actions while allowing the latest success for another account', async () => {
+    vi.mocked(api.listTwoFARotations).mockResolvedValue([
+      { ...job, id: 'newer', status: 'needs_review', created_at: 2 },
+      { ...job, id: 'other', email: 'other@example.com', status: 'success', login_verified: true },
+      { ...job, status: 'success', login_verified: true }
+    ])
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await flushPromises()
+    const rows = wrapper.findAll('tbody tr')
+    expect(rows[2].text()).toContain('rotation.superseded')
+    expect(rows[2].findAll('button')).toHaveLength(0)
+    expect(rows[1].text()).toContain('rotation.copy')
+    expect(rows[1].text()).toContain('rotation.apply')
+    expect(api.getTwoFARotationResult).not.toHaveBeenCalled()
+  })
+
 })
 
 

@@ -17,7 +17,7 @@
 
 ## 本地 PR 开发
 
-[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR 保持 open、未合并；当前测试站 app/worker 业务源码均为 1bf2a621，版本 0.0.18-pr12.1bf2a621。用户 16:40 UTC 提交的真实任务已更换并验证成功，3 个旧登录失败任务保留。成功后点击“复制更改后的账号凭据”按 邮箱----密码----新2FA密钥 输出；真实 Chromium 剪贴板及刷新后再次复制验证通过，值与已有加密任务记录一致，未再次更换账号。页面默认“自动更换 2FA”，原巡检/重登/调度/通知保留在“令牌守护（高级）”。49 个 worker、29 个前端用例及后端相关包定向测试通过；源码同输入及测试站实际镜像回滚通过，任务数据、守护配置、原 XY2API 和远端生产保持不变。详见[测试部署及修复记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。
+[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR open、未合并；测试站 app/worker 当前业务源码仍为 1bf2a621。17:42 UTC 第二次真实更换在关闭旧 TOTP 时返回 HTTP 500，未生成新密钥；本轮只读核验旧密钥的密码/TOTP 均 200，MFA 仍启用，任务数据库未变。原因提示和过期结果操作修复候选已完成，59 个 worker、29 个前端定向用例通过；后端/构建/部署待本轮后续确认。原任务保持 needs_review 且禁止重放，未自动更换或写库解锁。详见[测试部署及修复记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。
 
 ## 本次 429 修复进度
 
