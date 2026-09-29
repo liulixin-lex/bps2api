@@ -129,3 +129,64 @@ func TestBPSProviderRecoveryNestedHeaderLongestDelay(t *testing.T) {
 		}
 	}
 }
+
+// RPM headroom is a scheduling preference, not a hard eligibility limit. An
+// otherwise healthy alternative remains selectable below its strict ceiling
+// when no cooler account remains, including after the current account failed.
+func TestBPSProviderRecoveryAlternativeRPMMatchesScheduler(t *testing.T) {
+	for _, mode := range []string{"legacy", "legacy_batch", "advanced"} {
+		t.Run(mode, func(t *testing.T) {
+			resetOpenAIAdvancedSchedulerSettingCacheForTest()
+			defer resetOpenAIAdvancedSchedulerSettingCacheForTest()
+			for _, tc := range []struct {
+				name string
+				rpm  int
+			}{
+				{"below_headroom", 79}, {"at_headroom", 80},
+				{"below_ceiling", 99}, {"at_ceiling", 100},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					first, second := excelAccount(), excelAccount()
+					first.ID, second.ID = 49, 47
+					second.Extra["base_rpm"] = 100
+					repo := schedulerTestOpenAIAccountRepo{accounts: []Account{*first, *second}}
+					cache := &openAISnapshotCacheStub{snapshotAccounts: []*Account{first, second}, accountsByID: map[int64]*Account{49: first, 47: second}}
+					svc := openAIClientToolsTestService(nil)
+					svc.accountRepo = repo
+					svc.schedulerSnapshot = NewSchedulerSnapshotService(cache, nil, repo, nil, nil)
+					svc.rpmCache = &openAIRPMTestCache{counts: map[int64]int{47: tc.rpm}}
+					svc.cache = &schedulerTestGatewayCache{sessionBindings: map[string]int64{}}
+					svc.concurrencyService = NewConcurrencyService(schedulerTestConcurrencyCache{})
+					svc.cfg.Gateway.Scheduling.LoadBatchEnabled = mode == "legacy_batch"
+					if mode == "advanced" {
+						svc.rateLimitService = newOpenAIAdvancedSchedulerRateLimitService("true")
+					}
+					rec := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(rec)
+					c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+					c.Set("api_key", &APIKey{ID: 1})
+					recovery := newExcelBPSRecovery(svc.cfg.Gateway.ExcelBPSTimeouts)
+					recovery.remaining = 1
+					reserved := svc.excelBPSReserveAccountSwitch(context.Background(), c, first, "gpt-6-astra", "gpt-6-astra", recovery)
+					selection, _, err := svc.SelectAccountWithScheduler(context.Background(), nil, "", "", "gpt-6-astra", map[int64]struct{}{first.ID: {}}, OpenAIUpstreamTransportAny, false)
+					if selection != nil && selection.ReleaseFunc != nil {
+						defer selection.ReleaseFunc()
+					}
+					selected := int64(0)
+					if selection != nil && selection.Account != nil {
+						selected = selection.Account.ID
+					}
+					t.Logf("OBSERVED mode=%s rpm=%d reserved=%v selected=%d error=%v", mode, tc.rpm, reserved, selected, err)
+					require.Equal(t, tc.rpm < 100, reserved)
+					if tc.rpm < 100 {
+						require.NoError(t, err)
+						require.Equal(t, second.ID, selected)
+					} else {
+						require.ErrorIs(t, err, ErrOpenAIRPMExhausted)
+						require.Zero(t, selected)
+					}
+				})
+			}
+		})
+	}
+}
