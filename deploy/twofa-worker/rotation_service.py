@@ -1,5 +1,6 @@
 """Explicitly distinguish failures before mutation from uncertain rotations."""
 import asyncio
+import os
 
 from login_guard import LoginBootstrapError
 
@@ -51,6 +52,12 @@ class StagedRotationService:
     def __init__(self, *, login_fn=None, rotate_fn=None, entitlement_fn=None):
         from service import TwoFAService
         default_login, default_rotate = TwoFAService._resolve_dependencies()
+        engine = os.environ.get('TWOFA_LOGIN_ENGINE', 'http')
+        if engine not in {'http', 'camoufox'}:
+            raise ValueError('Unsupported TWOFA_LOGIN_ENGINE')
+        if engine == 'camoufox' and login_fn is None:
+            from browser_login import get_browser_session
+            default_login = get_browser_session
         self.login_fn = login_fn or default_login
         self.rotate_fn = rotate_fn or default_rotate
         self.entitlement_fn = entitlement_fn

@@ -34,4 +34,4 @@ jobs:
       - name: Exercise persistence and orchestration without real accounts
         env:
           CHANGE2FA_SOURCE_DIR: /tmp/change2fa-engine
-        run: python -m pytest -q deploy/twofa-worker/test_worker.py deploy/twofa-worker/test_login_guard.py
+        run: python -m pytest -q deploy/twofa-worker/test_worker.py deploy/twofa-worker/test_login_guard.py deploy/twofa-worker/test_browser_login.py

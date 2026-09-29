@@ -6,3 +6,5 @@
 !login_guard.py
 !rotation_service.py
 !patch_upstream.py
+!browser_login.py
+!requirements-browser.txt

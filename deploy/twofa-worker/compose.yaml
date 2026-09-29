@@ -6,18 +6,21 @@ services:
     environment:
       TWOFA_WORKER_TOKEN: ${TWOFA_WORKER_TOKEN:?set a random worker access token}
       TWOFA_DATA_KEY: ${TWOFA_DATA_KEY:?set a persistent Fernet encryption key}
+      TWOFA_LOGIN_ENGINE: ${TWOFA_LOGIN_ENGINE:-camoufox}
     ports:
       - "127.0.0.1:18080:8080"
     volumes:
       - twofa-data:/data
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=128m,mode=1777
+      - /tmp:rw,noexec,nosuid,size=256m,mode=1777
+      - /home/worker:rw,noexec,nosuid,size=64m,mode=700,uid=10001,gid=10001
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     cpus: 1.0
-    mem_limit: 512m
-    pids_limit: 128
+    mem_limit: 1g
+    shm_size: 256m
+    pids_limit: 192
     stop_grace_period: 30s
 volumes:
   twofa-data:

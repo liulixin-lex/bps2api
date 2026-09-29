@@ -124,3 +124,13 @@ worker 已部署 c09a6233，应用仍为 0.0.18-pr12.f273b2a7。独立 BASELINE�
 一次真实账号浏览器登录诊断已得到 password/verify 200、mfa/issue_challenge 200、mfa/verify 200，各提交一次；没有更换请求，jobs 表哈希不变。但上游等待 ChatGPT session-token Cookie 超时，所以尚未取得可用会话或验证 MFA 设置读取。正在检查登录后的回调/workspace/会话识别，不能把密码和 TOTP 校验成功写成整条登录与更换成功。证据保存在 docs-local/twofa-access-diagnosis/。
 
 随后一次保留浏览器上下文的诊断成功取得分片 NextAuth Cookie 和正确账号的 /api/auth/session，密码/TOTP 各验证一次均 200；用会话令牌与导出的 Cookie 只读 GET mfa_info 同样 200，显示 MFA 已启用，数据库不变，轮换数仍为零。第一轮 Cookie 超时记录保留，尚不能断言该超时的唯一原因。已确认配套 Camoufox 可以在当前网络无人操作地完成登录，下一步是在桥接层补足缺失导航模块、隔离浏览器配置并接入该引擎，而非要求用户手工授权。
+
+## 2026-09-29：无人值守浏览器登录接入候选
+
+新增 browser_login.py；固定上游文件经哈希校验后补足导航依赖与临时配置入口，选择 Camoufox 引擎。每次登录（包含更换后验证）使用独立临时 profile，验证会话邮箱/token/Cookie，异常或取消后清理，不开放控制端口；登录阶段阻止 MFA 设置写入并限制密码/TOTP 重复提交。原 HTTP 模式可显式配置，默认镜像改为 Camoufox。
+
+49 个离线用例通过，覆盖引擎选择、独立 profile、身份匹配、异常/取消清理、挑战停止、登录网络边界、原持久化与阶段限制。相同模拟输入下，旧版本仍走被拒绝的 HTTP 登录，新版自动浏览器登录后模拟轮换并以新密钥重新验证；副本回滚恢复旧行为，重施补丁恢复新行为。模拟轮换不等于真实账号更换。
+
+第一次正式镜像的真实登录探测未成功，离线启动复现缺少 libX11-xcb.so.1；与此前含 Chromium 依赖的诊断镜像环境不同。已增加系统库，并在构建时按浏览器自身库目录检查动态链接依赖。首次 ldd 检查未设置浏览器库路径造成的构建失败保留；修正检查路径后镜像完成。尚未将该浏览器候选部署到测试站，正在复验。源码四角色位于 docs-local/twofa-browser-login/，与前一挑战分类事务分开。
+
+补齐依赖后的正式候选镜像复验通过：相同非 root/只读/noexec tmpfs 限制下离线浏览器启动成功；调用实际 StagedRotationService 所选 get_browser_session 无人工登录成功，身份匹配、MFA 查询 200、原 TOTP 因子解析成功，临时 profile 已清理，数据库哈希不变，更换数零。

@@ -1,4 +1,4 @@
-"""Apply two checked bootstrap guards to the fixed upstream login implementation."""
+"""Apply checked bootstrap guards and an isolated browser bridge."""
 import hashlib
 import sys
 from pathlib import Path
@@ -19,6 +19,19 @@ def patch(source: Path):
         if text.count(old) != 1:
             raise RuntimeError("Upstream bootstrap anchor mismatch")
         text = text.replace(old, new, 1)
+    start = text.index('async def _get_session_browser(')
+    end = text.index('\nasync def get_session(', start)
+    browser = text[start:end]
+    browser_anchors = [
+        ('    settings = load_settings()', '    from browser_login import load_browser_settings\n    settings = load_browser_settings()'),
+        ('    engine_order = _browser_launch_order(settings.browser_engine)', '    engine_order = ("camoufox",)'),
+        ('        from browser_phase import _navigate_to_authorize', '        from browser_login import navigate_to_authorize as _navigate_to_authorize'),
+    ]
+    for old, new in browser_anchors:
+        if browser.count(old) != 1:
+            raise RuntimeError('Upstream browser anchor mismatch')
+        browser = browser.replace(old, new, 1)
+    text = text[:start] + browser + text[end:]
     compile(text, str(path), "exec")
     path.write_text(text)
 

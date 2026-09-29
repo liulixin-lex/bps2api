@@ -2,7 +2,7 @@
 
 为 BPS2API「凭证守护 → 更换账号 2FA」提供可选服务，使用账号邮箱、密码、当前 TOTP 密钥，显式更换密钥后重新登录验证。仅管理自己拥有或获授权的账号。
 
-固定引擎：`zixfelw/Change-2fa-Password-GPT-Auto`，提交 `9fa8b481a2e5252ce2782833f6d1e0623c68fdce`，MIT / Copyright (c) 2024–2026 Infinity AI Store。镜像保留上游 `/opt/change2fa/LICENSE`。桥接层仅调用 `jobs.py` / `service.py` 的 HTTP 登录与轮换功能；不启动上游桌面服务或 `/api/bootstrap`，不引入浏览器登录、注册或改密码功能。
+固定引擎：`zixfelw/Change-2fa-Password-GPT-Auto`，提交 `9fa8b481a2e5252ce2782833f6d1e0623c68fdce`，MIT / Copyright (c) 2024–2026 Infinity AI Store。镜像保留上游 `/opt/change2fa/LICENSE`。桥接层调用 jobs.py / service.py 编排，并提供 Camoufox 无人值守登录与原 HTTP 轮换功能；不启动上游桌面服务或 /api/bootstrap，不引入注册或改密码功能。
 
 这不是 OAuth token 导入器。BPS2API 原有「2FA 登录导入」与自动重登继续使用各自配置的重登服务；本 worker 不冒充重登接口，也不会改已有账号的 OAuth token。更换成功后可复制新密钥，或单独点击回写已有的、邮箱唯一匹配的重登配置项。
 
@@ -45,7 +45,7 @@ curl -fsS http://127.0.0.1:18080/health
 
 **上游不可原子化的窗口：**固定版本先关闭旧 TOTP，再开新 TOTP，且仅在激活返回后持久化新密钥。在关闭/激活/保存之间发生超时或进程中断，可能留下 2FA 关闭或新密钥未保存的状态。桥接层会阻止同账号再次提交并标记人工检查，不声称能够自动恢复此窗口。应保留账号恢复方式，通过官方账号安全设置人工核对；不要为了重试而删库。源码回滚也无法撤销已发生的账号安全设置变更。
 
-上游要求邮箱验证码、验证码挑战、风控检查或 SSO 时，可能不能只用密码和 TOTP 完成登录。本轮未使用真实账号做端到端验证；离线测试通过不代表所有账号都适用。
+上游要求邮箱验证码、交互式挑战或 SSO 时，仍可能不能只用密码和 TOTP 完成登录。本轮已实测 Camoufox 无人工登录并只读查询 MFA 状态；未实测真实账号密钥更换，不能据此宣称所有账号均适用。
 
 ## 离线测试
 
@@ -67,3 +67,13 @@ CHANGE2FA_SOURCE_DIR=/path/to/pinned/upstream python -m pytest -q test_worker.py
 HTTP 403 表示当前登录初始化被拒绝；本修复不会使被上游拒绝的网络环境自动获得访问权限。需要浏览器/邮箱额外验证的账号会明确提示，不能声称所有真实账号自动登录均已通过。
 
 Cloudflare 明确返回 cf-mitigated: challenge 时，优先于通用 HTTP 403 分类为 login_interaction_required；仍立即停止，不自动推进账号登录或更换。普通 403 继续保留 login_access_denied。用户在其他浏览器的登录状态不会由本桥接层自动共享。
+
+## 无人值守浏览器登录
+
+默认镜像使用 TWOFA_LOGIN_ENGINE=camoufox。浏览器由服务端代码启动，自动填写邮箱、密码和当前 TOTP，并取得同一账号的 ChatGPT 会话及 Cookie；没有人工网页登录步骤、远程桌面、浏览器控制端口或第三方验证码服务。也可显式设置 TWOFA_LOGIN_ENGINE=http 回到原请求登录，但本次环境的 HTTP authorize 会遇到浏览器验证页。
+
+依赖固定为 camoufox 0.5.4、playwright 1.60.0，浏览器固定 official/stable/152.0.4-beta.28，与上游配套版本一致。构建先核对原 session_phase.py 哈希，再将浏览器导航和配置接到本桥接层，补足发布仓库缺失的 browser_phase 导航依赖；仅选择 Camoufox，不自动切换引擎或代理。
+
+每次初始登录和更换后验证都创建独立临时 profile，不复用其他账号的 Cookie，结束/取消时清理。返回会话必须具有非空 token、Cookie 和匹配的账号邮箱。浏览器登录期间禁止调用 MFA 设置写入接口；真正轮换仍由原阶段保护控制。密码与 TOTP 的每个验证接口最多提交一次。仍需人工交互时明确失败，不自动执行验证码题目。
+
+浏览器 worker 建议至少 1 GiB 内存、256 MiB /dev/shm、192 PID，compose 已配置 /tmp 和非持久化 home tmpfs。真实任务数据库和加密密钥继续保留；浏览器缓存预装在只读镜像内。不要在已有 queued/running 任务时升级。
