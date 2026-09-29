@@ -17,7 +17,7 @@
 
 ## 本地 PR 开发
 
-[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR 已推送至 4921adc1，保持 open、未合并；测试站应用/前端为 0.0.18-pr12.f273b2a7，独立 worker 为 fe4267f3。初始化 403 后错误推进登录、前置失败误报“结果不确定”的问题已修复；正式 worker 镜像已通过无人值守 Camoufox 真实登录、身份校验及 MFA 只读查询（200），已部署并完成实际镜像回滚验证。49 个 worker 离线用例通过；用户已于 16:40 UTC 提交真实任务并反馈成功；只读复核确认 success/login_verified=true，3 个旧失败任务未自动重试。当前正在实现完整凭据复制和默认页面精简，尚未部署此增量。用户已确认同一账号在常用浏览器可正常登录，不再以人工设备授权作为方案。GitHub 合并状态仍报告 dirty，与本地 merge-tree 无冲突结果不一致，尚未处理合并。详见[测试部署及修复记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。原 XY2API 及数据保留，远端生产未改。
+[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR 保持 open、未合并；当前测试站 app/worker 业务源码均为 1bf2a621，版本 0.0.18-pr12.1bf2a621。用户 16:40 UTC 提交的真实任务已更换并验证成功，3 个旧登录失败任务保留。成功后点击“复制更改后的账号凭据”按 邮箱----密码----新2FA密钥 输出；真实 Chromium 剪贴板及刷新后再次复制验证通过，值与已有加密任务记录一致，未再次更换账号。页面默认“自动更换 2FA”，原巡检/重登/调度/通知保留在“令牌守护（高级）”。49 个 worker、29 个前端用例及后端相关包定向测试通过；源码同输入及测试站实际镜像回滚通过，任务数据、守护配置、原 XY2API 和远端生产保持不变。详见[测试部署及修复记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。
 
 ## 本次 429 修复进度
 
@@ -64,7 +64,7 @@
 
 | 日期（UTC） | 背景与目标 | 实际进展 |
 | --- | --- | --- |
-| 2026-09-29 | [PR #12 测试部署](docs/development/entries/2026-09-29-twofa-pr12-preview.md) | 最新 main + PR 已部署独立测试实例；域名回切、容器健康、精确前端与管理员登录通过；403→409 控制流和前置失败提示已修复上线，回切/数据不变验证通过；challenge 分类增量 worker c09a6233 已上线；无人值守浏览器 worker fe4267f3 已上线并通过回滚；正式镜像真实登录/MFA 只读查询通过，真实更换尚未执行 |
+| 2026-09-29 | [PR #12 测试部署](docs/development/entries/2026-09-29-twofa-pr12-preview.md) | app/worker 1bf2a621 已部署并完成回滚；真实用户任务更换成功；完整三段凭据复制与刷新后原生剪贴板验证通过，默认简洁 2FA 页面，高级守护独立；数据不变，无新增轮换 |
 | 2026-09-29 | [账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md) | PR #12；管理员界面/接口、私有加密 worker、定向回归和源码回滚验证完成；后续测试部署另记 |
 | 2026-09-29 | [0.0.18 429 候选缓存修复与发布](docs/development/entries/2026-09-29-bps-429-stale-candidate.md) | 10:34 UTC 无感切换、10:53:43 UTC 正式发布；39 节点同输入通过且回滚重现原缺陷，4 次实际 429 恢复 200，18 项产物验收通过；独立 CI 仅剩已核对的原有 5 条 lint 与 1 条集成断言 |
 | 2026-09-29 | [0.0.17 无感上线与远端发布](docs/development/entries/2026-09-29-release-0.0.17.md) | 先上线验收，再原子推送 main/tag，08:28:23 UTC 正式发布，18 项产物验收通过；应用标签固定 041947a69；独立 CI 与静态清理另记 |
