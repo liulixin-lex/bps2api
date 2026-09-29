@@ -100,12 +100,14 @@ async function selectButtonByText(wrapper: Wrapper, text: string) {
 const toggleSelector = '[data-testid="account-auto-bps-toggle"]'
 
 // 选 OpenAI OAuth，按需打开「降智后自动开启 BPS」，进入第 2 步。
-async function openOAuthStep({ autoBPS = true, twoFA = false } = {}) {
+async function openOAuthStep({ autoBPS = true, twoFA = false, interval = '', cacheCreationAsInput = false } = {}) {
   const wrapper = mountModal()
   await selectButtonByText(wrapper, 'OpenAI')
   if (twoFA) await wrapper.get('[data-testid="openai-two-fa"]').trigger('click')
   else await wrapper.get('form#create-account-form input[type="text"]').setValue('Codex')
   if (autoBPS) await wrapper.get(toggleSelector).trigger('click')
+  if (interval) await wrapper.get('[data-testid="quality-probe-interval"]').setValue(interval)
+  if (autoBPS) await wrapper.get('[data-testid="quality-bps-cache_creation_as_input"]').setValue(cacheCreationAsInput)
   await wrapper.get('form#create-account-form').trigger('submit.prevent')
   await flushPromises()
   return wrapper
@@ -145,9 +147,22 @@ describe('CreateAccountModal auto BPS switch', () => {
     await flushPromises()
     expect(mocks.createAccount).toHaveBeenCalledTimes(2)
     expect(mocks.createPlan.mock.calls.map(call => call[0].account_id)).toEqual([81, 82])
-    expect(mocks.createPlan.mock.calls[0][0]).toMatchObject({ model_id: 'gpt-6-astra', enabled: true,
-      pelican_config: { question_kind: 'state_probe', quality: { action: 'enable_bps', auto_restore: true } } })
+    expect(mocks.createPlan.mock.calls[0][0]).toMatchObject({ model_id: 'gpt-6-astra', enabled: true, cron_expression: '*/30 * * * *',
+      pelican_config: { question_kind: 'state_probe', quality: { action: 'enable_bps', auto_restore: true, bps: {
+        ignore_images: false, ignore_encrypted_content: true, auto_disable_on_403: false,
+        auto_move_on_403: false, session_proxy: false, cache_creation_as_input: false,
+      } } } })
     expect(wrapper.emitted('created')).toHaveLength(1)
+  })
+
+  it('applies the configured interval and BPS options to each newly created account', async () => {
+    const wrapper = await openOAuthStep({ interval: '*/10 * * * *', cacheCreationAsInput: false })
+    wrapper.getComponent(OAuthAuthorizationFlowStub).vm.$emit('validate-refresh-token', ['rt-1', 'rt-2'].join('\n'))
+    await flushPromises()
+    expect(mocks.createPlan).toHaveBeenCalledTimes(2)
+    for (const [request] of mocks.createPlan.mock.calls) expect(request).toMatchObject({
+      cron_expression: '*/10 * * * *', pelican_config: { quality: { bps: { cache_creation_as_input: false, auto_disable_on_403: false } } },
+    })
   })
 
   it('does not create rules while the switch is off', async () => {

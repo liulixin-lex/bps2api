@@ -370,6 +370,17 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	if err != nil {
 		return s.sendErrorAndEnd(c, "Account not found")
 	}
+	if options, ok := pelicanTestOptionsFromContext(ctx); ok {
+		if options.testChannel == "bps" {
+			model := strings.TrimSpace(modelID)
+			if model == "" {
+				model = openai.DefaultTestModel
+			}
+			if !account.IsExcelBPSEnabledForModel(model) || s.openaiGatewayService == nil {
+				return s.sendErrorAndEnd(c, "BPS observation unavailable: BPS must be enabled for this model; native fallback is disabled")
+			}
+		}
+	}
 
 	// Synthetic UI load-test accounts exercise the real SSE parsing and modal
 	// interactions, but intentionally do not send their placeholder credentials
@@ -963,7 +974,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if isOAuth && s.accountRepo != nil {
+	if isOAuth && s.accountRepo != nil && !isQualityObservation(ctx) {
 		if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 			mergeAccountExtra(account, updates)
@@ -973,7 +984,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
-		if !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
+		if !isQualityObservation(ctx) && !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
 			expectedTaskID := credentialAccount.GetCredential("task_id")
 			if err := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount, expectedTaskID); err != nil {
 				return s.sendErrorAndEnd(c, fmt.Sprintf("Agent Identity task recovery failed: %s", err.Error()))
@@ -985,7 +996,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
 		// 401 Unauthorized: 标记账号为永久错误
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil && !isQualityObservation(ctx) {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
@@ -1010,9 +1021,22 @@ func (s *AccountTestService) testExcelBPSAccountConnection(c *gin.Context, accou
 		return s.sendErrorAndEnd(c, "Failed to create Excel BPS test payload")
 	}
 
-	probe := httptest.NewRecorder()
+	// Scheduled observation uses the same bounded capture/admission as the
+	// strong tool probe; neither path can bypass a runtime BPS pause.
+	ctx, cancel := context.WithTimeout(c.Request.Context(), bpsAccountProbeTimeout)
+	defer cancel()
+	release, ok := s.beginExcelBPSProbe(account.ID)
+	if !ok {
+		return s.sendErrorAndEnd(c, "BPS probe is already running for this account or at capacity")
+	}
+	defer release()
+	probe := &bpsProbeRecorder{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
 	probeCtx, _ := gin.CreateTestContext(probe)
-	probeCtx.Request = c.Request.Clone(c.Request.Context())
+	probeCtx.Request = c.Request.Clone(ctx)
+	options, _ := pelicanTestOptionsFromContext(ctx)
+	if options.testChannel == "bps" {
+		probeCtx.Set(bpsAccountProbeRequiredContextKey, true)
+	}
 	if probeCtx.Request.Header == nil {
 		probeCtx.Request.Header = make(http.Header)
 	}
@@ -1022,7 +1046,10 @@ func (s *AccountTestService) testExcelBPSAccountConnection(c *gin.Context, accou
 	if scope, _ := resolveOpenAIWSExecutionScope(probeCtx, body, 0); scope == "" {
 		probeCtx.Request.Header.Set("Session-Id", "account-test-"+uuid.NewString())
 	}
-	result, err := s.openaiGatewayService.Forward(probeCtx, probeCtx, account, body)
+	result, err := s.openaiGatewayService.Forward(probeCtx.Request.Context(), probeCtx, account, body)
+	if probe.overflow {
+		return s.sendErrorAndEnd(c, errBPSProbeResponseTooLarge.Error())
+	}
 	if err != nil {
 		// A single-account test has no other account to fail over to.
 		var failover *UpstreamFailoverError
@@ -1060,6 +1087,19 @@ func (s *AccountTestService) testExcelBPSAccountConnection(c *gin.Context, accou
 	}
 	if strings.TrimSpace(answer.String()) == "" {
 		return s.sendErrorAndEnd(c, "Excel BPS returned empty output")
+	}
+	if options.testChannel == "bps" {
+		endpoint := GetActualOpenAIUpstreamEndpoint(probeCtx)
+		if endpoint != "/basispoints/api/responses" || result.UpstreamEndpoint != endpoint || result.UpstreamModel == "" {
+			return s.sendErrorAndEnd(c, "BPS observation could not verify the upstream route and model")
+		}
+		if options.observeOnly && options.provenance != nil {
+			requestedModel := strings.TrimSpace(modelID)
+			if requestedModel == "" {
+				requestedModel = openai.DefaultTestModel
+			}
+			*options.provenance = QualityTestProvenance{AccountID: account.ID, RequestedModel: requestedModel, UpstreamModel: result.UpstreamModel, UpstreamEndpoint: endpoint}
+		}
 	}
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 	return nil
@@ -1239,7 +1279,7 @@ func (s *AccountTestService) applyGrokTestRequestHeaders(req *http.Request, acco
 }
 
 func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, account *Account, resp *http.Response) {
-	if resp == nil {
+	if resp == nil || isQualityObservation(ctx) {
 		return
 	}
 	now := time.Now()
@@ -2258,7 +2298,7 @@ func (s *AccountTestService) testOpenAIChatCompletionsConnection(
 		if resp.StatusCode == http.StatusTooManyRequests {
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil && !isQualityObservation(ctx) {
 			errMsg := fmt.Sprintf("Chat Completions authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
@@ -2393,7 +2433,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	body = redactAgentIdentitySensitiveBodyForAccount(ctx, s.accountRepo, credentialAccount, body)
-	if !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
+	if !isQualityObservation(ctx) && !agentIdentityTaskRecoveryWasTried(ctx) && credentialAccount.IsOpenAIAgentIdentity() && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, body) {
 		expectedTaskID := credentialAccount.GetCredential("task_id")
 		if err := ensureAgentIdentityTaskForAccount(ctx, s.accountRepo, s.agentIdentityWS, &s.agentIdentityTaskMu, credentialAccount, expectedTaskID); err != nil {
 			return s.sendErrorAndEnd(c, fmt.Sprintf("Agent Identity task recovery failed: %s", err.Error()))
@@ -2419,7 +2459,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil && !isQualityObservation(ctx) {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
@@ -2436,7 +2476,7 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 }
 
 func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, account *Account, headers http.Header, body []byte) {
-	if s == nil || s.accountRepo == nil || account == nil {
+	if s == nil || s.accountRepo == nil || account == nil || isQualityObservation(ctx) {
 		return
 	}
 

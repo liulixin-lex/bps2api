@@ -26,6 +26,16 @@ const PelicanDeliveryContract = "所有账号使用相同交付约定：直接�
 var pelicanHTMLPattern = regexp.MustCompile(`(?i)<(?:!doctype\s+html|html|svg)[\s>]`)
 
 func (s *AccountTestService) RunPelicanBackground(ctx context.Context, accountID int64, model string, cfg *PelicanTestConfig) (*ScheduledTestResult, error) {
+	// Never trust proof submitted in a plan or inherited from another run.
+	clean := *cfg
+	clean.TestProvenance = nil
+	cfg = &clean
+	proof := &QualityTestProvenance{}
+	ctx = withPelicanTestOptions(ctx, pelicanTestOptions{
+		testChannel: cfg.TestChannel,
+		observeOnly: cfg.Quality != nil && cfg.Quality.Action == QualityActionObserveOnly,
+		provenance:  proof,
+	})
 	// 探针题型不下发题目，直接走门票探针。
 	if isOpenAICodexStateProbePlan(cfg) {
 		return s.runOpenAICodexStateProbeScheduled(ctx, accountID, model, cfg)
@@ -67,6 +77,9 @@ func (s *AccountTestService) RunPelicanBackground(ctx context.Context, accountID
 	finished := time.Now()
 	snapshot := *cfg
 	snapshot.ModelID = model
+	if message == "" && proof.AccountID != 0 {
+		snapshot.TestProvenance = proof
+	}
 	return &ScheduledTestResult{Status: status, ResponseText: output, ErrorMessage: message, LatencyMs: finished.Sub(started).Milliseconds(), StartedAt: started, FinishedAt: finished, PelicanConfig: &snapshot}, nil
 }
 

@@ -64,13 +64,46 @@ func (r *scheduledTestPlanRepository) ListDue(ctx context.Context, now time.Time
 }
 
 func (r *scheduledTestPlanRepository) Update(ctx context.Context, plan *service.ScheduledTestPlan) (*service.ScheduledTestPlan, error) {
-	row := r.db.QueryRowContext(ctx, `
+	const query = `
 		UPDATE scheduled_test_plans
 		SET model_id = $2, cron_expression = $3, enabled = $4, max_results = $5, auto_recover = $6, next_run_at = $7, updated_at = NOW(), pelican_config = $8
 		WHERE id = $1
 		RETURNING id, account_id, model_id, cron_expression, enabled, max_results, auto_recover, last_run_at, next_run_at, created_at, updated_at, pelican_config, running_until
-	`, plan.ID, plan.ModelID, plan.CronExpression, plan.Enabled, plan.MaxResults, plan.AutoRecover, plan.NextRunAt, marshalPelicanConfig(plan.PelicanConfig))
-	return scanPlan(row)
+	`
+	args := []any{plan.ID, plan.ModelID, plan.CronExpression, plan.Enabled, plan.MaxResults, plan.AutoRecover, plan.NextRunAt, marshalPelicanConfig(plan.PelicanConfig)}
+	if plan.PelicanConfig == nil || plan.PelicanConfig.Quality == nil || plan.PelicanConfig.Quality.Action != service.QualityActionObserveOnly {
+		return scanPlan(r.db.QueryRowContext(ctx, query, args...))
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Serialize with ApplyQualityOutcome's plan lock. A completed action keeps
+	// its restoration snapshot until it has been explicitly restored.
+	var id int64
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM scheduled_test_plans WHERE id=$1 FOR UPDATE`, plan.ID).Scan(&id); err != nil {
+		return nil, err
+	}
+	var ownsAction bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM account_quality_states WHERE plan_id=$1 AND COALESCE(state->>'action','')<>'')`, plan.ID).Scan(&ownsAction); err != nil {
+		return nil, err
+	}
+	if ownsAction {
+		return nil, service.ErrQualityObservationOwnsAction
+	}
+	updated, err := scanPlan(tx.QueryRowContext(ctx, query, args...))
+	if err != nil {
+		return nil, err
+	}
+	// Only unowned probe counters may be reset on conversion.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM account_quality_states WHERE plan_id=$1`, plan.ID); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return updated, nil
 }
 
 func (r *scheduledTestPlanRepository) Delete(ctx context.Context, id int64) error {

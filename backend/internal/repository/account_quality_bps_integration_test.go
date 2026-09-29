@@ -176,6 +176,53 @@ func TestQualityEnableBPSLifecycle(t *testing.T) {
 	require.Zero(t, f.events(), "conflicts and blocked rounds leave the account untouched")
 }
 
+func TestQualityBPSObservationRequiresRestoreBeforeConversion(t *testing.T) {
+	f := newQualityBPSFixture(t, `{"unrelated":"kept"}`, &service.QualityPolicy{
+		Action: service.QualityActionEnableBPS, AutoRestore: true,
+		BPS: &service.QualityBPSPolicy{FailureThreshold: 1, PassThreshold: 1, AllModels: true},
+	})
+	require.Equal(t, "bps_enabled", f.apply("failed"))
+	before := f.extra()
+	original := *f.plan
+	observation := *f.plan
+	observation.PelicanConfig = &service.PelicanTestConfig{QuestionKind: "candy", TestChannel: "bps", Prompt: "Return 21", ReasoningEffort: "high", ParallelCount: 1,
+		Quality: &service.QualityPolicy{Action: service.QualityActionObserveOnly, ExpectedAnswer: "21", AutoRestore: true}}
+	svc := service.NewScheduledTestService(f.plans, NewScheduledTestResultRepository(integrationDB))
+	_, err := svc.UpdatePlan(context.Background(), &observation)
+	require.ErrorIs(t, err, service.ErrQualityObservationOwnsAction)
+	require.Equal(t, before, f.extra())
+	require.Equal(t, 1, f.count(`SELECT count(*) FROM account_quality_states s JOIN scheduled_test_plans p ON p.id=s.plan_id WHERE p.account_id=$1`))
+	f.plan = &original
+	require.Equal(t, "restored", f.apply("passed"), "the original restoration audit remains usable")
+	restored := f.extra()
+	updated, err := svc.UpdatePlan(context.Background(), &observation)
+	require.NoError(t, err)
+	require.False(t, updated.PelicanConfig.Quality.AutoRestore)
+	stale, err := f.plans.ApplyQualityOutcome(context.Background(), &original, f.until, "failed")
+	require.NoError(t, err)
+	require.Equal(t, "stale_run", stale)
+	require.NoError(t, f.plans.FinishPelican(context.Background(), f.plan.ID, f.until, time.Now()))
+	f.plan = updated
+	f.claim()
+	for _, outcome := range []string{"passed", "failed", "inconclusive"} {
+		require.Equal(t, "observed", f.apply(outcome))
+		require.Equal(t, restored, f.extra())
+	}
+	// All three independent scopes coexist, including when the policies are paused.
+	for _, action := range []string{service.QualityActionEnableBPS, "disable_scheduling"} {
+		replacement := original
+		replacement.ID, replacement.Enabled = 0, false
+		cfg := *original.PelicanConfig
+		quality := *cfg.Quality
+		quality.Action = action
+		cfg.Quality = &quality
+		replacement.PelicanConfig = &cfg
+		_, err = svc.CreatePlan(context.Background(), &replacement)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 3, f.count("SELECT count(*) FROM scheduled_test_plans WHERE account_id=$1"))
+}
+
 func TestQualityEnableBPSStateSurvivesActionChange(t *testing.T) {
 	f := newQualityBPSFixture(t, `{}`, &service.QualityPolicy{
 		Action: service.QualityActionEnableBPS, AutoRestore: true,

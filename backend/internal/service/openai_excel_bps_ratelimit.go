@@ -48,7 +48,7 @@ func newExcelBPSRateLimitedFailoverError(retryAfter string) *UpstreamFailoverErr
 // Retry-After, or the configured 429 fallback when none is given. A shorter
 // cooldown never replaces a longer one.
 func (s *OpenAIGatewayService) coolDownExcelBPS(ctx context.Context, account *Account, retryAfter string) {
-	if s == nil || account == nil {
+	if s == nil || account == nil || isQualityObservation(ctx) {
 		return
 	}
 	cooldown, ok := excelBPSRetryAfter(retryAfter, time.Now())

@@ -6,12 +6,24 @@ import (
 )
 
 // PelicanTestConfig stores intelligence test inputs; a missing kind preserves legacy HTML plans.
+// QualityTestProvenance is server-generated, immutable per-result evidence.
+// Legacy results with no evidence cannot be assigned to a scheduling channel.
+type QualityTestProvenance struct {
+	AccountID        int64  `json:"account_id"`
+	RequestedModel   string `json:"requested_model"`
+	UpstreamModel    string `json:"upstream_model"`
+	UpstreamEndpoint string `json:"upstream_endpoint"`
+}
+
 type PelicanTestConfig struct {
+	// TestProvenance is output-only: validation strips it from saved plans.
+	TestProvenance *QualityTestProvenance `json:"test_provenance,omitempty"`
 	// BPSRecoveryPending is filled from persisted ownership when the runner
 	// claims a plan. It is never accepted from or written to configuration JSON.
 	BPSRecoveryPending bool           `json:"-"`
 	Quality            *QualityPolicy `json:"quality,omitempty"`
 	QuestionKind       string         `json:"question_kind,omitempty"`
+	TestChannel        string         `json:"test_channel,omitempty"`
 	Prompt             string         `json:"prompt"`
 	ReasoningEffort    string         `json:"reasoning_effort"`
 	ParallelCount      int            `json:"parallel_count"`

@@ -78,6 +78,8 @@ export function buildQualityRulePatch(
   const source = draft.pelican_config
   if (fields.includes('test')) {
     config.question_kind = source.question_kind
+    if (source.test_channel) config.test_channel = source.test_channel
+    else delete config.test_channel
     config.reasoning_effort = source.reasoning_effort
     const probe = source.question_kind === STATE_PROBE_QUESTION
     config.prompt = probe ? '' : source.prompt
@@ -102,9 +104,16 @@ export function buildQualityRulePatch(
       config.quality.bps = qualityBPSPayload(source.quality.bps)
     } else delete config.quality.bps
   }
-  // 开 BPS 只认探针结论：批量只改检测方式或只改动作时，也不能留下糖果题 + 开 BPS 的组合。
+  // Explicit BPS observation includes giving up this rule's account actions.
+  if (config.test_channel === 'bps') config.quality.action = 'observe_only'
+  if (config.quality.action === 'observe_only') {
+    config.quality.remove_group_ids = []
+    config.quality.auto_restore = false
+    delete config.quality.bps
+  }
+  // Automatic BPS switching remains a separate native-probe policy.
   if (config.quality.action === 'enable_bps' && config.question_kind !== STATE_PROBE_QUESTION) throw new Error('qualityOps.bpsRequiresProbe')
-  if (fields.includes('restore')) config.quality.auto_restore = source.quality.auto_restore
+  if (fields.includes('restore') && config.quality.action !== 'observe_only') config.quality.auto_restore = source.quality.auto_restore
   // 满血关闭次数和「用量仍高时先不关」跟着「自动恢复」走：勾选修改自动恢复且开着时才用表单里的值，
   // 否则各规则保留自己的；原本不是开 BPS 的规则用默认值。
   if (config.quality.action === 'enable_bps' && config.quality.bps) {

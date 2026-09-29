@@ -35,7 +35,7 @@ var excelBPSCatalog basispoints.CatalogCache
 // update the same scheduling state as ordinary OpenAI requests. Keep arbitrary
 // BPS error text (which may echo request data) out of persisted account reasons.
 func (s *OpenAIGatewayService) handleExcelBPSUnauthorized(ctx context.Context, account *Account, status int, headers http.Header, raw []byte) {
-	if status != http.StatusUnauthorized || s.rateLimitService == nil {
+	if status != http.StatusUnauthorized || s.rateLimitService == nil || isQualityObservation(ctx) {
 		return
 	}
 	fields := map[string]string{"message": "Excel BPS authentication failed"}
@@ -55,7 +55,7 @@ func (s *OpenAIGatewayService) handleExcelBPSUnauthorized(ctx context.Context, a
 
 func (s *OpenAIGatewayService) moveExcelBPSOn403(ctx context.Context, account *Account) bool {
 	target, enabled := account.ExcelBPS403GroupTarget()
-	if !enabled {
+	if !enabled || isQualityObservation(ctx) {
 		return false
 	}
 	repo, ok := s.accountRepo.(AccountExcelBPSGroupRepository)
@@ -76,7 +76,7 @@ func (s *OpenAIGatewayService) moveExcelBPSOn403(ctx context.Context, account *A
 }
 
 func (s *OpenAIGatewayService) disableExcelBPSOn403(ctx context.Context, account *Account) bool {
-	if !account.IsExcelBPSAutoDisableOn403Enabled() {
+	if !account.IsExcelBPSAutoDisableOn403Enabled() || isQualityObservation(ctx) {
 		return false
 	}
 	repo, ok := s.accountRepo.(AccountExcelBPSRepository)
@@ -289,7 +289,9 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 	// No output exists yet, so the handler may replay the request on another
 	// account within its switch budget unless the client is already gone.
 	failoverRateLimited := func(retryAfter string) (*OpenAIForwardResult, error) {
-		s.coolDownExcelBPS(ctx, account, retryAfter)
+		if !isQualityObservation(ctx) {
+			s.coolDownExcelBPS(ctx, account, retryAfter)
+		}
 		if isExcelBPSClientCancellation(c, ctx.Err()) {
 			return clientCanceled()
 		}

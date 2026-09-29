@@ -6,7 +6,7 @@ export default {
 
   "conflictChecks": "Which checks can prevent restoration?",
   "title": "Quality operations",
-  "description": "Test account answers on a schedule, then remove selected groups, disable scheduling or enable the BPS protocol on a wrong (degraded) answer. One rule per account.",
+  "description": "Test account answers on a schedule. BPS candy tests only record results; other policies control BPS. Each account can have separate observation, group/scheduling and automatic BPS rules.",
   "refresh": "Refresh",
   "create": "Create test rule",
   "edit": "Edit rule",
@@ -23,8 +23,8 @@ export default {
   "selectMatchingAccounts": "Select all matching accounts",
   "selectingAccounts": "Selecting all matches…",
   "clearAccountSelection": "Clear selection",
-  "accountSelectionHint": "Combine group, type and search filters. Select all includes every matching page and skips accounts with existing rules. Changing filters keeps your selection.",
-  "accountHasRule": "Rule exists",
+  "accountSelectionHint": "Combine group, type and search filters. Select all includes every matching page and skips accounts with existing rules of the selected type. Changing filters keeps your selection.",
+  "accountHasRule": "Rule of this type exists",
   "noMatchingAccounts": "No matching accounts",
   "previousAccountPage": "Previous account page",
   "nextAccountPage": "Next account page",
@@ -33,6 +33,11 @@ export default {
   "cron": "Schedule (five-field Cron, server timezone)",
   "effort": "Reasoning effort",
   "parallel": "Probes per round (all must pass to restore)",
+  "testChannel": "Test channel",
+  "accountChannel": "Current account model routing",
+  "bpsChannel": "BPS channel (record results only)",
+  "observeOnly": "Record test results without account actions",
+  "bpsObservationHint": "Candy questions test the BPS channel only. If BPS is off or this model is not routed to BPS, the round is unavailable; it never falls back to the native channel. Selecting this channel makes this rule observation-only: it does not toggle BPS, change groups or scheduling, or restore previous settings. A rule with an outstanding owned action must restore it before switching to observation. Other policies control BPS. Configure the question, reference answer and grading model.",
   "questionKind": "Test method",
   "questionCandy": "Candy question (model answer + grading model)",
   "questionStateProbe": "State probe (full capability or degraded in seconds, no grading model)",
@@ -77,6 +82,8 @@ export default {
   "queued": "Queued for testing, expected to start within one minute.",
   "deleteConfirm": "Delete this rule and its history? Removed memberships, disabled scheduling or BPS enabled by this rule will not be restored. Resolve them on the Accounts page first.",
   "outcomes": {
+    "observed": "Test result recorded",
+    "action_conflict": "Waiting for another rule to restore",
     "no_change": "No account changes",
     "inconclusive": "Testing or grading inconclusive; no action",
     "already_quarantined": "Still quarantined",
@@ -189,6 +196,8 @@ export default {
   "discard": "Discard changes",
   "disableSchedulingShort": "Disable scheduling, keep groups",
   "actionHelp": {
+    "observed": "This round only recorded the answer and grading result. Account settings, BPS, groups and scheduling were not changed.",
+    "action_conflict": "Another rule changed action types but still owns a pending restoration in this scope. Restore or resolve that rule first; this round did not overwrite its settings.",
     "no_change": "This round did not modify the account.",
     "inconclusive": "The request or grading was inconclusive. No account action was taken.",
     "already_quarantined": "This rule had already isolated the account. No additional membership or scheduling change was made.",
@@ -248,6 +257,10 @@ export default {
   "bpsOptions": "Options checked when BPS is enabled",
   "bpsOptionsHint": "Same as the BPS options on the account editor. Checked options are written as on, unchecked options as off.",
   "bpsRestoreHelp": "The probe always tests the normal protocol (ticket channel, never through BPS). When checked, BPS enabled by this rule is turned off after the number of healthy probes in a row set below, and the model scope and options are put back as they were. When unchecked, BPS stays on until an admin turns it off on the Accounts page. If anyone changed the account BPS settings afterwards (including a 403 pause), BPS is not turned off and the round is marked for manual restore.",
+  "probeInterval": "State probe interval",
+  "probeEveryMinutes": "Every {minutes} minutes",
+  "probeCustomSchedule": "Custom schedule (Cron)",
+  "probeIntervalHint": "New rules check every 30 minutes by default; existing rules keep their schedule. State probes use the normal protocol, never BPS. Shorter intervals consume more upstream requests and quota. Custom schedules use a five-field Cron expression.",
   "bpsAutoDisable": "Turn BPS off automatically once the normal protocol is healthy",
   "bpsAutoDisableShort": "Turn BPS off when healthy",
   "bpsPassThreshold": "Turn off after N healthy probes in a row",
@@ -275,5 +288,5 @@ export default {
   "bpsTriggerRequired": "Set at least one trigger: degraded count or usage percentage",
   "bpsModelsRequired": "Select at least one BPS model, or enable BPS for all models",
   "bpsTargetGroupRequired": "Automatic group adjustment on BPS 403 is checked; choose a target group",
-  "bpsRequiresProbe": "Enabling BPS requires the state probe test method"
+  "bpsRequiresProbe": "Automatic BPS switching requires a native state probe. To test BPS answer quality, choose a candy question and the BPS channel (record results only)."
 }
