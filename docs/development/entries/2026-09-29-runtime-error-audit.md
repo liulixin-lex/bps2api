@@ -48,3 +48,25 @@ web 工具实际返回 basispoints_endpoint_unsupported，已保留错误；随�
 4. deploy/audit-request-health.py：恢复事件匹配改为 Recovered upstream error%，兼容冒号与旧空格形式；PostgreSQL 只读 VALUES 同输入基线 exit1、修改 exit0，终端 429 负控不变。
 
 当前完整同输入三态、最终回归、候选构建与灰度验收进行中。源码测试不代表线上所有 429/403/503 已消除。未提高账号 RPM/TPM、未改模型、未解除暂停、未启用隐式原生回退、未发布或移动版本标签。
+
+## 最终验收与上线（本轮实测，更新前述进度）
+
+- 应用提交 f9b7f408e36790764cf20746e544f1151076d500，版本标识 0.0.19-runtime.20260929，已本机部署。本轮不推送、不创建正式 Release，不移动既有 v0.0.19 标签。
+- 匹配输入三态：BASELINE 14 pass / 17 fail（exit 1）；MODIFIED 31 pass / 0 fail（exit 0）；ROLLBACK 14 pass / 17 fail（exit 1）。独立回滚源码哈希与模式等于基线，补丁重建和再次应用均等于修改版。
+- 最终 Service+basispoints unit 17,649 通过、4 跳过；Handler unit 1,728 通过、1 跳过，合计19,377通过、5跳过、零失败。相关race160节点通过。这不是全仓CI全绿声明，原lint/integration技术债没有在本次重新验收。
+- PostgreSQL VALUES审计夹具BASELINE/ROLLBACK误分冒号形式的恢复事件（exit1），MODIFIED正确识别且保留终态429（exit0）。辅助副本首次git apply受umask影响导致模式对比失败；保留记录，显式022后在新副本重跑通过。已安装审计脚本同样保留原字节并实测副本回滚。
+- 灰度基础4项及function/custom/namespace工具往返3项通过。新增Messages检查得到403；旧8096与新8097同输入都返回This group does not allow /v1/messages dispatch。保留原失败并明确是既有组权限边界，不宣称该端点端到端通过。
+- 17:03:55.656769 UTC启动热切、17:03:58.397292完成Caddy reload，主流量进入sub2api-runtime-20260929 / 8097。真实SSE首字节在切前，结束于切后，唯一DONE、stop和结束标记均通过。公网4项基础及3项工具往返通过；切换39次、切后40次健康采样全部成功。
+- 新实例实读池预算40 open / 8 idle / 1分钟idle。17:05:17 UTC PG总连接18（两应用9连接），原来为93。旧15实例保持停止；v019保留暖备和已发链接所有权。主实例重启数0。
+
+17:03:55.656769–17:06:13.563620 UTC短窗口，新实例完成40个推理POST，HTTP均200、无匹配最终Ops错误、无重启。样本含canary且不是受控压力对照，不能由此推断永久零错误或量化429消除率。
+
+## 完成状态与保留边界
+
+上游共享TPM、无权限或暂停账号、无可调度账号，以及输出后断流仍可能返回真实429/403/503/502。工具和结构化内容验证失败、独立alpha端点不支持也继续明确报错。没有提高账号额度、扩大重试次数、换模型、强制解暂停或启用隐式原生回退。
+
+源码四角色固定在/bps/artifacts/development-history-20260928/下，绑定应用f9b7f408e，收尾文档以补充记录扩展证据，不重新部署。原始两棵源码工作树及既有文档哈希核验未变。
+
+运行配置是独立事务：退役三态与回滚脚本在/bps/artifacts/runtime-audit-20260929/operations；热切快照在/opt/sub2api/backups/runtime-errors-20260929/transaction。在线回退命令为python3 /opt/sub2api/deploy-runtime-20260929.py rollback，会核查旧主实例健康和并发修改，保留新实例图片所有权。本次源码、配置回滚在独立副本执行，没有为验收把生产切回旧缺陷。
+
+本轮审计、联网依据、修复、三态、回归、竞态、构建、灰度、热切、公网验收完成。无需重复部署。私密原始日志和配置仅保存在受限证据目录。
