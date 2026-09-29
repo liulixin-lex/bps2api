@@ -131,7 +131,7 @@ describe('quality rule partial updates', () => {
     rule.pelican_config!.quality = { ...rule.pelican_config!.quality!, action: 'enable_bps', auto_restore: true, bps: bps() }
     const input = draft(); input.pelican_config.test_channel = 'bps'
     const patch = buildQualityRulePatch(rule, input, ['test', 'restore'])
-    expect(patch.pelican_config).toMatchObject({ question_kind: 'candy', test_channel: 'bps', prompt: 'New question',
+    expect(patch.pelican_config).toMatchObject({ question_kind: 'candy', test_channel: 'bps', prompt: 'New question', parallel_count: 1,
       quality: { action: 'observe_only', auto_restore: false, remove_group_ids: [], expected_answer: '42', judge: input.pelican_config.quality.judge } })
     expect(patch.pelican_config!.quality).not.toHaveProperty('bps')
     expect(rule.pelican_config!.quality!.action).toBe('enable_bps')

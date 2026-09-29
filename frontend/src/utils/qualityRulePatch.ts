@@ -105,7 +105,10 @@ export function buildQualityRulePatch(
     } else delete config.quality.bps
   }
   // Explicit BPS observation includes giving up this rule's account actions.
-  if (config.test_channel === 'bps') config.quality.action = 'observe_only'
+  if (config.test_channel === 'bps') {
+    config.parallel_count = 1
+    config.quality.action = 'observe_only'
+  }
   if (config.quality.action === 'observe_only') {
     config.quality.remove_group_ids = []
     config.quality.auto_restore = false

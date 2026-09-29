@@ -33,6 +33,7 @@ export default {
   "cron": "Schedule (five-field Cron, server timezone)",
   "effort": "Reasoning effort",
   "parallel": "Probes per round (all must pass to restore)",
+  "bpsSingleProbeHint": "BPS observation shares the account's probe lock, so each round runs exactly one probe. Parallel probes would block each other.",
   "testChannel": "Test channel",
   "accountChannel": "Current account model routing",
   "bpsChannel": "BPS channel (record results only)",

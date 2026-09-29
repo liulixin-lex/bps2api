@@ -90,7 +90,7 @@
           </template>
           <template v-if="editsField('test') && !isProbe">
             <label class="space-y-1"><span>{{ t('qualityOps.effort') }}</span><select v-model="form.pelican_config.reasoning_effort" class="input"><option v-for="effort in ['minimal', 'low', 'medium', 'high', 'xhigh']" :key="effort">{{ effort }}</option></select></label>
-            <label class="space-y-1"><span>{{ t('qualityOps.parallel') }}</span><input v-model.number="form.pelican_config.parallel_count" type="number" min="1" max="8" required class="input" /></label>
+            <label class="space-y-1"><span>{{ t('qualityOps.parallel') }}</span><input v-model.number="parallelCount" :disabled="form.pelican_config.test_channel === 'bps'" type="number" min="1" max="8" required class="input" data-testid="quality-parallel-count" /><span v-if="form.pelican_config.test_channel === 'bps'" class="block text-xs text-gray-500" data-testid="quality-bps-parallel-hint">{{ t('qualityOps.bpsSingleProbeHint') }}</span></label>
           </template>
         </div>
         <template v-if="editsField('test') && !isProbe">
@@ -373,6 +373,10 @@ function defaults() {
 const form = ref(defaults())
 const isProbe = computed(() => form.value.pelican_config.question_kind === STATE_PROBE_QUESTION)
 const bps = computed(() => form.value.pelican_config.quality.bps)
+const parallelCount = computed({
+  get: () => form.value.pelican_config.test_channel === 'bps' ? 1 : form.value.pelican_config.parallel_count,
+  set: (count: number) => { form.value.pelican_config.parallel_count = form.value.pelican_config.test_channel === 'bps' ? 1 : count },
+})
 // BPS 设置可见时，「满血后自动关闭 BPS」放在设置里，底部的通用恢复开关不再重复出现。
 const bpsSettingsShown = computed(() => editsField('action') && isProbe.value && form.value.pelican_config.quality.action === 'enable_bps')
 // 与账号批量编辑的 403 目标分组候选一致：OpenAI 分组，非简易模式下另含混合分组。
@@ -480,6 +484,7 @@ function selectQuestionKind() {
 }
 function selectTestChannel() {
   if (form.value.pelican_config.test_channel !== 'bps') return
+  form.value.pelican_config.parallel_count = 1
   form.value.pelican_config.quality.action = 'observe_only'
   form.value.pelican_config.quality.auto_restore = false
   if (bulkEditing.value) bulkFields.value = [...new Set<QualityRuleField>([...bulkFields.value, 'action', 'restore'])]
@@ -488,7 +493,7 @@ function selectTestChannel() {
 // BPS 设置只随「开启 BPS」提交。
 function payload() {
   const quality = form.value.pelican_config.quality
-  if (!isProbe.value) return { ...form.value, pelican_config: { ...form.value.pelican_config, quality: { ...quality, bps: undefined,
+  if (!isProbe.value) return { ...form.value, pelican_config: { ...form.value.pelican_config, parallel_count: parallelCount.value, quality: { ...quality, bps: undefined,
     remove_group_ids: quality.action === 'remove_groups' ? [...quality.remove_group_ids] : [], auto_restore: quality.action === 'observe_only' ? false : quality.auto_restore } } }
   const { action, remove_group_ids, auto_restore } = quality
   return { ...form.value, pelican_config: { ...form.value.pelican_config, prompt: '', parallel_count: 1,

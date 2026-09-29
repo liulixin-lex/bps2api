@@ -45,6 +45,32 @@ func TestQualityBPSObservationValidation(t *testing.T) {
 	require.ErrorContains(t, err, "invalid test channel")
 }
 
+func TestQualityBPSObservationParallelCount(t *testing.T) {
+	for _, count := range []int{-1, 0, 1, 2, 8, 9} {
+		t.Run(fmt.Sprintf("bps_%d", count), func(t *testing.T) {
+			plan := pelicanPlan()
+			plan.PelicanConfig = bpsObservationConfig()
+			plan.PelicanConfig.ParallelCount = count
+			_, err := nextPlanRun(plan, time.Now())
+			if count == 1 {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "BPS observation requires exactly one probe per round")
+			}
+		})
+	}
+	for _, count := range []int{1, 2, 8} {
+		t.Run(fmt.Sprintf("native_%d", count), func(t *testing.T) {
+			plan := pelicanPlan()
+			plan.PelicanConfig = bpsObservationConfig()
+			plan.PelicanConfig.TestChannel = "account"
+			plan.PelicanConfig.ParallelCount = count
+			_, err := nextPlanRun(plan, time.Now())
+			require.NoError(t, err, "native observation retains its existing parallel sampling")
+		})
+	}
+}
+
 func TestQualityBPSObservationNeverFallsBackToNative(t *testing.T) {
 	for _, change := range []func(*Account){
 		func(a *Account) { a.Extra["openai_excel_bps"] = false },

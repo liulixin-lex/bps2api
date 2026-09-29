@@ -33,6 +33,7 @@ export default {
   "cron": "检测周期（五段 Cron，服务端时区）",
   "effort": "推理强度",
   "parallel": "每轮测试次数（全部通过才恢复）",
+  "bpsSingleProbeHint": "BPS 观察检测共用账号的探测锁，每轮固定执行 1 次；并行探测会互相阻止。",
   "testChannel": "检测通道",
   "accountChannel": "按账号当前模型路由",
   "bpsChannel": "BPS 通道（只检测、记录结果）",

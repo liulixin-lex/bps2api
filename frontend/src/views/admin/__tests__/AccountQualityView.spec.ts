@@ -590,14 +590,38 @@ describe('quality operations', () => {
   it('creates a candy BPS observation without group or lifecycle settings', async () => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
     vm.newPlan(); await flushPromises(); vm.selectedAccounts = [1]
+    vm.form.pelican_config.parallel_count = 3
     await wrapper.get('[data-testid="quality-test-channel"]').setValue('bps')
+    const parallel = wrapper.get<HTMLInputElement>('[data-testid="quality-parallel-count"]')
+    expect(parallel.element.disabled).toBe(true)
+    expect(parallel.element.value).toBe('1')
+    expect(vm.form.pelican_config.parallel_count).toBe(1)
+    expect(wrapper.get('[data-testid="quality-bps-parallel-hint"]').text()).toContain('qualityOps.bpsSingleProbeHint')
     expect(wrapper.find('[data-testid="quality-action-enable-bps"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="quality-auto-restore"]').exists()).toBe(false)
+    vm.form.pelican_config.parallel_count = 8
     vm.form.pelican_config.quality.judge = { group_id: 21, model_id: 'judge', prompt: 'Grade the answer' }
     await wrapper.get('#quality-rule-form').trigger('submit'); await flushPromises()
     expect(scheduledTests.create).toHaveBeenCalledWith(expect.objectContaining({ pelican_config: expect.objectContaining({
-      question_kind: 'candy', test_channel: 'bps', quality: expect.objectContaining({ action: 'observe_only', auto_restore: false, remove_group_ids: [] }),
+      question_kind: 'candy', test_channel: 'bps', parallel_count: 1, quality: expect.objectContaining({ action: 'observe_only', auto_restore: false, remove_group_ids: [] }),
     }) }))
+    wrapper.unmount()
+  })
+
+  it('shows one BPS probe for legacy parallel rules while keeping native counts editable', async () => {
+    const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
+    const rule = rules()[0]
+    vm.edit({ ...rule, pelican_config: { ...rule.pelican_config, question_kind: 'candy', test_channel: 'bps', parallel_count: 3,
+      quality: { ...rule.pelican_config!.quality, action: 'observe_only' } } })
+    await flushPromises()
+    const parallel = wrapper.get<HTMLInputElement>('[data-testid="quality-parallel-count"]')
+    expect(parallel.element.disabled).toBe(true)
+    expect(parallel.element.value).toBe('1')
+    await wrapper.get('[data-testid="quality-test-channel"]').setValue('account')
+    expect(parallel.element.disabled).toBe(false)
+    await parallel.setValue('3')
+    expect(vm.form.pelican_config.parallel_count).toBe(3)
+    expect(wrapper.find('[data-testid="quality-bps-parallel-hint"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

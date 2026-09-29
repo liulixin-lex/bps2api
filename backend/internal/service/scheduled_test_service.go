@@ -125,6 +125,11 @@ func nextPlanRun(plan *ScheduledTestPlan, now time.Time) (time.Time, error) {
 		if isOpenAICodexStateProbePlan(cfg) && cfg.ParallelCount != 1 {
 			return time.Time{}, fmt.Errorf("state probe does not support parallel runs")
 		}
+		// BPS observation shares the per-account probe exclusion with state probes.
+		// Multiple samples in one round would compete for that same probe slot.
+		if cfg.TestChannel == "bps" && cfg.ParallelCount != 1 {
+			return time.Time{}, fmt.Errorf("BPS observation requires exactly one probe per round")
+		}
 		if cfg.ParallelCount < 1 || cfg.ParallelCount > 8 {
 			return time.Time{}, fmt.Errorf("parallel count must be 1–8")
 		}
