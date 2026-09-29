@@ -1205,6 +1205,13 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 	// network read failures within the shared attempt/time budget. Never replay
 	// cancellation, flushed metadata, or delivered tool/text.
 	if terminal == "" && !outputCommitted && ctx.Err() == nil && excelBPSRetryableStreamError(err) {
+		// Report the broken exit before releasing its ownership. Otherwise the
+		// same session can reacquire it, and exhausted recovery loses feedback
+		// when releaseLease clears lease. Local time budgets do not prove that
+		// the proxy failed; provider terminals and cancellation stay separate.
+		if lease != nil && !errors.Is(err, errOpenAISSEIdle) && !errors.Is(err, errOpenAISSEFirstOutput) && !errors.Is(err, context.DeadlineExceeded) {
+			lease.ReportStreamFailure()
+		}
 		scanner.Close()
 		_ = converted.Close()
 		_ = resp.Body.Close()

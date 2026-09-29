@@ -70,6 +70,7 @@ func (a *openAIRPMAdmission) retryAfter(c *gin.Context, err error) {
 	if !errors.Is(err, service.ErrOpenAIRPMExhausted) {
 		return
 	}
+	markOpsRoutingCapacityLimited(c)
 	resetAt := a.resetAt
 	if resetAt.IsZero() {
 		resetAt = time.Now().Truncate(time.Minute).Add(time.Minute)

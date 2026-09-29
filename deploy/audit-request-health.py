@@ -24,7 +24,7 @@ SET LOCAL timezone = 'UTC';
 SET LOCAL statement_timeout = '30s';
 WITH errors AS (
   SELECT *, CASE
-    WHEN error_message LIKE 'Recovered upstream error %' THEN 'recovered'
+    WHEN error_message LIKE 'Recovered upstream error%' THEN 'recovered'
     WHEN status_code >= 400 THEN 'http_failure'
     ELSE 'stream_failure_or_diagnostic' END AS outcome,
     CASE WHEN error_phase='routing' THEN 'routing_capacity_or_configuration'
