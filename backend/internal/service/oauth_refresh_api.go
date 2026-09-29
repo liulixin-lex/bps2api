@@ -156,6 +156,20 @@ func (api *OAuthRefreshAPI) getLocalLock(cacheKey string) *contextMutex {
 	return mu
 }
 
+// oauthRefreshContextError checks the clock as well as cancellation delivery.
+// A busy runtime may resume a provider before the deadline timer's callback;
+// credentials returned in that interval must not cross the persistence boundary.
+// Explicit cancellation retains precedence over an elapsed deadline.
+func oauthRefreshContextError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
 // RefreshIfNeeded 在分布式锁保护下按需刷新 OAuth token
 //
 // 流程:
@@ -256,7 +270,7 @@ func (api *OAuthRefreshAPI) RefreshIfNeeded(
 	// 4. 执行平台特定刷新逻辑
 	attemptedAccount := snapshotOAuthRefreshAccount(freshAccount)
 	newCredentials, refreshErr := executor.Refresh(ctx, freshAccount)
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	if ctxErr := oauthRefreshContextError(ctx); ctxErr != nil {
 		// A provider implementation may ignore cancellation and return late
 		// credentials. Never persist them after the attempt/cycle boundary.
 		return nil, ctxErr
