@@ -285,7 +285,7 @@
             </div>
           </template>
           <template #cell-capacity="{ row }">
-            <AccountCapacityCell :account="row" />
+            <AccountCapacityCell :account="row" :concurrency-upgrade-enabled="concurrencyUpgradeEnabled" />
           </template>
           <template #cell-status="{ row }">
             <div class="flex items-center gap-1.5">
@@ -541,6 +541,20 @@ import type { Account, AccountListItem, AccountPlatform, AccountSchedulerGroupSc
 const { t } = useI18n()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const concurrencyUpgradeEnabled = ref(false)
+let concurrencyUpgradeRequest = 0
+
+const loadConcurrencyUpgradeState = async () => {
+  const request = ++concurrencyUpgradeRequest
+  try {
+    const capabilities = await adminAPI.accounts.getManagementCapabilities()
+    if (request === concurrencyUpgradeRequest) {
+      concurrencyUpgradeEnabled.value = capabilities.concurrency_upgrade_enabled === true
+    }
+  } catch {
+    if (request === concurrencyUpgradeRequest) concurrencyUpgradeEnabled.value = false
+  }
+}
 
 const proxies = ref<AccountProxy[]>([])
 const groups = ref<AdminGroup[]>([])
@@ -1166,7 +1180,7 @@ const load = async (options: AccountLoadOptions = {}) => {
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = false
   requestParams.lite = '1'
-  await baseLoad()
+  await Promise.all([baseLoad(), loadConcurrencyUpgradeState()])
   if (options.refreshTodayStats !== false) await refreshTodayStatsBatch()
 }
 
@@ -1175,7 +1189,7 @@ const reload = async () => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = false
-  await baseReload()
+  await Promise.all([baseReload(), loadConcurrencyUpgradeState()])
   await refreshTodayStatsBatch()
 }
 
@@ -1392,6 +1406,7 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
   return (
     current.updated_at !== next.updated_at ||
     current.current_concurrency !== next.current_concurrency ||
+    JSON.stringify(current.extra?.auto_config_concurrency) !== JSON.stringify(next.extra?.auto_config_concurrency) ||
     current.current_window_cost !== next.current_window_cost ||
     current.active_sessions !== next.active_sessions ||
     current.current_rpm !== next.current_rpm ||
@@ -1449,6 +1464,7 @@ const refreshAccountsIncrementally = async () => {
   if (autoRefreshFetching.value) return
   syncAccountListDerivedParams()
   autoRefreshFetching.value = true
+  const upgradeStateRefresh = loadConcurrencyUpgradeState()
   try {
     const result = await adminAPI.accounts.listWithEtag(
       pagination.page,
@@ -1482,6 +1498,7 @@ const refreshAccountsIncrementally = async () => {
   } catch (error) {
     console.error('Auto refresh failed:', error)
   } finally {
+    await upgradeStateRefresh
     autoRefreshFetching.value = false
   }
 }
@@ -2577,6 +2594,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  concurrencyUpgradeRequest++
   upstreamBillingRateAbortController?.abort()
   if (usageBatchFlushTimer !== null) {
     clearTimeout(usageBatchFlushTimer)

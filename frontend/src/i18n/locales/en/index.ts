@@ -1,3 +1,4 @@
+import priorityScheduling from './priorityScheduling'
 import qualityOps from './qualityOps'
 import accountOps from './accountOps'
 import tokenGuard from './tokenGuard'
@@ -11,7 +12,11 @@ import misc from './misc'
 
 import requestTiming from './requestTiming'
 
+import autoConfig from './autoConfig'
+
 export default {
+  autoConfig,
+  priorityScheduling,
   qualityOps,
   accountOps,
   tokenGuard,

@@ -1722,6 +1722,21 @@
           </div>
         </div>
         <div>
+          <label class="input-label" for="account-cost-multiplier">{{ t('admin.accounts.costMultiplier') }}</label>
+          <input
+            id="account-cost-multiplier"
+            v-model.number="costMultiplier"
+            type="number"
+            min="0"
+            max="1000000"
+            step="0.001"
+
+            class="input"
+            data-testid="account-cost-multiplier"
+          />
+          <p class="input-hint">{{ t('admin.accounts.costMultiplierHint') }}</p>
+        </div>
+        <div>
           <label class="input-label">{{ t('admin.accounts.groupBillingRateMultiplier') }}</label>
           <input
             v-model.number="form.group_rate_multiplier"
@@ -3206,6 +3221,8 @@
 </template>
 
 <script setup lang="ts">
+import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isOptionalAccountCostMultiplier, readAccountCostMultiplier } from '@/utils/accountCost'
+
 import { ref, reactive, computed, watch, nextTick, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -4178,6 +4195,8 @@ const mixedChannelWarningMessageText = computed(() => {
   return mixedChannelWarningRawMessage.value
 })
 
+const costMultiplier = ref<number | string | null>(DEFAULT_ACCOUNT_COST_MULTIPLIER)
+
 const form = reactive({
   name: '',
   notes: '',
@@ -4294,6 +4313,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   form.concurrency = newAccount.concurrency
   form.load_factor = newAccount.load_factor ?? null
   form.priority = newAccount.priority
+  costMultiplier.value = readAccountCostMultiplier(newAccount.extra)
   form.rate_multiplier = newAccount.rate_multiplier ?? 1
   form.group_rate_multiplier = newAccount.group_rate_multiplier ?? 1
   form.status = (newAccount.status === 'active' || newAccount.status === 'inactive' || newAccount.status === 'error')
@@ -6144,6 +6164,15 @@ const handleSubmit = async () => {
         delete newExtra.upstream_request_id_header
       }
       updatePayload.extra = newExtra
+    }
+
+    if (!isOptionalAccountCostMultiplier(costMultiplier.value)) {
+      appStore.showError(t('admin.accounts.costMultiplierInvalid'))
+      return
+    }
+    updatePayload.extra = {
+      ...((updatePayload.extra as Record<string, unknown>) || props.account.extra || {}),
+      cost_multiplier: costMultiplier.value === '' ? null : costMultiplier.value
     }
 
     const canContinue = await ensureAntigravityMixedChannelConfirmed(async () => {

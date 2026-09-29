@@ -950,6 +950,14 @@
             <span>{{ t('admin.accounts.bulkEdit.rateSyncWarning') }}</span>
           </p>
         </div>
+        <div>
+          <div class="mb-3 flex items-center justify-between">
+            <label class="input-label mb-0" for="bulk-edit-cost-multiplier-enabled">{{ t('admin.accounts.costMultiplier') }}</label>
+            <input id="bulk-edit-cost-multiplier-enabled" v-model="enableCostMultiplier" type="checkbox" aria-controls="bulk-edit-cost-multiplier" class="rounded border-gray-300 text-primary-600 focus:ring-primary-500" />
+          </div>
+          <input id="bulk-edit-cost-multiplier" v-model.number="costMultiplier" type="number" min="0" max="1000000" step="0.001"  :disabled="!enableCostMultiplier" :aria-label="t('admin.accounts.costMultiplier')" class="input" :class="!enableCostMultiplier && 'cursor-not-allowed opacity-50'" />
+          <p class="input-hint">{{ t('admin.accounts.costMultiplierHint') }}</p>
+        </div>
       </div>
 
       <!-- Status -->
@@ -1534,6 +1542,8 @@
 </template>
 
 <script setup lang="ts">
+import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isOptionalAccountCostMultiplier } from '@/utils/accountCost'
+
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -1720,6 +1730,8 @@ const enableProxy = ref(false)
 const enableConcurrency = ref(false)
 const enableLoadFactor = ref(false)
 const enablePriority = ref(false)
+const enableCostMultiplier = ref(false)
+const costMultiplier = ref<number | string | null>(DEFAULT_ACCOUNT_COST_MULTIPLIER)
 const enableRateMultiplier = ref(false)
 const enableGroupRateMultiplier = ref(false)
 const groupRateMultiplier = ref(1)
@@ -2043,6 +2055,10 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
     updates.priority = priority.value
   }
 
+  if (enableCostMultiplier.value) {
+    ensureExtra().cost_multiplier = costMultiplier.value === '' ? null : costMultiplier.value
+  }
+
   if (enableRateMultiplier.value) {
     updates.rate_multiplier = rateMultiplier.value
   }
@@ -2321,6 +2337,7 @@ const handleSubmit = async () => {
     enableConcurrency.value ||
     enableLoadFactor.value ||
     enablePriority.value ||
+    enableCostMultiplier.value ||
     enableRateMultiplier.value ||
     enableGroupRateMultiplier.value ||
     enableStatus.value ||
@@ -2372,6 +2389,11 @@ const handleSubmit = async () => {
       appStore.showError(t(`admin.accounts.headerOverride.${headerError}`))
       return
     }
+  }
+
+  if (enableCostMultiplier.value && !isOptionalAccountCostMultiplier(costMultiplier.value)) {
+    appStore.showError(t('admin.accounts.costMultiplierInvalid'))
+    return
   }
 
   const built = buildUpdatePayload()
@@ -2477,6 +2499,8 @@ watch(
       enableConcurrency.value = false
       enableLoadFactor.value = false
       enablePriority.value = false
+      enableCostMultiplier.value = false
+      costMultiplier.value = DEFAULT_ACCOUNT_COST_MULTIPLIER
       enableRateMultiplier.value = false
       enableStatus.value = false
       enableGroups.value = false

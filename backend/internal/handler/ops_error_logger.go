@@ -527,22 +527,23 @@ type opsCaptureWriter struct {
 }
 
 type opsCaptureWriterState struct {
-	mu             sync.RWMutex
-	inFlight       sync.WaitGroup
-	generation     uint64
-	responseWriter gin.ResponseWriter
-	limit          int
-	buf            bytes.Buffer
-	probe          []byte
-	lineProbe      []byte
-	frameLineLen   int
-	frameTruncated bool
-	lineTruncated  bool
-	skipLF         bool
-	sseCapturing   bool
-	terminalError  parsedOpsError
-	terminalFound  bool
-	ctx            *gin.Context
+	mu              sync.RWMutex
+	inFlight        sync.WaitGroup
+	generation      uint64
+	responseWriter  gin.ResponseWriter
+	limit           int
+	buf             bytes.Buffer
+	probe           []byte
+	lineProbe       []byte
+	frameLineLen    int
+	frameTruncated  bool
+	lineTruncated   bool
+	skipLF          bool
+	sseCapturing    bool
+	terminalError   parsedOpsError
+	terminalFound   bool
+	terminalSuccess bool
+	ctx             *gin.Context
 }
 
 const (
@@ -590,6 +591,7 @@ func acquireOpsCaptureWriterFromPool(pool opsCaptureWriterStatePool, rw gin.Resp
 	state.sseCapturing = false
 	state.terminalError = parsedOpsError{}
 	state.terminalFound = false
+	state.terminalSuccess = false
 	state.ctx = nil
 	generation := state.generation
 	state.mu.Unlock()
@@ -625,6 +627,7 @@ func releaseOpsCaptureWriter(w *opsCaptureWriter) {
 	state.sseCapturing = false
 	state.terminalError = parsedOpsError{}
 	state.terminalFound = false
+	state.terminalSuccess = false
 	poolable := shouldPoolOpsCaptureWriterState(state)
 	state.buf.Reset()
 	state.mu.Unlock()
@@ -990,6 +993,9 @@ func (state *opsCaptureWriterState) captureResponseChunk(chunk []byte, status in
 			state.lineTruncated = false
 			continue
 		}
+		if !state.frameTruncated && autoConfigSuccessfulFrame(state.probe) {
+			state.terminalSuccess = true
+		}
 		if !state.frameTruncated && isOpsTerminalSSEFrame(state.probe) {
 			state.sseCapturing = true
 			state.terminalError, state.terminalFound = parseOpsSSEFailure(state.probe)
@@ -1012,6 +1018,9 @@ func endsAtOpsSSEFrameBoundary(chunk []byte) bool {
 }
 
 func mayContainOpsTerminalSSE(chunk []byte) bool {
+	if bytes.Contains(chunk, []byte("[DONE]")) || bytes.Contains(chunk, []byte("response.completed")) || bytes.Contains(chunk, []byte("message_stop")) || bytes.Contains(chunk, []byte("finishReason")) {
+		return true
+	}
 	if bytes.Contains(chunk, []byte("response.failed")) || bytes.Contains(chunk, []byte("response.incomplete")) {
 		return true
 	}
@@ -1042,6 +1051,9 @@ func (state *opsCaptureWriterState) appendTerminalProbe(chunk []byte) {
 }
 
 func (state *opsCaptureWriterState) finalizeResponseCapture() {
+	if state != nil && !state.frameTruncated && autoConfigSuccessfulFrame(state.probe) {
+		state.terminalSuccess = true
+	}
 	if state == nil {
 		return
 	}
@@ -1109,6 +1121,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 		c.Next()
 		service.SetOpsLatencyMs(c, service.OpsRequestDurationMsKey, time.Since(requestStart).Milliseconds())
 		w.finalizeCapture()
+		observeAutoConfigRequest(c, ops, w, requestStart)
 
 		if _, rejected := middleware2.GetIngressRejectReason(c); rejected {
 			return
