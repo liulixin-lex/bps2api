@@ -64,3 +64,15 @@
 ## 失败与纠正
 
 最初独立部署审计用 bare sub2api 检查版本，因容器 PATH 不包含 /app 而得到 127；依据实际镜像配置改为 /app/sub2api 后审计通过，未改应用。12:18 UTC 管理接口的 423 属于当时真实待确认状态；12:20 UTC 收到用户明确授权后接受声明，随后接口验收通过。两个阶段分开留证，没有以通过结果覆盖先前错误。
+
+## 2026-09-29：用户真实任务的 409 登录错误诊断
+
+用户在部署验收后自行提交真实账号任务，截图显示“结果不确定，需人工核查”。本轮仅只读检查运行中 worker 的加密任务记录和固定版本源码，未重试登录、未提交轮换、未重启服务、未修改账号状态或数据库。
+
+本轮实测：该任务 mode=change_2fa、status=error、error_kind=technical_error；错误为首次登录的 authorize/continue HTTP 409 invalid_state，login_verified=false、rotated_pending_verify=false、retry_count=0、password_changed=false。根据错误抛出位置与执行顺序，此次任务失败于初始登录，未进入更换 2FA 的步骤。409 的进一步原因尚未确认，不能直接判定为密码错误、封号、代理或特定账号类型。
+
+本轮静态核对：固定上游 mfa_phase.py 使用 chatgpt.com/backend-api，service.rotate 先用旧 TOTP 登录，再执行 TOTP 更换和新密钥登录验证。因此本功能从一开始针对 ChatGPT/OpenAI 的 TOTP，并非邮箱服务或 BPS 管理员自身的 2FA；邮箱只是该订阅账号的登录标识。
+
+worker.py 的 summary 将未进入已保存新密钥待验证状态的通用 technical_error 一律映射为 needs_review，前端显示“结果不确定，需人工核查”。这是为了阻止非原子轮换异常被自动重试，但也将此次明确的前置登录失败归为过于笼统的提示；不代表已成功更换或官方确认账号安全状态不明。
+
+之前的“验收通过”仅指部署、鉴权、worker 通信和离线回归，不包括真实 OpenAI 登录/轮换；本次真实登录失败另记，不覆盖原验收记录。下一开发事项是检查登录会话状态流程，并将前置登录失败与轮换中断后的待核查状态区分；本轮尚未修改应用代码或重试真实账号。脱敏证据及文档事务四角色在 docs-local/twofa-login-409-diagnosis/。
