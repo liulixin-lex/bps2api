@@ -17,7 +17,7 @@
 
 ## 本地 PR 开发
 
-[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR open、未合并；测试站 app/worker 当前业务源码仍为 1bf2a621。17:42 UTC 第二次真实更换在关闭旧 TOTP 时返回 HTTP 500，未生成新密钥；本轮只读核验旧密钥的密码/TOTP 均 200，MFA 仍启用，任务数据库未变。原因提示和过期结果操作修复候选已完成，59 个 worker、29 个前端定向用例通过；后端/构建/部署待本轮后续确认。原任务保持 needs_review 且禁止重放，未自动更换或写库解锁。详见[测试部署及修复记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。
+[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR open、未合并；测试站 app/worker 于 18:30 UTC 更新为 b0bbeae3（0.0.18-pr12.b0bbeae3）。17:42 UTC 第二次更换在关闭旧 TOTP 时得到 HTTP 500，未生成新密钥；两次只读核验密码/TOTP 均 200、MFA 仍启用、当前选中默认因子。已上线具体失败原因提示与过期结果操作隐藏，59 个 worker、29 个前端定向用例及后端相关回归/构建通过，源码和实际镜像回滚、真实浏览器验收通过。五条任务和原实例保持不变；原失败任务仍受保护，未重放或写库解锁，不宣称上游 500 已解决。详见[测试部署及修复记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。
 
 ## 本次 429 修复进度
 
@@ -64,7 +64,7 @@
 
 | 日期（UTC） | 背景与目标 | 实际进展 |
 | --- | --- | --- |
-| 2026-09-29 | [PR #12 测试部署](docs/development/entries/2026-09-29-twofa-pr12-preview.md) | app/worker 1bf2a621 已部署并完成回滚；真实用户任务更换成功；完整三段凭据复制与刷新后原生剪贴板验证通过，默认简洁 2FA 页面，高级守护独立；数据不变，无新增轮换 |
+| 2026-09-29 | [PR #12 测试部署](docs/development/entries/2026-09-29-twofa-pr12-preview.md) | app/worker b0bbeae3 已部署并完成回滚；第二次任务 disable 返回 500，旧密钥只读复核有效；具体错误提示及旧结果操作隐藏已浏览器验收；五条任务不变，无新增轮换 |
 | 2026-09-29 | [账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md) | PR #12；管理员界面/接口、私有加密 worker、定向回归和源码回滚验证完成；后续测试部署另记 |
 | 2026-09-29 | [0.0.18 429 候选缓存修复与发布](docs/development/entries/2026-09-29-bps-429-stale-candidate.md) | 10:34 UTC 无感切换、10:53:43 UTC 正式发布；39 节点同输入通过且回滚重现原缺陷，4 次实际 429 恢复 200，18 项产物验收通过；独立 CI 仅剩已核对的原有 5 条 lint 与 1 条集成断言 |
 | 2026-09-29 | [0.0.17 无感上线与远端发布](docs/development/entries/2026-09-29-release-0.0.17.md) | 先上线验收，再原子推送 main/tag，08:28:23 UTC 正式发布，18 项产物验收通过；应用标签固定 041947a69；独立 CI 与静态清理另记 |
