@@ -84,3 +84,5 @@ web 工具实际返回 basispoints_endpoint_unsupported，已保留错误；随�
 版本事务同输入检查：BASELINE 0.0.19（exit1），MODIFIED 0.0.20（exit0），ROLLBACK 0.0.19（exit1）；回滚恢复 11 个变化路径并匹配基线哈希，补丁重建及目标再次应用匹配修改版。第一次 git apply 受进程 umask 影响仅使新文件模式 0600 对比归档 0664，内容哈希相同；按归档模式校正后完整清单比较通过，失败与纠正记录均保留。
 
 独立 CI 首次在本版新增一条测试代码 staticcheck QF1011（显式 io.ReadCloser 可推断），与历史五条 lint 诊断区分。随后将该声明改成推断赋值，专项 17 个用例通过；此为发布后 main 的小修，不移动已发布标签，也不宣称标签内已含该修复。原有 lint 与集成技术债仍单独记录；CI 最终状态以 release/ci-review.json 的实测为准。
+
+首次推送的小修又因该行多缩进一层触发 gofmt 检查；第二次将缩进校正，gofmt 无输出，使用既有 golangci-lint:v2.13.2 缓存镜像复测仅剩历史 5 条（errcheck 3、QF1003 1、unused 1），没有本轮新增诊断。保留首次失败与修正后的原始 lint 输出，最终 main 提交与 v0.0.20 标签分开记录。
