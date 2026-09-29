@@ -111,7 +111,7 @@ func testBPSRecoveredLongStream(t *testing.T, kind string) {
 		}
 		reader, writer := io.Pipe()
 		go func() {
-			defer writer.Close()
+			defer func() { _ = writer.Close() }()
 			_, _ = io.WriteString(writer, incidentBPSFrame(kind, map[string]any{"delta": "healthy output"}))
 			select {
 			case <-req.Context().Done():

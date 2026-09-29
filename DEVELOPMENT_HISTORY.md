@@ -7,13 +7,21 @@
 
 | 项目 | 状态与证据边界 |
 | --- | --- |
-| 当前对象 | 独立本地 clone `bps2api-2fa-integration`；分支 `feat/account-twofa-rotation-20260929`；远端维护源码仅只读核对 |
-| 源码与发布身份 | 本轮基线 `3941b3a991d69a46322db8e7d148329226dfdc77`，来源为远端维护分支；应用 0.0.17 / `041947a69`。历史 0.0.16/0.0.17 发布证据见对应条目 |
+| 当前对象 | 原始 /bps/bps2api 保持原字节；当前候选 /bps/worktrees/incident-429-20260929，分支 fix/bps-retry-candidate-validation |
+| 源码与发布身份 | v0.0.18 已于 2026-09-29 10:53:43 UTC 正式发布，应用提交 2bca855496；五平台包与 GHCR 双架构共 18 项产物命令验收通过，后续结果文档单独推进 main，标签保持固定 |
 | 与交接的关系 | 旧分支 `c5a0323b6` 由 PR #11 纳入本轮起点 `2f54db96e`，当时两提交源码树一致；本轮随后增加文档与代码整合；旧 `/www/...` 不是本机目录 |
 | 当前路由 | 0.0.16 已支持实际 OpenAI OAuth 账号按映射后的模型名单选择 BPS；未配置名单表示全部映射模型，显式空名单不选择模型；hosted 保持 v0.0.15 自动兼容策略 |
-| 当前生产 | 2026-09-29 08:15 UTC 已热切 sub2api-v017 / 8094，源码 041947a69；旧实例、存量 SSE 与图片 owner 链保留；完整上线证据见 0.0.17 发布记录 |
-| 当前任务 | [账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：本地实现与隔离验证完成，通过本分支 PR 交付；不修改生产或真实账号 |
-| 下一动作 | 审阅 2FA 接入 PR；真实账号端到端验收仍需专用测试账号和恢复方式，部署属于独立后续操作 |
+| 当前生产 | 2026-09-29 10:34 UTC 已热切 sub2api-v018 / 8095，源码 2bca855496；跨切换 SSE 完整、39+30 次健康采样无失败，旧实例与图片 owner 链保留 |
+| 当前任务 | [0.0.18 429 修复与发布](docs/development/entries/2026-09-29-bps-429-stale-candidate.md)：补齐真实候选终检与嵌套 Retry-After，39 个同输入节点通过、回滚重现原问题；4 个实际 429 已恢复为 200，公网 7 类 canary 最终通过 |
+| 下一动作 | 本次修复、线上、发布和产物验收已完成；独立 CI 完整 unit 与 timing 通过，剩余 5 条 lint 和 1 条 integration 断言均与旧基线一致，无新增；不声称全绿。旧 worker 保留期间不要启用新增观察/多 scope 计划 |
+
+## 本地 PR 开发
+
+[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：独立本地 clone 开发与隔离验证完成，等待审阅；未部署或操作真实账号。已同步主分支的 0.0.18 发布记录，保留其生产事实；本 PR 不回退版本或 BPS 修复。
+
+## 本次 429 修复进度
+
+[2026-09-29：BPS 429 候选缓存不一致](docs/development/entries/2026-09-29-bps-429-stale-candidate.md)：已上线并正式发布，三态同输入、扩大回归、线上实际恢复和 18 项产物验收均有记录；账号 RPM、上游 TPM、403 暂停与代理可用性仍是运行边界。
 
 ## 渐进式阅读
 
@@ -56,8 +64,9 @@
 
 | 日期（UTC） | 背景与目标 | 实际进展 |
 | --- | --- | --- |
-| 2026-09-29 | [账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md) | 本地管理员界面/接口、私有加密 worker 与隔离验证完成；本分支 PR 交付，不部署 |
-| 2026-09-29 | [0.0.17 无感上线与远端发布](docs/development/entries/2026-09-29-release-0.0.17.md) | 已完成先上线的验收，正在推进远端发布；应用标签将固定于 041947a69，线上与源码回滚分别留证 |
+| 2026-09-29 | [账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md) | PR #12；管理员界面/接口、私有加密 worker、定向回归和回滚验证完成；不部署 |
+| 2026-09-29 | [0.0.18 429 候选缓存修复与发布](docs/development/entries/2026-09-29-bps-429-stale-candidate.md) | 10:34 UTC 无感切换、10:53:43 UTC 正式发布；39 节点同输入通过且回滚重现原缺陷，4 次实际 429 恢复 200，18 项产物验收通过；独立 CI 仅剩已核对的原有 5 条 lint 与 1 条集成断言 |
+| 2026-09-29 | [0.0.17 无感上线与远端发布](docs/development/entries/2026-09-29-release-0.0.17.md) | 先上线验收，再原子推送 main/tag，08:28:23 UTC 正式发布，18 项产物验收通过；应用标签固定 041947a69；独立 CI 与静态清理另记 |
 | 2026-09-29 | [九项择优合入与 BPS 恢复](docs/development/entries/2026-09-29-selected-integration.md) | 九项能力适配、HTTP/SSE 共享恢复预算、心跳边界、单次 BPS 观察和刷新截止竞态修复；本地整合测试与构建通过，四角色凭据独立留证；未推送或部署 |
 | 2026-09-29 | [BPS 恢复专项](docs/development/entries/2026-09-29-bps-provider-retry.md) · [刷新截止竞态](docs/development/entries/2026-09-29-token-refresh-deadline.md) | 恢复专项 153 顶层与心跳边界通过；刷新确定性输入复现原问题，240 次边界回归通过；最终 service 8,409 顶层通过 |
 | 2026-09-28 | [推送并发布 0.0.16](docs/development/entries/2026-09-28-release-0.0.16-selected.md) | main/tag 已推送，12:58:26 UTC 正式发布；18 项产物命令验收通过，生产未重启；完整 unit/前端通过，独立 CI 遗留失败与基线一致 |
