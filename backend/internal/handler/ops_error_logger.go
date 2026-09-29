@@ -865,10 +865,17 @@ func isOpsTerminalSSEFrame(frame []byte) bool {
 		return false
 	}
 	var event struct {
-		Type string `json:"type"`
+		Type  string          `json:"type"`
+		Error json.RawMessage `json:"error"`
 	}
-	return json.Unmarshal(payload, &event) == nil &&
-		(event.Type == "response.failed" || event.Type == "response.incomplete" || event.Type == "error")
+	if json.Unmarshal(payload, &event) != nil {
+		return false
+	}
+	// Native Chat streams may carry a bare error object and then [DONE].
+	// A transport terminator must never erase that failure for Ops or scaling.
+	errorValue := bytes.TrimSpace(event.Error)
+	return event.Type == "response.failed" || event.Type == "response.incomplete" || event.Type == "error" ||
+		(len(errorValue) > 0 && !bytes.Equal(errorValue, []byte("null")))
 }
 
 func parseOpsSSEFrameEnvelope(frame []byte) ([]byte, []byte) {
