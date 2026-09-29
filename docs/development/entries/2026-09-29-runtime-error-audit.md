@@ -70,3 +70,9 @@ web 工具实际返回 basispoints_endpoint_unsupported，已保留错误；随�
 运行配置是独立事务：退役三态与回滚脚本在/bps/artifacts/runtime-audit-20260929/operations；热切快照在/opt/sub2api/backups/runtime-errors-20260929/transaction。在线回退命令为python3 /opt/sub2api/deploy-runtime-20260929.py rollback，会核查旧主实例健康和并发修改，保留新实例图片所有权。本次源码、配置回滚在独立副本执行，没有为验收把生产切回旧缺陷。
 
 本轮审计、联网依据、修复、三态、回归、竞态、构建、灰度、热切、公网验收完成。无需重复部署。私密原始日志和配置仅保存在受限证据目录。
+
+## 用户授权正式发布 v0.0.20（2026-09-29 UTC）
+
+用户在热修复验收后明确要求现在进行推送发版。已核对远端main仍为17db87971、最新正式Release为v0.0.19、v0.0.20未占用；先前未推送/不发版描述仅对应已完成的热修复阶段。本阶段将VERSION从0.0.19改为0.0.20，应用代码相对f9b7f408e不变。
+
+版本说明见[0.0.20](../../bps2api-0.0.20.md)。使用既有完整Release矩阵，main与注释标签原子推送，不发送Telegram通知。推送、发布成功与产物验收尚待真实结果；生产继续运行已验收的0.0.19-runtime.20260929，不将发版等同于再次部署。证据追加到既有四角色，版本事务与发布命令在/bps/artifacts/runtime-audit-20260929/release。
