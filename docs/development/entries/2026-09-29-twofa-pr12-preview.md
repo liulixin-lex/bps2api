@@ -100,3 +100,11 @@ worker.py 的 summary 将未进入已保存新密钥待验证状态的通用 tec
 部署事务四角色位于 /opt/bps2api-twofa-preview/evidence/login-fix-20260929/。其中 ROLLBACK.sh 已实际执行，只恢复本次前的 BPS 应用/worker 镜像并保留数据；/opt/bps2api-twofa-preview/ROLLBACK.sh 仍用于把域名回切到原 XY2API，两种回滚对象不同。应用与 worker 旧镜像均保留。
 
 当前边界：修复了错误地在 403 后推进登录状态和过度笼统的报错，没有解除 OpenAI 的访问拒绝。修复版真实登录诊断在初始化 403 处停止，密码验证请求和 2FA 更换请求均为零；尚未取得登录成功或真实轮换成功结果。已询问用户同一账号在常用浏览器的登录情况，待回答后区分是否需要人工验证或处理登录环境；没有通过轮换代理、指纹或重复提交来规避拒绝。
+
+## 2026-09-29：浏览器正常登录后的访问诊断
+
+用户确认原密码和原 2FA 可在常用浏览器登录。本轮在同一 worker 网络做一次受限初始化诊断：authorize HTTP 403 同时包含 cf-mitigated=challenge、Cloudflare server、HTML challenge-platform、Just a moment 与启用 JavaScript 提示。密码、TOTP 与轮换请求均为零，jobs 表哈希不变。已确认该响应为浏览器验证页，不能据此判断账号或原 2FA 错误。
+
+独立标准 Chromium 无凭据访问 ChatGPT 登录页也停在 challenge，无可见邮箱字段。根据用户建议，核对本仓库 PKCE 配置及官方 openai/codex 源码（18194bfd3534ca567d886eac454028dafaa68b6c），再分别用现有 HTTP 客户端和标准 Chromium 访问 /oauth/authorize；二者均遇到 challenge，未进入密码、MFA、workspace select 或 token exchange。官方设备授权 usercode 在宿主标准客户端得到 530，在 worker 既有客户端得到 200 并签发设备代码；这只证明该接口可达，不能证明令牌能更换 2FA。已向用户发送独立的临时设备授权，仅准备在账号身份匹配后只读查询 mfa_info，禁止轮换与令牌持久化，等待用户完成官方授权。
+
+本轮小修复把明确 challenge 信号的判定提前到通用 403 之前，返回现有白名单 login_interaction_required；普通 403 不变。33 个 worker 离线测试与非 root/只读/无外网镜像 smoke 通过，尚未部署此增量。诊断失败也保留：浏览器镜像未完成时的首次启动失败、只读 home 导致 crashpad 启动失败；改用独立 tmpfs home 后才完成浏览器实测，未更换指纹、代理或操作验证码。证据在 docs-local/twofa-access-diagnosis/；上一轮日志和真实任务保持原样。

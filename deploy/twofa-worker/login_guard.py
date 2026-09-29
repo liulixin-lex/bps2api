@@ -31,14 +31,16 @@ def validate_authorize_url(url: str) -> None:
 
 def validate_oauth_response(response) -> None:
     status = response.status_code
+    # Cloudflare uses HTTP 403 for browser challenges too. Classify its
+    # explicit signal before generic access denial, without echoing headers.
+    if str(response.headers.get("cf-mitigated", "")).strip().lower() == "challenge":
+        raise LoginBootstrapError("login_interaction_required")
     if status == 403:
         raise LoginBootstrapError("login_access_denied")
     if status == 429:
         raise LoginBootstrapError("login_rate_limited")
     if status != 200:
         raise LoginBootstrapError("login_bootstrap_rejected")
-    if str(response.headers.get("cf-mitigated", "")).lower() == "challenge":
-        raise LoginBootstrapError("login_interaction_required")
     try:
         parsed = urlsplit(str(response.url))
         valid = (parsed.scheme == "https" and parsed.hostname == "auth.openai.com"

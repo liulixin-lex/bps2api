@@ -33,6 +33,9 @@ def test_valid_authorize_url():
 
 @pytest.mark.parametrize('status,headers,url,code', [
     (403, {}, 'https://auth.openai.com/api/accounts/authorize', 'login_access_denied'),
+    (403, {'cf-mitigated': 'challenge'}, 'https://auth.openai.com/api/accounts/authorize', 'login_interaction_required'),
+    (403, {'cf-mitigated': ' CHALLENGE '}, 'https://auth.openai.com/api/accounts/authorize', 'login_interaction_required'),
+    (403, {'cf-mitigated': 'unknown-sensitive-value'}, 'https://auth.openai.com/api/accounts/authorize', 'login_access_denied'),
     (429, {}, 'https://auth.openai.com/api/accounts/authorize', 'login_rate_limited'),
     (500, {}, 'https://auth.openai.com/api/accounts/authorize', 'login_bootstrap_rejected'),
     (200, {'cf-mitigated': 'challenge'}, 'https://auth.openai.com/log-in', 'login_interaction_required'),
@@ -50,7 +53,8 @@ def test_valid_oauth_landing():
 
 
 @pytest.mark.skipif(not os.getenv('CHANGE2FA_SOURCE_DIR'), reason='pinned engine source not supplied')
-def test_bootstrap_403_never_calls_authorize_continue(monkeypatch):
+@pytest.mark.parametrize('challenge,code', [(False, 'login_access_denied'), (True, 'login_interaction_required')])
+def test_bootstrap_403_never_calls_authorize_continue(monkeypatch, challenge, code):
     import request_phase
     import session_phase
     count = {'continue': 0, 'bootstrap': 0}
@@ -59,7 +63,8 @@ def test_bootstrap_403_never_calls_authorize_continue(monkeypatch):
         def get(self, url, **_kwargs):
             denied = url.startswith('https://auth.openai.com/')
             count['bootstrap'] += int(denied)
-            return SimpleNamespace(status_code=403 if denied else 200, url=url, headers={})
+            return SimpleNamespace(status_code=403 if denied else 200, url=url,
+                                   headers={'cf-mitigated': 'challenge'} if denied and challenge else {})
         def post(self, _url, **_kwargs):
             return SimpleNamespace(status_code=200, json=lambda: {'url': 'https://auth.openai.com/api/accounts/authorize?state=offline'})
         def close(self): pass
@@ -71,7 +76,7 @@ def test_bootstrap_403_never_calls_authorize_continue(monkeypatch):
     monkeypatch.setattr(request_phase, '_step_authorize_continue', unexpected_continue)
     monkeypatch.setattr(request_phase, '_get_sentinel_token', lambda *_a: 'offline')
     monkeypatch.setattr(session_phase, '_resolve_login_flow', lambda _explicit: 'anti409')
-    with pytest.raises(LoginBootstrapError, match='login_access_denied'):
+    with pytest.raises(LoginBootstrapError, match=code):
         asyncio.run(session_phase.get_session_pure_request(email='test@example.com', password='private', secret='JBSWY3DPEHPK3PXP', log=lambda _s: None))
     assert count == {'continue': 0, 'bootstrap': 1}
 

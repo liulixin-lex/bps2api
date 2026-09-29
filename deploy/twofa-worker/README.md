@@ -65,3 +65,5 @@ CHANGE2FA_SOURCE_DIR=/path/to/pinned/upstream python -m pytest -q test_worker.py
 对于固定上游产生的历史记录，仅初次登录专属错误前缀且无轮换 checkpoint、无密码变更、无重试的记录作只读状态映射；不写库重分类，也不放行中断或无法判定阶段的旧任务。API 仅返回白名单错误码，不返回原错误、Cookie、访问令牌或密钥。
 
 HTTP 403 表示当前登录初始化被拒绝；本修复不会使被上游拒绝的网络环境自动获得访问权限。需要浏览器/邮箱额外验证的账号会明确提示，不能声称所有真实账号自动登录均已通过。
+
+Cloudflare 明确返回 cf-mitigated: challenge 时，优先于通用 HTTP 403 分类为 login_interaction_required；仍立即停止，不自动推进账号登录或更换。普通 403 继续保留 login_access_denied。用户在其他浏览器的登录状态不会由本桥接层自动共享。
