@@ -694,7 +694,9 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 		// Recover a short throttle before cooling this route or returning its
 		// failure. Every new send consumes the same HTTP/SSE/repair envelope.
 		reserveSwitch := resp.StatusCode == http.StatusTooManyRequests && !providerFailure.permanent && s.excelBPSReserveAccountSwitch(ctx, c, account, originalModel, model, recovery)
-		if providerFailure.retry && !reserveSwitch && !c.Writer.Written() && ctx.Err() == nil {
+		// Keepalive comments commit HTTP headers without delivering model output.
+		// Only semantic output or an explicitly committed terminal forbids replay.
+		if providerFailure.retry && !reserveSwitch && !openAIStreamClientOutputStarted(c, IsResponseCommitted(c)) && ctx.Err() == nil {
 			_ = resp.Body.Close()
 			releaseLease()
 			if result, failure, retried := retryRequest(originalBody, providerFailure.delay); retried {
