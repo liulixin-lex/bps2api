@@ -26,6 +26,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
+from rotation_service import StagedRotationService, pre_rotation_failure
+
 
 class RotationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -132,6 +134,9 @@ class Runtime:
 
     def summary(self, job: Any) -> dict:
         status = job.status
+        failure = pre_rotation_failure(job)
+        if failure:
+            status = "preflight_failed" if failure == "preflight_failed" else "login_failed"
         if status in {"error", "cancelled"} and not job.rotated_pending_verify and job.error_kind not in {"invalid_credentials", "account_die"}:
             status = "needs_review"
         return {
@@ -139,7 +144,7 @@ class Runtime:
             "login_verified": job.login_verified,
             "rotated_pending_verify": job.rotated_pending_verify,
             "retryable": job.status == "error" and job.rotated_pending_verify and job.retryable,
-            "created_at": job.created_at,
+            "created_at": job.created_at, "error_code": failure or "",
         }
 
     async def submit(self, entry: RotationInput) -> dict:
@@ -161,7 +166,8 @@ class Runtime:
             for job in self.manager.jobs.values():
                 if job.email == entry.email and (
                     job.status in {"queued", "running"} or job.rotated_pending_verify
-                    or (job.status in {"error", "cancelled"} and job.error_kind not in {"invalid_credentials", "account_die"})
+                    or (job.status in {"error", "cancelled"} and job.error_kind not in {"invalid_credentials", "account_die"}
+                        and pre_rotation_failure(job) is None)
                 ):
                     raise HTTPException(409, "account_has_unresolved_job")
             # Reserve before calling the engine. A crash in the handoff must not
@@ -225,7 +231,7 @@ def build_runtime() -> tuple[Runtime, Any]:
             # Structured input preserves passwords containing pipes/commas.
             return entry["email"], entry["password"], entry["mfa_secret"]
 
-    manager = StructuredManager(encrypted, get_settings_repo(engine))
+    manager = StructuredManager(encrypted, get_settings_repo(engine), service=StagedRotationService())
     manager.settings.update({"twofa.max_concurrent": 1, "twofa.auto_retry": False, "twofa.change_enabled": True})
     requests = sqlite3.connect(str(data / "requests.db"), check_same_thread=False)
     return Runtime(manager, requests, hashlib.sha256(key).digest(), lock_file), engine

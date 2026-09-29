@@ -17,7 +17,7 @@
 
 ## 本地 PR 开发
 
-[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：独立本地开发与隔离验证完成，PR 保持 open。用户追加授权后，已将 main 2dfb76d7 + PR 的 a7106a31 部署到测试站；应用版本 0.0.18-pr12.a7106a31，旧 XY2API 保留，域名回切实测通过。详见[测试部署记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。用户已阅读同意并明确授权确认首次声明，worker 接线、本机与公网管理接口验收通过。用户随后提交的真实测试任务在初始 OpenAI 登录处失败（409 invalid_state），未进入 2FA 更换；只读诊断见测试部署记录，登录流程与过于笼统的状态提示待修正。以上不改变主分支生产部署事实。
+[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：独立本地开发与隔离验证完成，PR 保持 open。用户追加授权后，已将 main 2dfb76d7 + PR 的 a7106a31 部署到测试站；应用版本 0.0.18-pr12.a7106a31，旧 XY2API 保留，域名回切实测通过。详见[测试部署记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。用户已阅读同意并明确授权确认首次声明，worker 接线、本机与公网管理接口验收通过。用户随后提交的真实测试任务在初始 OpenAI 登录处失败（409 invalid_state），未进入 2FA 更换；只读诊断见测试部署记录，已定位初始化 403 被忽略导致后续 409；登录前置检查、阶段分类和明确提示的修复候选已通过隔离回归，部署验收继续。以上不改变主分支生产部署事实。
 
 ## 本次 429 修复进度
 

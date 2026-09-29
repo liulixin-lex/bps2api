@@ -22,7 +22,7 @@
         <tbody>
           <tr v-for="job in jobs" :key="job.id" class="border-b dark:border-dark-600">
             <td class="p-2"><div>{{ job.email }}</div><small class="text-gray-400">{{ job.id }}</small></td>
-            <td class="p-2">{{ stateText(job) }}</td>
+            <td class="p-2"><div>{{ stateText(job) }}</div><p v-if="failureText(job)" class="mt-1 max-w-lg text-xs text-amber-600">{{ failureText(job) }}</p></td>
             <td class="p-2">
               <div class="flex flex-wrap gap-2">
                 <button v-if="job.retryable" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || disabled" @click="verify(job)">{{ t('tokenGuard.rotation.verify') }}</button>
@@ -58,7 +58,16 @@ let timer: ReturnType<typeof setInterval> | undefined
 
 function stateText(job: TwoFARotationJob) {
   const state = job.rotated_pending_verify ? 'pendingVerify' : job.status
-  return t('tokenGuard.rotation.states.' + (['queued', 'running', 'success', 'error', 'cancelled', 'needs_review', 'pendingVerify'].includes(state) ? state : 'needs_review'))
+  return t('tokenGuard.rotation.states.' + (['queued', 'running', 'success', 'error', 'cancelled', 'needs_review', 'pendingVerify', 'login_failed', 'preflight_failed'].includes(state) ? state : 'needs_review'))
+}
+
+function failureText(job: TwoFARotationJob) {
+  if (!['login_failed', 'preflight_failed'].includes(job.status) || job.rotated_pending_verify) return ''
+  const allowed = ['login_access_denied', 'login_rate_limited', 'login_bootstrap_rejected',
+    'login_interaction_required', 'login_state_invalid', 'invalid_credentials', 'account_die',
+    'login_failed', 'preflight_failed']
+  const code = allowed.includes(job.error_code ?? '') ? job.error_code : 'login_failed'
+  return t('tokenGuard.rotation.errors.' + code)
 }
 
 async function refresh() {

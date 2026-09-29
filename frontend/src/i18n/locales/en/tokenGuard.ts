@@ -1,6 +1,6 @@
 export default {
   "rotation": {
-    "title": "Rotate account 2FA",
+    "title": "Rotate ChatGPT account 2FA",
     "description": "Rotate TOTP through your private worker and verify login. Separate from automatic re-login; passwords and OAuth tokens are unchanged.",
     "configureFirst": "Save your private 2FA worker URL and access token below first.",
     "saveFirst": "Save or discard pending configuration edits first.",
@@ -21,7 +21,8 @@ export default {
     "loadFailed": "Could not read jobs. Check your private worker and refresh.",
     "submitUncertain": "Submission unconfirmed. Original request IDs are retained. Refresh jobs and continue with the same IDs; do not create the batch again.",
     "actionFailed": "Action incomplete. Refresh status; unverified or superseded secrets cannot be exported.",
-    "states": { "queued": "Queued", "running": "Running", "success": "Rotated and verified", "error": "Incomplete", "cancelled": "Cancelled; review required", "needs_review": "Uncertain; manual review required", "pendingVerify": "Rotated; awaiting verification" }
+    "errors": {"login_access_denied": "OpenAI rejected login initialization (403). Check the login environment; complete any required verification in a browser.", "login_rate_limited": "OpenAI rate-limited login (429). Try again later.", "login_bootstrap_rejected": "Login session initialization failed; subsequent actions stopped.", "login_interaction_required": "Login requires browser, email, or other interactive verification.", "login_state_invalid": "OpenAI rejected the login state (409 invalid_state); no 2FA rotation was attempted.", "invalid_credentials": "Login credentials or the current 2FA code were rejected. Check the input.", "account_die": "OpenAI reported the account as deactivated; no rotation attempted.", "login_failed": "Login did not complete; no 2FA rotation attempted.", "preflight_failed": "Preflight checks failed; 2FA was not modified."},
+    "states": {"login_failed": "ChatGPT login failed; 2FA unchanged", "preflight_failed": "Preflight failed; 2FA unchanged",  "queued": "Queued", "running": "Running", "success": "Rotated and verified", "error": "Incomplete", "cancelled": "Cancelled; review required", "needs_review": "Uncertain; manual review required", "pendingVerify": "Rotated; awaiting verification" }
   },
   "twoFA": {
   "title": "2FA login and import",

@@ -26,6 +26,7 @@ type AccountTwoFARotationJob struct {
 	ID                   string  `json:"id"`
 	Email                string  `json:"email"`
 	Status               string  `json:"status"`
+	ErrorCode            string  `json:"error_code,omitempty"`
 	LoginVerified        bool    `json:"login_verified"`
 	RotatedPendingVerify bool    `json:"rotated_pending_verify"`
 	Retryable            bool    `json:"retryable"`
@@ -37,6 +38,17 @@ type AccountTwoFARotationResult struct {
 	Email         string `json:"email"`
 	MFASecret     string `json:"mfa_secret"`
 	LoginVerified bool   `json:"login_verified"`
+}
+
+// Only fixed diagnostic codes cross the admin API; never forward upstream text.
+func sanitizeTwoFARotationJob(job *AccountTwoFARotationJob) {
+	switch job.ErrorCode {
+	case "login_access_denied", "login_rate_limited", "login_bootstrap_rejected",
+		"login_interaction_required", "login_state_invalid", "invalid_credentials",
+		"account_die", "login_failed", "preflight_failed":
+	default:
+		job.ErrorCode = ""
+	}
 }
 
 var rotationIDPattern = regexp.MustCompile(`^(?:[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})$`)
@@ -142,6 +154,7 @@ func (s *AccountTokenGuardService) StartTwoFARotation(ctx context.Context, req A
 	if !rotationIDPattern.MatchString(job.ID) || !strings.EqualFold(strings.TrimSpace(req.Email), job.Email) {
 		return nil, errors.New("2FA 服务返回了不匹配的任务，请查询原任务")
 	}
+	sanitizeTwoFARotationJob(&job)
 	return &job, nil
 }
 
@@ -151,6 +164,9 @@ func (s *AccountTokenGuardService) TwoFARotationJobs(ctx context.Context) ([]Acc
 	}
 	if err := s.twoFARotationCall(ctx, http.MethodGet, "/jobs", nil, &response); err != nil {
 		return nil, err
+	}
+	for i := range response.Jobs {
+		sanitizeTwoFARotationJob(&response.Jobs[i])
 	}
 	return response.Jobs, nil
 }
@@ -166,6 +182,7 @@ func (s *AccountTokenGuardService) RetryTwoFARotation(ctx context.Context, id st
 	if job.ID != id {
 		return nil, errors.New("2FA 服务返回了不匹配的任务")
 	}
+	sanitizeTwoFARotationJob(&job)
 	return &job, nil
 }
 

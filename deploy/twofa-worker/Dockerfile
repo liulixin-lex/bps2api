@@ -18,7 +18,8 @@ COPY requirements.txt requirements-bridge.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && useradd --uid 10001 --create-home worker \
     && install -d -o worker -g worker -m 700 /data
-COPY worker.py ./
+COPY worker.py login_guard.py rotation_service.py patch_upstream.py ./
+RUN python patch_upstream.py /opt/change2fa
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     CHANGE2FA_SOURCE_DIR=/opt/change2fa TWOFA_DATA_DIR=/data \
     PYTHONPATH=/opt/change2fa

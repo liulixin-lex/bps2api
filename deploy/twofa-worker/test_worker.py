@@ -207,3 +207,19 @@ def test_pinned_engine_sqlite_checkpoint_verify_and_recovery(tmp_path):
     assert recovered._queue.empty()
     rt.requests.close()
     engine.close()
+
+
+def test_proven_login_failure_can_be_resubmitted_only_with_new_confirmation(client, runtime):
+    first = client.post('/jobs', json=entry()).json()
+    job = runtime.manager.jobs[first['id']]
+    job.status = 'error'
+    job.error_kind = 'pre_rotation:login_access_denied'
+    summary = client.get('/jobs').json()['jobs'][0]
+    assert summary['status'] == 'login_failed'
+    assert summary['error_code'] == 'login_access_denied'
+    assert summary['retryable'] is False
+    assert client.post('/jobs/' + job.id + '/verify').status_code == 409
+    assert client.post('/jobs', json=entry(confirmed=False)).status_code == 400
+    assert runtime.manager.add_calls == 1
+    assert client.post('/jobs', json=entry()).status_code == 202
+    assert runtime.manager.add_calls == 2

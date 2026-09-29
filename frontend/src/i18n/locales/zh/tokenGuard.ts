@@ -1,6 +1,6 @@
 export default {
   "rotation": {
-    "title": "更换账号 2FA",
+    "title": "更换 ChatGPT 账号 2FA",
     "description": "使用自托管维护服务更换 TOTP 密钥并验证登录。此操作独立于自动重登，不修改账号密码或 OAuth Token。",
     "configureFirst": "请先在下方保存自托管 2FA 维护服务地址和密钥。",
     "saveFirst": "请先保存或撤销下方未保存的配置。",
@@ -21,7 +21,8 @@ export default {
     "loadFailed": "任务读取未完成，请检查自托管维护服务后刷新。",
     "submitUncertain": "提交未确认，已保留原请求标识。请先刷新任务，再用原标识继续；不要重新创建同一批。",
     "actionFailed": "操作未完成，请刷新任务状态；尚未验证或已被后续任务替换的密钥不能导出。",
-    "states": { "queued": "排队中", "running": "执行中", "success": "更换并验证成功", "error": "未完成", "cancelled": "已取消，需核查", "needs_review": "结果不确定，需人工核查", "pendingVerify": "已更换，等待验证" }
+    "errors": {"login_access_denied": "OpenAI 登录初始化被拒绝（403）。请检查登录环境；如需额外验证，请在浏览器中完成。", "login_rate_limited": "OpenAI 限制了登录请求（429），请稍后再试。", "login_bootstrap_rejected": "登录会话初始化失败，已停止后续操作。", "login_interaction_required": "登录需要浏览器或邮箱等额外验证，当前自动流程无法完成。", "login_state_invalid": "OpenAI 登录状态无效（409 invalid_state），尚未执行 2FA 更换。", "invalid_credentials": "登录凭据或当前 2FA 验证失败，请核对输入。", "account_die": "OpenAI 返回账号停用状态，未执行更换。", "login_failed": "登录未完成，尚未执行 2FA 更换。", "preflight_failed": "更换前检查未通过，尚未修改 2FA。"},
+    "states": {"login_failed": "ChatGPT 登录失败，未更换 2FA", "preflight_failed": "更换前检查失败，未更换 2FA",  "queued": "排队中", "running": "执行中", "success": "更换并验证成功", "error": "未完成", "cancelled": "已取消，需核查", "needs_review": "结果不确定，需人工核查", "pendingVerify": "已更换，等待验证" }
   },
   "twoFA": {
   "title": "2FA 登录导入",

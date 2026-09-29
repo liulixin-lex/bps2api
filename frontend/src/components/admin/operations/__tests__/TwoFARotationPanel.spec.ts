@@ -72,4 +72,23 @@ describe('explicit 2FA rotation workflow', () => {
     expect(api.verifyTwoFARotation).toHaveBeenCalledWith(job.id)
     expect(api.startTwoFARotation).not.toHaveBeenCalled()
   })
+  it('shows a safe pre-rotation login failure without a verify or copy action', async () => {
+    vi.mocked(api.listTwoFARotations).mockResolvedValue([{ ...job, status: 'login_failed', error_code: 'login_access_denied' }])
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('rotation.states.login_failed')
+    expect(wrapper.text()).toContain('rotation.errors.login_access_denied')
+    expect(wrapper.text()).not.toContain('rotation.states.needs_review')
+    expect(wrapper.text()).not.toContain('rotation.verify')
+    expect(wrapper.text()).not.toContain('rotation.copy')
+    expect(api.startTwoFARotation).not.toHaveBeenCalled()
+  })
+  it('never displays unrecognized worker diagnostic text', async () => {
+    vi.mocked(api.listTwoFARotations).mockResolvedValue([{ ...job, status: 'login_failed', error_code: 'private-secret-from-worker' }])
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('rotation.errors.login_failed')
+    expect(wrapper.text()).not.toContain('private-secret')
+  })
+
 })

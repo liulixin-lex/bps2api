@@ -5,6 +5,7 @@ export interface TwoFARotationJob {
   id: string
   email: string
   status: string
+  error_code?: string
   login_verified: boolean
   rotated_pending_verify: boolean
   retryable: boolean

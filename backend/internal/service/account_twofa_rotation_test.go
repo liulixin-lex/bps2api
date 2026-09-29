@@ -148,3 +148,29 @@ func TestTwoFARotationRejectsUnverifiedMismatchedOrOversizedResults(t *testing.T
 		}
 	}
 }
+
+func TestTwoFARotationSafeFailureCodes(t *testing.T) {
+	for _, code := range []string{"login_access_denied", "login_state_invalid", "sensitive-password-or-token"} {
+		svc := rotationTestService(t, func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"jobs": []map[string]any{{
+				"id": rotationTestID, "email": "test@example.com", "status": "login_failed",
+				"error_code": code, "error": "sensitive-upstream-body",
+			}}})
+		})
+		jobs, err := svc.TwoFARotationJobs(context.Background())
+		if err != nil || len(jobs) != 1 {
+			t.Fatalf("jobs=%v err=%v", jobs, err)
+		}
+		if code == "sensitive-password-or-token" {
+			if jobs[0].ErrorCode != "" {
+				t.Fatal("unrecognized diagnostic leaked")
+			}
+		} else if jobs[0].ErrorCode != code || jobs[0].Status != "login_failed" {
+			t.Fatal("lost safe failure classification")
+		}
+		encoded, _ := json.Marshal(jobs)
+		if strings.Contains(string(encoded), "sensitive") {
+			t.Fatal("sensitive worker data leaked")
+		}
+	}
+}
