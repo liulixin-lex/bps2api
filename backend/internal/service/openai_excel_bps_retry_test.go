@@ -24,7 +24,7 @@ func TestExcelBPSHTTPRetryBounds(t *testing.T) {
 	}{
 		{502, "", true}, {503, "0", true}, {504, "2", true}, {503, "3", true},
 		{503, "-1", false}, {503, "nonsense", false}, {503, now.Add(time.Second).Format(http.TimeFormat), true},
-		{503, now.Add(time.Minute).Format(http.TimeFormat), true}, {403, "", false}, {401, "", false}, {429, "0", false},
+		{503, now.Add(time.Minute).Format(http.TimeFormat), true}, {403, "", false}, {401, "", false}, {429, "0", true},
 	} {
 		delay, retry := excelBPSHTTPRetryDelay(tc.status, tc.header, now)
 		require.Equal(t, tc.retry, retry)
@@ -47,7 +47,7 @@ func TestExcelBPSExplicitTransientHTTPRecovery(t *testing.T) {
 	}{
 		{"recover 502", 502, "0", 200, 2, true}, {"recover 503", 503, "0", 200, 2, true}, {"recover 504", 504, "0", 200, 2, true},
 		{"one retry only", 503, "0", 503, 2, false}, {"respect backoff", 503, "30", 200, 1, false},
-		{"permission denied", 403, "", 200, 1, false}, {"rate limited", 429, "", 200, 1, false},
+		{"permission denied", 403, "", 200, 1, false}, {"rate limited", 429, "", 200, 2, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			first := &passthroughCloseTrackingReadCloser{Reader: strings.NewReader("{}")}
@@ -146,8 +146,9 @@ func TestExcelBPSRecoveryRepairSharesDeadlineAndAttempts(t *testing.T) {
 	require.True(t, r.consumeRepair())
 	ctx, cancel := r.withDeadline(context.Background())
 	defer cancel()
-	deadline, ok := ctx.Deadline()
-	require.True(t, ok)
+	deadline := r.deadline
+	_, inheritedDeadline := ctx.Deadline()
+	require.False(t, inheritedDeadline, "recovery timer must be removable without removing caller cancellation")
 	require.WithinDuration(t, time.Now().Add(time.Second), deadline, 100*time.Millisecond)
 	_, nextDeadline, ok := r.reserve(time.Now(), 0)
 	require.True(t, ok)

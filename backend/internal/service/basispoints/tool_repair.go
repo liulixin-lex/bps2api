@@ -381,6 +381,13 @@ func ReadToolRepairResponse(reader io.Reader) (map[string]any, error) {
 		switch kind {
 		case "response.completed", "response.failed", "response.incomplete", "error":
 			response, _ = payload["response"].(object)
+			if kind == "error" && response == nil {
+				failure := payload["error"]
+				if failure == nil {
+					failure = payload
+				}
+				response = object{"error": failure}
+			}
 			if kind != "response.completed" || response == nil {
 				terminalError = fmt.Errorf("basispoints correction did not complete")
 			} else {

@@ -202,7 +202,7 @@ func (s *OpenAIGatewayService) doExcelBPSRequest(ctx context.Context, c *gin.Con
 			}
 			return nil, nil, proxy, err
 		}
-		c.Set("excel_bps_upstream_attempt", attempt)
+		c.Set("excel_bps_upstream_attempt", c.GetInt("excel_bps_upstream_attempt")+1)
 		evidence := &excelBPSWriteEvidence{}
 		resp, err := s.httpUpstream.Do(evidence.request(req), proxy, account.ID, account.Concurrency)
 		if err == nil {

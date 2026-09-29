@@ -36,7 +36,7 @@ func TestIncidentBPSProtocolRecoveryBoundaries(t *testing.T) {
 	bad := incidentBPSToolResponse("resp_rejected", "{malformed")
 	good := incidentBPSToolResponse("resp_corrected", `{"name":"exec","input":"print('exact')"}`)
 	textDelta := incidentBPSFrame("response.output_text.delta", map[string]any{"delta": "already delivered"})
-	providerFailure := incidentBPSFrame("response.failed", map[string]any{"response": map[string]any{"status": "failed", "error": map[string]any{"code": "server_is_overloaded", "message": "busy"}}})
+	providerFailure := incidentBPSFrame("response.failed", map[string]any{"response": map[string]any{"status": "failed", "error": map[string]any{"code": "provider_request_rejected", "message": "rejected"}}})
 	for _, tc := range []struct {
 		name, first, second string
 		stream, success     bool
@@ -86,7 +86,7 @@ func TestIncidentBPSProtocolRecoveryBoundaries(t *testing.T) {
 					require.NotContains(t, rec.Body.String(), "custom_tool_call")
 				}
 				if tc.name == "provider JSON attribution" {
-					require.Contains(t, rec.Body.String(), "server_is_overloaded")
+					require.Contains(t, rec.Body.String(), "provider_request_rejected")
 					require.NotContains(t, rec.Body.String(), "basispoints_protocol_error")
 				}
 			}

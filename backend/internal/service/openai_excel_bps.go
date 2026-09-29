@@ -220,12 +220,54 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	if s.cfg != nil {
 		timeouts = s.cfg.Gateway.ExcelBPSTimeouts
 	}
+	// Handler account switching must not reset the service retry envelope.
+	// Gin's keys are request-scoped; recursive attempts keep this same object.
+	recovery := newExcelBPSRecovery(timeouts)
+	if stored, ok := c.Get("excel_bps_shared_recovery"); ok {
+		if existing, ok := stored.(*excelBPSRecovery); ok {
+			recovery = existing
+			if !recovery.consumeRepair() {
+				status := c.GetInt("excel_bps_recovery_last_status")
+				if status < 400 {
+					status = http.StatusServiceUnavailable
+				}
+				const code = "basispoints_recovery_exhausted"
+				const message = "Excel BPS automatic recovery attempt or time budget was exhausted"
+				committed := StopOpenAICompactSSEKeepaliveCommitted(c) || c.Writer.Written()
+				MarkResponseCommitted(c)
+				if committed {
+					chat := excelBPSChatFromContext(ctx)
+					var downstream io.StringWriter = c.Writer
+					if chat != nil {
+						downstream = newExcelBPSChatWriter(c.Writer, chat.OriginalModel, chat.IncludeUsage)
+					} else if messages := excelBPSMessagesFromContext(ctx); messages != nil {
+						downstream = newExcelBPSMessagesWriter(c.Writer, messages.OriginalModel)
+					}
+					writeExcelBPSStreamFailure(c, chat, downstream, status, code, message)
+				} else {
+					writeExcelBPSJSONError(c, excelBPSMessagesFromContext(ctx), status, code, message)
+				}
+				return nil, fmt.Errorf("excel BPS: %s", code)
+			}
+			var cancel context.CancelFunc
+			ctx, cancel = recovery.withDeadline(ctx)
+			defer cancel()
+		}
+	} else {
+		c.Set("excel_bps_shared_recovery", recovery)
+	}
+	recovery.mu.Lock()
+	if recovery.accounts == nil {
+		recovery.accounts = make(map[int64]struct{})
+	}
+	recovery.accounts[account.ID] = struct{}{}
+	recovery.mu.Unlock()
 	if timeouts.TotalSeconds > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeoutCause(ctx, time.Duration(timeouts.TotalSeconds)*time.Second, errExcelBPSRequestTimeout)
+		ctx, cancel = context.WithDeadlineCause(ctx, recovery.started.Add(time.Duration(timeouts.TotalSeconds)*time.Second), errExcelBPSRequestTimeout)
 		defer cancel()
 	}
-	return s.forwardExcelBPSAttempt(ctx, c, account, body, start, timeouts, 0, newExcelBPSRecovery(timeouts))
+	return s.forwardExcelBPSAttempt(ctx, c, account, body, start, timeouts, 0, recovery)
 }
 
 func (s *OpenAIGatewayService) forwardExcelBPSAttempt(ctx context.Context, c *gin.Context, account *Account, body []byte, start time.Time, timeouts config.ExcelBPSTimeoutConfig, attempt int, recovery *excelBPSRecovery) (*OpenAIForwardResult, error) {
@@ -289,6 +331,8 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 	// No output exists yet, so the handler may replay the request on another
 	// account within its switch budget unless the client is already gone.
 	failoverRateLimited := func(retryAfter string) (*OpenAIForwardResult, error) {
+		c.Set("excel_bps_recovery_last_status", http.StatusTooManyRequests)
+		retryAfter = excelBPSRetryAfterHeader(retryAfter)
 		if !isQualityObservation(ctx) {
 			s.coolDownExcelBPS(ctx, account, retryAfter)
 		}
@@ -305,9 +349,13 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 	defer func() { releaseAttachment() }()
 	// Call only after closing the failed response and releasing its proxy lease.
 	// No response IDs, text or client tool calls may have been delivered yet.
-	retryRequest := func(nextBody []byte, minimumDelay time.Duration) (*OpenAIForwardResult, error, bool) {
-		releaseAttachment()
-		retryCtx, cancel, reserved, retryErr := recovery.begin(ctx, minimumDelay)
+	retryRequest := func(nextBody []byte, minimumDelay time.Duration, cleanup ...func()) (*OpenAIForwardResult, error, bool) {
+		retryCtx, cancel, reserved, retryErr := recovery.begin(ctx, minimumDelay, func() {
+			for _, closeAttempt := range cleanup {
+				closeAttempt()
+			}
+			releaseAttachment()
+		})
 		if !reserved {
 			return nil, retryErr, false
 		}
@@ -558,6 +606,12 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(raw))
 		if retryBody, retry := prepareExcelBPSInvalidEncryptedRetry(upstreamBody, raw); retry && attempt == 0 && readErr == nil && len(raw) <= maxRejectionBytes && ctx.Err() == nil && recovery.consumeRepair() {
+			// Persist the same narrow repair on the ingress request as well: a
+			// later HTTP/SSE retry must not restore the rejected ciphertext or
+			// feed the already translated tool catalog through Prepare twice.
+			if repairedOriginal, changed := prepareExcelBPSInvalidEncryptedRetry(originalBody, raw); changed {
+				originalBody = repairedOriginal
+			}
 			var cancel context.CancelFunc
 			requestCtx, cancel = recovery.withDeadline(requestCtx)
 			defer cancel()
@@ -588,6 +642,12 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 				if lease != nil && ctx.Err() == nil {
 					lease.ReportFailure()
 				}
+				releaseLease()
+				if excelBPSRetryableTransportError(err) && ctx.Err() == nil {
+					if result, failure, retried := retryRequest(originalBody, 0); retried {
+						return result, failure
+					}
+				}
 				return fail(502, "basispoints_transport_error", "Excel BPS recovery connection failed; request was not replayed again")
 			}
 			upstreamBody = retryBody
@@ -617,12 +677,12 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 			}
 		}
 		code := gjson.GetBytes(raw, "error.code").String()
+		providerFailure := excelBPSClassifyProviderFailure(raw, resp.StatusCode, excelBPSRetryAfterValue(resp.Header), time.Now())
 		modelAccessDenied := resp.StatusCode == http.StatusForbidden && code == string(ExcelBPSModelAccessChangedReason)
 		// A failover attempt is only an event; the handler records the final state.
 		kind := "failover"
 		if resp.StatusCode != http.StatusTooManyRequests && !modelAccessDenied {
 			kind = "http_error"
-			setOpsUpstreamError(c, resp.StatusCode, upstreamMessage, upstreamDetail)
 		}
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
@@ -631,12 +691,25 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 			UpstreamURL: basispoints.ResponsesURL, Kind: kind,
 			Message: upstreamMessage, Detail: upstreamDetail, UpstreamResponseBody: upstreamDetail,
 		})
-		if resp.StatusCode == http.StatusTooManyRequests {
-			return failoverRateLimited(resp.Header.Get("Retry-After"))
+		// Recover a short throttle before cooling this route or returning its
+		// failure. Every new send consumes the same HTTP/SSE/repair envelope.
+		reserveSwitch := resp.StatusCode == http.StatusTooManyRequests && !providerFailure.permanent && s.excelBPSReserveAccountSwitch(ctx, c, account, originalModel, model, recovery)
+		if providerFailure.retry && !reserveSwitch && !c.Writer.Written() && ctx.Err() == nil {
+			_ = resp.Body.Close()
+			releaseLease()
+			if result, failure, retried := retryRequest(originalBody, providerFailure.delay); retried {
+				return result, failure
+			}
+		}
+		if resp.StatusCode == http.StatusTooManyRequests && !providerFailure.permanent {
+			return failoverRateLimited(excelBPSRetryAfterValue(resp.Header))
+		}
+		if !modelAccessDenied {
+			setOpsUpstreamError(c, resp.StatusCode, upstreamMessage, upstreamDetail)
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
 			s.handleExcelBPSUnauthorized(ctx, account, resp.StatusCode, resp.Header, raw)
-			if retryAfter := excelBPSRetryAfterHeader(resp.Header.Get("Retry-After")); retryAfter != "" && !c.Writer.Written() {
+			if retryAfter := excelBPSRetryAfterHeader(excelBPSRetryAfterValue(resp.Header)); retryAfter != "" && !c.Writer.Written() {
 				c.Header("Retry-After", retryAfter)
 			}
 			return fail(resp.StatusCode, "basispoints_upstream_error", "Excel BPS authentication failed; request was not replayed")
@@ -646,21 +719,11 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 				return clientCanceled()
 			}
 			if !StopOpenAICompactSSEKeepaliveCommitted(c) && !c.Writer.Written() && !IsResponseCommitted(c) {
-				return nil, newExcelBPSModelAccessChangedFailoverError(model, resp.Header.Get("Retry-After"))
+				return nil, newExcelBPSModelAccessChangedFailoverError(model, excelBPSRetryAfterValue(resp.Header))
 			}
 			return fail(resp.StatusCode, code, excelBPSModelAccessChangedClientMessage)
 		}
-		// Only explicitly transient HTTP rejections are retried, within the
-		// shared recovery budget and before any downstream bytes are delivered.
-		// Never replay permission errors, rate limits, or partial streams.
-		if delay, retry := excelBPSHTTPRetryDelay(resp.StatusCode, resp.Header.Get("Retry-After"), time.Now()); retry && !c.Writer.Written() && ctx.Err() == nil {
-			_ = resp.Body.Close()
-			releaseLease()
-			if result, failure, retried := retryRequest(originalBody, delay); retried {
-				return result, failure
-			}
-		}
-		if retryAfter := excelBPSRetryAfterHeader(resp.Header.Get("Retry-After")); retryAfter != "" && !c.Writer.Written() {
+		if retryAfter := excelBPSRetryAfterHeader(excelBPSRetryAfterValue(resp.Header)); retryAfter != "" && !c.Writer.Written() {
 			c.Header("Retry-After", retryAfter)
 		}
 		if code == "basispoints_model_access_changed" {
@@ -696,6 +759,10 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 	// budget. It survives recursive attempts and prevents a request from
 	// spending one repair on every fresh stream.
 	converted := bridge.StreamWithPreOutputRepairs(requestCtx, activity, func(repairCtx context.Context, failed map[string]any, validation error) (map[string]any, error) {
+		preserveFailure := func(failure excelBPSProviderFailure, header http.Header) error {
+			usagePayload, _ := json.Marshal(map[string]any{"type": "response.failed", "response": map[string]any{"usage": failed["usage"]}})
+			return basispoints.PreserveError(&excelBPSProviderRetryError{failure: failure, retryAfter: excelBPSRetryAfterHeader(excelBPSRetryAfterValue(header)), usagePayload: usagePayload})
+		}
 		if excelBPSSourceRegenerationRequired(failed) {
 			return nil, fmt.Errorf("basispoints source regeneration required: %w", validation)
 		}
@@ -715,21 +782,26 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 		if err := s.acquireOpenAIRPMForSend(repairCtx, account); err != nil {
 			return nil, basispoints.PreserveError(err)
 		}
+		c.Set("excel_bps_upstream_attempt", c.GetInt("excel_bps_upstream_attempt")+1)
 		repairResp, err := s.httpUpstream.Do(repairReq, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
 			if repairCtx.Err() != nil {
 				return nil, repairCtx.Err()
 			}
-			return nil, fmt.Errorf("excel BPS correction connection failed")
+			return nil, preserveFailure(excelBPSProviderFailure{status: http.StatusBadGateway, retry: true}, nil)
 		}
 		defer func() { _ = repairResp.Body.Close() }()
 		stop := context.AfterFunc(repairCtx, func() { _ = repairResp.Body.Close() })
 		defer stop()
 		if repairResp.StatusCode < 200 || repairResp.StatusCode >= 300 {
 			raw, _ := io.ReadAll(io.LimitReader(repairResp.Body, 512<<10))
+			providerFailure := excelBPSClassifyProviderFailure(raw, repairResp.StatusCode, excelBPSRetryAfterValue(repairResp.Header), time.Now())
+			if providerFailure.retry {
+				return nil, preserveFailure(providerFailure, repairResp.Header)
+			}
 			if repairResp.StatusCode == http.StatusTooManyRequests {
 				// Output was already accepted: cool the route, never replay the request.
-				s.coolDownExcelBPS(repairCtx, account, repairResp.Header.Get("Retry-After"))
+				s.coolDownExcelBPS(repairCtx, account, excelBPSRetryAfterHeader(excelBPSRetryAfterValue(repairResp.Header)))
 			}
 			s.handleExcelBPSUnauthorized(repairCtx, account, repairResp.StatusCode, repairResp.Header, raw)
 			if repairResp.StatusCode == http.StatusForbidden && gjson.GetBytes(raw, "error.code").String() != "basispoints_model_access_changed" {
@@ -740,7 +812,15 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 		}
 		s.UpdateCodexUsageSnapshotFromHeaders(repairCtx, account.ID, repairResp.Header)
 		upstreamBody = correctedBody
-		return basispoints.ReadToolRepairResponse(&excelBPSRepairActivityBody{ReadCloser: repairResp.Body, activity: activity})
+		repairedResponse, readErr := basispoints.ReadToolRepairResponse(&excelBPSRepairActivityBody{ReadCloser: repairResp.Body, activity: activity})
+		if readErr != nil {
+			raw, _ := json.Marshal(repairedResponse)
+			providerFailure := excelBPSClassifyProviderFailure(raw, repairResp.StatusCode, excelBPSRetryAfterValue(repairResp.Header), time.Now())
+			if providerFailure.retry {
+				return nil, preserveFailure(providerFailure, repairResp.Header)
+			}
+		}
+		return repairedResponse, readErr
 	}, func(repairCtx context.Context) (io.ReadCloser, error) {
 		if !recovery.consumeRepair() {
 			return nil, fmt.Errorf("excel BPS shared recovery budget exhausted")
@@ -763,15 +843,23 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 		if err := s.acquireOpenAIRPMForSend(repairCtx, account); err != nil {
 			return nil, basispoints.PreserveError(err)
 		}
+		c.Set("excel_bps_upstream_attempt", c.GetInt("excel_bps_upstream_attempt")+1)
 		repaired, err := s.httpUpstream.Do(retry, proxyURL, account.ID, account.Concurrency)
 		if err != nil {
-			return nil, fmt.Errorf("excel BPS tool correction transport failed")
+			if repairCtx.Err() != nil {
+				return nil, repairCtx.Err()
+			}
+			return nil, basispoints.PreserveError(&excelBPSProviderRetryError{failure: excelBPSProviderFailure{status: http.StatusBadGateway, retry: true}})
 		}
 		if repaired.StatusCode < 200 || repaired.StatusCode >= 300 {
 			raw, _ := io.ReadAll(io.LimitReader(repaired.Body, 512<<10))
 			_ = repaired.Body.Close()
+			providerFailure := excelBPSClassifyProviderFailure(raw, repaired.StatusCode, excelBPSRetryAfterValue(repaired.Header), time.Now())
+			if providerFailure.retry {
+				return nil, basispoints.PreserveError(&excelBPSProviderRetryError{failure: providerFailure, retryAfter: excelBPSRetryAfterHeader(excelBPSRetryAfterValue(repaired.Header))})
+			}
 			if repaired.StatusCode == http.StatusTooManyRequests {
-				s.coolDownExcelBPS(repairCtx, account, repaired.Header.Get("Retry-After"))
+				s.coolDownExcelBPS(repairCtx, account, excelBPSRetryAfterHeader(excelBPSRetryAfterValue(repaired.Header)))
 			}
 			s.handleExcelBPSUnauthorized(repairCtx, account, repaired.StatusCode, repaired.Header, raw)
 			if repaired.StatusCode == http.StatusForbidden && gjson.GetBytes(raw, "error.code").String() != "basispoints_model_access_changed" {
@@ -849,6 +937,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 	var completed []byte
 	terminal := ""
 	terminalCode := "basispoints_upstream_error"
+	terminalStatus := http.StatusBadGateway
 	// Hold only initial metadata so a failed local translation can be regenerated
 	// once without exposing duplicate response IDs or replaying client tool calls.
 	var pending strings.Builder
@@ -859,6 +948,36 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 		if strings.HasPrefix(line, "data: ") {
 			payload := []byte(strings.TrimPrefix(line, "data: "))
 			kind := gjson.GetBytes(payload, "type").String()
+			if kind == "error" || kind == "response.failed" {
+				providerFailure := excelBPSClassifyProviderFailure(payload, resp.StatusCode, excelBPSRetryAfterValue(resp.Header), time.Now())
+				if providerFailure.status == http.StatusTooManyRequests && !providerFailure.permanent && !outputCommitted && ctx.Err() == nil && s.excelBPSReserveAccountSwitch(ctx, c, account, originalModel, model, recovery) {
+					return failoverRateLimited(excelBPSRetryAfterValue(resp.Header))
+				}
+				// Inspect the provider terminal BEFORE it can commit downstream
+				// state. Metadata and keepalives alone do not dispatch a tool.
+				if providerFailure.retry && !outputCommitted && ctx.Err() == nil {
+					if result, failure, retried := retryRequest(originalBody, providerFailure.delay, func() {
+						scanner.Close()
+						_ = converted.Close()
+						_ = resp.Body.Close()
+						releaseLease()
+						appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+							Platform: account.Platform, AccountID: account.ID, AccountName: account.Name,
+							UpstreamStatusCode: providerFailure.status, UpstreamRequestID: resp.Header.Get("x-request-id"),
+							UpstreamURL: basispoints.ResponsesURL, Kind: "pre_output_provider_retry",
+							Message: "BPS transient provider terminal before output; trying bounded recovery",
+						})
+					}); retried {
+						return result, failure
+					}
+				}
+				if providerFailure.status >= 400 {
+					terminalStatus = providerFailure.status
+				}
+				if providerFailure.code != "" {
+					terminalCode = providerFailure.code
+				}
+			}
 			protocolMessage := gjson.GetBytes(payload, "response.error.message").String()
 			// Retry only a local transport failure before any client output.
 			// No client tool has been dispatched; provider refusals are separate.
@@ -889,9 +1008,13 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 			if strings.HasPrefix(kind, "response.reasoning") || ((kind == "response.output_item.added" || kind == "response.output_item.done") && gjson.GetBytes(payload, "item.type").String() == "reasoning") {
 				clientOutput = false
 			}
+			if clientOutput || openAIStreamDataStartsVisibleOutput(string(payload), kind) || kind == "response.completed" {
+				recovery.acceptOutput()
+			}
 			// Non-streaming responses have delivered nothing until terminal.
 			if (stream && clientOutput) || openAIStreamEventTypeIsTerminal(kind) {
 				outputCommitted = true
+				recovery.acceptOutput()
 			}
 			s.parseSSEUsageBytes(payload, &result.Usage)
 			if bufferedText != nil && (kind == "response.output_text.delta" || kind == "response.reasoning_summary_text.delta" || kind == "response.output_text.done" || kind == "response.reasoning_summary_text.done") {
@@ -920,6 +1043,11 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 			}
 			switch kind {
 			case "response.completed", "response.failed", "response.incomplete", "error":
+				if kind == "error" || kind == "response.failed" {
+					message := "Excel BPS returned an upstream terminal failure"
+					setOpsUpstreamError(c, terminalStatus, message, "")
+					MarkOpsStreamError(c, terminalCode, message, terminalStatus)
+				}
 				if kind == "response.completed" && lease != nil {
 					lease.ReportSuccess()
 				}
@@ -947,6 +1075,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 				}
 				// Bound metadata memory and permanently disarm recovery when flushed.
 				outputCommitted = true
+				recovery.acceptOutput()
 				line = ""
 			} else {
 				line += "\n"
@@ -970,6 +1099,42 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 	err = scanner.Err()
 	if IsOpenAIRPMError(err) {
 		return nil, err
+	}
+	var repairFailure *excelBPSProviderRetryError
+	if errors.As(err, &repairFailure) {
+		s.parseSSEUsageBytes(repairFailure.usagePayload, &result.Usage)
+		if !outputCommitted && ctx.Err() == nil {
+			if recovered, failure, retried := retryRequest(originalBody, repairFailure.failure.delay, func() {
+				scanner.Close()
+				_ = converted.Close()
+				_ = resp.Body.Close()
+				releaseLease()
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{Platform: account.Platform, AccountID: account.ID, AccountName: account.Name, UpstreamStatusCode: repairFailure.failure.status, UpstreamURL: basispoints.ResponsesURL, Kind: "pre_output_repair_retry", Message: repairFailure.Error()})
+			}); retried {
+				if recovered != nil {
+					recovered.Usage.InputTokens += result.Usage.InputTokens
+					recovered.Usage.OutputTokens += result.Usage.OutputTokens
+					recovered.Usage.ImageInputTokens += result.Usage.ImageInputTokens
+					recovered.Usage.ImageOutputTokens += result.Usage.ImageOutputTokens
+					recovered.Usage.ImageCacheReadTokens += result.Usage.ImageCacheReadTokens
+					recovered.Usage.CacheCreationInputTokens += result.Usage.CacheCreationInputTokens
+					recovered.Usage.CacheReadInputTokens += result.Usage.CacheReadInputTokens
+				}
+				return recovered, failure
+			}
+		}
+		if repairFailure.failure.status == http.StatusTooManyRequests {
+			s.coolDownExcelBPS(ctx, account, repairFailure.retryAfter)
+		}
+		if retryAfter := repairFailure.retryAfter; retryAfter != "" && !c.Writer.Written() {
+			c.Header("Retry-After", retryAfter)
+		}
+		result.streamReadIncomplete = true
+		result.UpstreamTerminalEvent = "response.failed"
+		setOpsUpstreamError(c, repairFailure.failure.status, repairFailure.Error(), "")
+		MarkOpsStreamError(c, "basispoints_upstream_error", repairFailure.Error(), repairFailure.failure.status)
+		_, failure := fail(repairFailure.failure.status, "basispoints_upstream_error", repairFailure.Error())
+		return result, failure
 	}
 	// Before any visible output, retry clean EOF, EOF, idle/first-output and
 	// network read failures within the shared attempt/time budget. Never replay
@@ -1084,7 +1249,7 @@ func (s *OpenAIGatewayService) forwardExcelBPSAttemptWithAcquire(ctx context.Con
 				c.Data(http.StatusOK, "application/json", completed)
 			}
 		} else {
-			writeExcelBPSJSONError(c, messages, 502, terminalCode, "Excel BPS did not complete the response")
+			writeExcelBPSJSONError(c, messages, terminalStatus, terminalCode, "Excel BPS did not complete the response")
 		}
 	}
 	if terminal != "response.completed" && !messagesMaxTokens {

@@ -76,6 +76,12 @@ func TestExcelBPS403GroupActionTrigger(t *testing.T) {
 				if tc.modelError {
 					raw = "{\"error\":{\"code\":\"basispoints_model_access_changed\"}}"
 				}
+				if tc.status == http.StatusTooManyRequests {
+					raw = `{"error":{"code":"rate_limit_exceeded"}}`
+				}
+				if tc.status == http.StatusInternalServerError {
+					raw = `{"error":{"code":"internal_server_error"}}`
+				}
 				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: tc.status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(raw))}}
 				svc := openAIClientToolsTestService(upstream)
 				var actions []string
@@ -111,7 +117,7 @@ func TestExcelBPS403GroupActionTrigger(t *testing.T) {
 				require.Equal(t, want, actions)
 				require.Equal(t, triggered && !tc.fail, strings.Contains(rec.Body.String(), "account groups were"))
 				wantRequests := 1
-				if tc.status == http.StatusInternalServerError {
+				if tc.status == http.StatusInternalServerError || tc.status == http.StatusTooManyRequests {
 					wantRequests = 2
 				}
 				require.Len(t, upstream.requests, wantRequests)

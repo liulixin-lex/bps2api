@@ -115,6 +115,7 @@ func TestExcelBPS429ImageAndCompactFailOverWithoutCodexState(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/stream=%t", path, stream), func(t *testing.T) {
 				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusTooManyRequests, Header: excelBPSQuotaHeaders("100", "100"), Body: io.NopCloser(strings.NewReader(`{"error":{"message":"PRIVATE_UPSTREAM"}}`))}}
 				svc := openAIClientToolsTestService(upstream)
+				svc.cfg.Gateway.ExcelBPSTimeouts.MaxAttempts = 1 // Exercise final failover after recovery is exhausted.
 				t.Cleanup(func() { require.NoError(t, svc.CloseExcelBPSImages()) })
 				svc.settingService = NewSettingService(&excelBPSImageSettingsRepo{values: map[string]string{SettingKeyExcelBPSImageRelayEnabled: "true", SettingKeyExcelBPSImageBaseURL: "https://images.example"}}, svc.cfg)
 				repo := &excelBPSQuotaRepo{writes: make(chan excelBPSQuotaWrite, 4)}

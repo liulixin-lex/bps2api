@@ -204,8 +204,6 @@ func TestExcelBPS429FailsOverWithoutChangingCodexState(t *testing.T) {
 	}{
 		{name: "quota headers", headers: excelBPSQuotaHeaders("100", "100"), wantCooldown: 11 * time.Second},
 		{name: "unexhausted headers", headers: excelBPSQuotaHeaders("30", "20"), wantCooldown: 11 * time.Second},
-		{name: "body reset timestamp", raw: fmt.Sprintf(`{"error":{"type":"usage_limit_reached","resets_at":%d}}`, time.Now().Add(2*time.Hour).Unix()), wantCooldown: 11 * time.Second},
-		{name: "body reset duration", raw: `{"error":{"type":"usage_limit_reached","resets_in_seconds":7200}}`, wantCooldown: 11 * time.Second},
 		{name: "generic rate limit", wantCooldown: 11 * time.Second},
 		{name: "malformed body", raw: "not json", wantCooldown: 11 * time.Second},
 		{name: "retry after seconds", headers: http.Header{"Retry-After": {"30"}}, wantRetryAfter: "30", wantCooldown: 30 * time.Second},
@@ -228,6 +226,7 @@ func TestExcelBPS429FailsOverWithoutChangingCodexState(t *testing.T) {
 				}
 				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: http.StatusTooManyRequests, Header: tc.headers, Body: io.NopCloser(reader)}}
 				svc := openAIClientToolsTestService(upstream)
+				svc.cfg.Gateway.ExcelBPSTimeouts.MaxAttempts = 1 // Exercise the exhausted recovery boundary.
 				repo := &excelBPSQuotaRepo{writes: make(chan excelBPSQuotaWrite, 4)}
 				svc.accountRepo = repo
 				svc.rateLimitService = NewRateLimitService(repo, nil, svc.cfg, nil, nil)

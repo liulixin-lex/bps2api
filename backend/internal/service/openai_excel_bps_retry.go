@@ -4,20 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"math"
+	"math/rand/v2"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 // One state is shared by HTTP recovery, stream regeneration and tool repair.
 // Its clock starts at the first failure, so a healthy long reasoning request is
-// unaffected. A retried attempt inherits the remaining recovery deadline.
+// unaffected. Retried attempts share a removable pre-output deadline.
 type excelBPSRecovery struct {
 	mu           sync.Mutex
 	remaining    int
@@ -26,6 +32,9 @@ type excelBPSRecovery struct {
 	budget       time.Duration
 	initialDelay time.Duration
 	maxDelay     time.Duration
+	timers       []*time.Timer
+	started      time.Time
+	accounts     map[int64]struct{}
 }
 
 func newExcelBPSRecovery(c config.ExcelBPSTimeoutConfig) *excelBPSRecovery {
@@ -48,7 +57,7 @@ func newExcelBPSRecovery(c config.ExcelBPSTimeoutConfig) *excelBPSRecovery {
 	if maxDelay < initialDelay {
 		maxDelay = initialDelay
 	}
-	return &excelBPSRecovery{remaining: maxAttempts - 1, budget: budget, initialDelay: initialDelay, maxDelay: maxDelay}
+	return &excelBPSRecovery{remaining: maxAttempts - 1, budget: budget, initialDelay: initialDelay, maxDelay: maxDelay, started: time.Now()}
 }
 
 func (r *excelBPSRecovery) consumeRepair() bool {
@@ -70,13 +79,25 @@ func (r *excelBPSRecovery) consumeRepair() bool {
 	return true
 }
 
-// withDeadline is used after a repair reservation. Keep this context alive
-// until the returned response body is consumed or closed.
+// A recovery deadline bounds pre-output work. Unlike context.WithDeadline, its
+// timer can be disarmed once a healthy stream produces semantic output. Parent
+// cancellation and the independent total request deadline remain in force.
 func (r *excelBPSRecovery) withDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
 	r.mu.Lock()
-	deadline := r.deadline
+	retryCtx, cancel := context.WithCancelCause(ctx)
+	timer := time.AfterFunc(time.Until(r.deadline), func() { cancel(errExcelBPSRequestTimeout) })
+	r.timers = append(r.timers, timer)
 	r.mu.Unlock()
-	return context.WithDeadlineCause(ctx, deadline, errExcelBPSRequestTimeout)
+	return retryCtx, func() { timer.Stop(); cancel(context.Canceled) }
+}
+
+func (r *excelBPSRecovery) acceptOutput() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, timer := range r.timers {
+		timer.Stop()
+	}
+	r.timers = nil
 }
 
 type excelBPSRecoveryBody struct {
@@ -108,6 +129,11 @@ func (r *excelBPSRecovery) reserve(now time.Time, minimumDelay time.Duration) (t
 	if delay > r.maxDelay {
 		delay = r.maxDelay
 	}
+	// Spread simultaneous recoveries while never shortening a provider hint.
+	delay += time.Duration(float64(delay) * rand.Float64() / 4)
+	if delay > r.maxDelay {
+		delay = r.maxDelay
+	}
 	if minimumDelay > delay {
 		delay = minimumDelay
 	}
@@ -119,15 +145,18 @@ func (r *excelBPSRecovery) reserve(now time.Time, minimumDelay time.Duration) (t
 	return delay, r.deadline, true
 }
 
-func (r *excelBPSRecovery) begin(ctx context.Context, minimumDelay time.Duration) (context.Context, context.CancelFunc, bool, error) {
+func (r *excelBPSRecovery) begin(ctx context.Context, minimumDelay time.Duration, beforeWait ...func()) (context.Context, context.CancelFunc, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, false, err
 	}
-	delay, deadline, ok := r.reserve(time.Now(), minimumDelay)
+	delay, _, ok := r.reserve(time.Now(), minimumDelay)
 	if !ok {
 		return nil, nil, false, nil
 	}
-	retryCtx, cancel := context.WithDeadlineCause(ctx, deadline, errExcelBPSRequestTimeout)
+	for _, closeAttempt := range beforeWait {
+		closeAttempt()
+	}
+	retryCtx, cancel := r.withDeadline(ctx)
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
@@ -168,33 +197,249 @@ func excelBPSRetryAfterHeader(value string) string {
 	if _, err := http.ParseTime(value); err == nil {
 		return value
 	}
+	if delay, ok := excelBPSParseRetryAfter(value, time.Now()); ok {
+		return strconv.FormatInt(int64(math.Ceil(delay.Seconds())), 10)
+	}
 	return ""
+}
+
+// Header.Values preserves repeated date-valued headers (commas belong to the
+// date itself). A newline is internal-only and is never forwarded downstream.
+func excelBPSRetryAfterValue(header http.Header) string {
+	return strings.Join(header.Values("Retry-After"), "\n")
+}
+
+func excelBPSParseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	var longest time.Duration
+	valid := false
+	for _, part := range strings.Split(value, "\n") {
+		part = strings.TrimSpace(part)
+		var delay time.Duration
+		if seconds, err := strconv.ParseFloat(part, 64); err == nil && !math.IsInf(seconds, 0) && !math.IsNaN(seconds) && seconds >= 0 && seconds <= math.MaxUint32 {
+			delay = time.Duration(seconds * float64(time.Second))
+		} else if date, err := http.ParseTime(part); err == nil {
+			delay = date.Sub(now)
+			if delay < 0 {
+				delay = 0
+			}
+		} else {
+			return 0, false
+		}
+		if delay > longest {
+			longest = delay
+		}
+		valid = true
+	}
+	return longest, valid
 }
 
 // Long/malformed Retry-After values are not used for recovery. The shared
 // recovery state applies the configured maximum delay and time budget.
 func excelBPSHTTPRetryDelay(status int, retryAfter string, now time.Time) (time.Duration, bool) {
-	if status != http.StatusRequestTimeout && status != http.StatusInternalServerError && status != http.StatusBadGateway && status != http.StatusServiceUnavailable && status != http.StatusGatewayTimeout {
+	if status != http.StatusTooManyRequests && status != http.StatusRequestTimeout && status != http.StatusInternalServerError && status != http.StatusBadGateway && status != http.StatusServiceUnavailable && status != http.StatusGatewayTimeout {
 		return 0, false
 	}
 	if retryAfter = strings.TrimSpace(retryAfter); retryAfter == "" {
 		return 250 * time.Millisecond, true
 	}
-	if seconds, err := strconv.ParseUint(retryAfter, 10, 32); err == nil {
-		delay := time.Duration(seconds) * time.Second
-		if delay < 250*time.Millisecond {
-			delay = 250 * time.Millisecond
-		}
-		return delay, true
-	}
-	if deadline, err := http.ParseTime(retryAfter); err == nil {
-		delay := deadline.Sub(now)
+	if delay, ok := excelBPSParseRetryAfter(retryAfter, now); ok {
 		if delay < 250*time.Millisecond {
 			delay = 250 * time.Millisecond
 		}
 		return delay, true
 	}
 	return 0, false
+}
+
+type excelBPSProviderFailure struct {
+	status    int
+	code      string
+	delay     time.Duration
+	retry     bool
+	permanent bool
+}
+
+// Preserve transient repair failures through the tool bridge without turning
+// them into a protocol-repair prompt. Only the outer output guard may replay.
+type excelBPSProviderRetryError struct {
+	failure      excelBPSProviderFailure
+	retryAfter   string
+	usagePayload []byte
+}
+
+func (e *excelBPSProviderRetryError) Error() string {
+	return fmt.Sprintf("excel BPS correction returned HTTP %d", e.failure.status)
+}
+
+// Reserve the final send for a known same-model BPS alternative. This only
+// consults the existing request group and scheduling snapshot after a failure;
+// a single-account pool retains its entire same-account recovery budget.
+func (s *OpenAIGatewayService) excelBPSReserveAccountSwitch(ctx context.Context, c *gin.Context, current *Account, originalModel, upstreamModel string, recovery *excelBPSRecovery) bool {
+	recovery.mu.Lock()
+	lastSend := recovery.remaining == 1
+	excluded := make(map[int64]struct{}, len(recovery.accounts)+1)
+	for id := range recovery.accounts {
+		excluded[id] = struct{}{}
+	}
+	excluded[current.ID] = struct{}{}
+	recovery.mu.Unlock()
+	if !lastSend || (s.accountRepo == nil && s.schedulerSnapshot == nil) {
+		return false
+	}
+	value, ok := c.Get("api_key")
+	if !ok {
+		return false
+	}
+	key, ok := value.(*APIKey)
+	if !ok || key == nil {
+		return false
+	}
+	accounts, err := s.listSchedulableAccounts(ctx, key.GroupID, PlatformOpenAI)
+	if err != nil {
+		return false
+	}
+	for i := range accounts {
+		candidate := &accounts[i]
+		if _, tried := excluded[candidate.ID]; tried {
+			continue
+		}
+		if candidate.Platform != PlatformOpenAI || candidate.Type != AccountTypeOAuth || !candidate.IsSchedulable() {
+			continue
+		}
+		if candidate.GetMappedModel(originalModel) != upstreamModel || !candidate.IsExcelBPSConfiguredForUpstreamModel(upstreamModel) {
+			continue
+		}
+		if _, paused := candidate.Extra[OpenAIExcelBPSPausedOn403AtExtraKey]; paused {
+			continue
+		}
+		if s.isOpenAIAccountRequestRuntimeBlocked(candidate, originalModel, false) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+var excelBPSRetryHint = regexp.MustCompile("(?i)(?:try again in|retry after)\\s+([0-9]+(?:\\.[0-9]+)?)\\s*(milliseconds?|ms|seconds?|s)\\b")
+
+// HTTP status is sufficient for transient transport errors; an HTTP 200 SSE
+// terminal needs a recognized provider code or explicit error status. Quota,
+// credential and policy failures always override a transient status or hint.
+func excelBPSClassifyProviderFailure(raw []byte, status int, retryAfter string, now time.Time) excelBPSProviderFailure {
+	failure := excelBPSProviderFailure{status: status}
+	envelope := gjson.ParseBytes(raw)
+	detail := envelope.Get("response.error")
+	if !detail.IsObject() {
+		detail = envelope.Get("error")
+	}
+	if !detail.IsObject() {
+		detail = envelope
+	}
+	failure.code = strings.ToLower(strings.TrimSpace(detail.Get("code").String()))
+	errorType := strings.ToLower(strings.TrimSpace(detail.Get("type").String()))
+	message := strings.ToLower(strings.TrimSpace(detail.Get("message").String()))
+	for _, value := range []string{failure.code, errorType} {
+		switch value {
+		case "insufficient_quota", "quota_exceeded", "usage_limit_reached", "billing_hard_limit_reached", "billing_not_active":
+			if failure.status < 400 {
+				failure.status = http.StatusTooManyRequests
+			}
+			failure.permanent = true
+		case "invalid_api_key", "token_revoked", "invalid_authentication", "authentication_error":
+			if failure.status < 400 {
+				failure.status = http.StatusUnauthorized
+			}
+			failure.permanent = true
+		case "permission_denied", "access_denied", "usage_policy", "content_policy_violation", "policy_violation":
+			if failure.status < 400 {
+				failure.status = http.StatusForbidden
+			}
+			failure.permanent = true
+		}
+	}
+	for _, prefix := range []string{"you exceeded your current quota", "your quota has been exceeded", "insufficient quota", "insufficient balance", "usage limit reached", "you have reached your usage limit", "usage is not included", "request blocked by usage policy"} {
+		if strings.HasPrefix(message, prefix) {
+			failure.permanent = true
+		}
+	}
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		failure.permanent = true
+	}
+	if failure.permanent {
+		return failure
+	}
+	if status < 400 {
+		for _, path := range []string{"status_code", "http_status", "status"} {
+			for _, object := range []gjson.Result{detail, envelope} {
+				if value := int(object.Get(path).Int()); value >= 400 && value <= 599 {
+					failure.status = value
+				}
+			}
+		}
+		if failure.status < 400 {
+			values := []string{failure.code}
+			if failure.code == "" {
+				values = append(values, errorType)
+			}
+			for _, value := range values {
+				switch value {
+				case "rate_limit_exceeded", "rate_limit_error", "rate_limited":
+					failure.status = http.StatusTooManyRequests
+				case "server_error", "internal_server_error":
+					failure.status = http.StatusInternalServerError
+				case "bad_gateway":
+					failure.status = http.StatusBadGateway
+				case "server_is_overloaded", "overloaded_error", "service_unavailable", "temporarily_unavailable":
+					failure.status = http.StatusServiceUnavailable
+				case "gateway_timeout", "request_timeout":
+					failure.status = http.StatusGatewayTimeout
+				}
+			}
+		}
+	}
+	if failure.status == http.StatusUnauthorized || failure.status == http.StatusForbidden {
+		failure.permanent = true
+		return failure
+	}
+	delay, retry := excelBPSHTTPRetryDelay(failure.status, retryAfter, now)
+	if !retry {
+		return failure
+	}
+	// A longer valid hint wins. Values outside the bounded envelope decline
+	// recovery instead of being clamped and retried earlier than the provider.
+	for _, object := range []gjson.Result{detail, envelope} {
+		for _, hint := range []struct {
+			name string
+			unit time.Duration
+		}{{"retry_after_ms", time.Millisecond}, {"retry_after_seconds", time.Second}, {"retry_after", time.Second}} {
+			value := object.Get(hint.name)
+			if !value.Exists() {
+				continue
+			}
+			n, err := strconv.ParseFloat(value.String(), 64)
+			if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > float64((24*time.Hour)/hint.unit) {
+				return failure
+			}
+			if candidate := time.Duration(n * float64(hint.unit)); candidate > delay {
+				delay = candidate
+			}
+		}
+	}
+	if match := excelBPSRetryHint.FindStringSubmatch(message); len(match) > 0 {
+		n, err := strconv.ParseFloat(match[1], 64)
+		unit := time.Second
+		if strings.HasPrefix(strings.ToLower(match[2]), "m") {
+			unit = time.Millisecond
+		}
+		if err != nil || n > float64((24*time.Hour)/unit) {
+			return failure
+		}
+		if candidate := time.Duration(n * float64(unit)); candidate > delay {
+			delay = candidate
+		}
+	}
+	failure.delay, failure.retry = delay, true
+	return failure
 }
 
 // These errors arise in local transport translation before client dispatch.

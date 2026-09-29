@@ -140,6 +140,7 @@ func TestExcelBPSToolProbeRejectsIncompleteStages(t *testing.T) {
 		t.Run(tc.mode, func(t *testing.T) {
 			upstream := &bpsProbeUpstream{mode: tc.mode}
 			svc := bpsProbeTestService(upstream)
+			svc.openaiGatewayService.cfg.Gateway.ExcelBPSTimeouts.MaxAttempts = 2 // One failed stage plus one pre-output correction.
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/admin/accounts/300/test", nil)

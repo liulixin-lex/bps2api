@@ -57,6 +57,12 @@ func TestExcelBPSAutoDisableOn403(t *testing.T) {
 					raw = `{"error":{"code":"basispoints_model_access_changed"}}`
 					wantCode = "basispoints_model_access_changed"
 				}
+				if tc.status == http.StatusTooManyRequests {
+					raw = `{"error":{"code":"rate_limit_exceeded"}}`
+				}
+				if tc.status == http.StatusInternalServerError {
+					raw = `{"error":{"code":"internal_server_error"}}`
+				}
 				upstream := &httpUpstreamRecorder{resp: &http.Response{StatusCode: tc.status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(raw))}}
 				svc := openAIClientToolsTestService(upstream)
 				calls := 0
@@ -86,7 +92,7 @@ func TestExcelBPSAutoDisableOn403(t *testing.T) {
 				require.NotContains(t, rec.Body.String(), "PRIVATE_UPSTREAM")
 				require.Equal(t, tc.wantCalls, calls)
 				wantRequests := 1
-				if tc.status == http.StatusInternalServerError {
+				if tc.status == http.StatusInternalServerError || tc.status == http.StatusTooManyRequests {
 					wantRequests = 2 // Recover a transient failure before returning it.
 				}
 				require.Len(t, upstream.requests, wantRequests)
