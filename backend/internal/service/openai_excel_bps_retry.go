@@ -272,8 +272,9 @@ func (e *excelBPSProviderRetryError) Error() string {
 }
 
 // Reserve the final send for a known same-model BPS alternative. This only
-// consults the existing request group and scheduling snapshot after a failure;
-// a single-account pool retains its entire same-account recovery budget.
+// consults the existing request group after a failure. Metadata snapshots are
+// only candidates: hydrate and recheck them through the ordinary scheduling
+// gates before giving up the current account's final recovery send.
 func (s *OpenAIGatewayService) excelBPSReserveAccountSwitch(ctx context.Context, c *gin.Context, current *Account, originalModel, upstreamModel string, recovery *excelBPSRecovery) bool {
 	recovery.mu.Lock()
 	lastSend := recovery.remaining == 1
@@ -298,6 +299,18 @@ func (s *OpenAIGatewayService) excelBPSReserveAccountSwitch(ctx context.Context,
 	if err != nil {
 		return false
 	}
+	req := OpenAIAccountScheduleRequest{
+		GroupID: key.GroupID, Platform: PlatformOpenAI, RequestedModel: originalModel,
+		RequiredTransport: OpenAIUpstreamTransportAny, RequiredCapability: OpenAIEndpointCapabilityResponses,
+		RequireCompact: isOpenAIResponsesCompactPath(c), RequirePrivacySet: s.openAIGroupRequiresPrivacySet(ctx, key.GroupID),
+	}
+	if excelBPSChatFromContext(ctx) != nil || excelBPSMessagesFromContext(ctx) != nil {
+		req.RequiredCapability = OpenAIEndpointCapabilityChatCompletions
+	}
+	if req.RequireCompact {
+		req.RequiredCapability = OpenAIEndpointCapabilityResponsesCompact
+	}
+	scheduler := &defaultOpenAIAccountScheduler{service: s}
 	for i := range accounts {
 		candidate := &accounts[i]
 		if _, tried := excluded[candidate.ID]; tried {
@@ -306,13 +319,24 @@ func (s *OpenAIGatewayService) excelBPSReserveAccountSwitch(ctx context.Context,
 		if candidate.Platform != PlatformOpenAI || candidate.Type != AccountTypeOAuth || !candidate.IsSchedulable() {
 			continue
 		}
+		candidate = s.resolveFreshSchedulableOpenAIAccount(ctx, candidate, key.GroupID, PlatformOpenAI, originalModel, req.RequireCompact, req.RequiredCapability)
+		if candidate == nil {
+			continue
+		}
+		candidate = s.recheckSelectedOpenAIAccountFromDB(ctx, candidate, key.GroupID, PlatformOpenAI, originalModel, req.RequireCompact, req.RequiredCapability)
+		if candidate == nil || candidate.Type != AccountTypeOAuth {
+			continue
+		}
 		if candidate.GetMappedModel(originalModel) != upstreamModel || !candidate.IsExcelBPSConfiguredForUpstreamModel(upstreamModel) {
 			continue
 		}
 		if _, paused := candidate.Extra[OpenAIExcelBPSPausedOn403AtExtraKey]; paused {
 			continue
 		}
-		if s.isOpenAIAccountRequestRuntimeBlocked(candidate, originalModel, false) {
+		if compatible, _ := scheduler.isAccountRequestCompatibleReason(ctx, candidate, req); !compatible {
+			continue
+		}
+		if eligible, _, err := s.OpenAIRPMSchedulable(ctx, candidate, false); err != nil || !eligible {
 			continue
 		}
 		return true
@@ -408,6 +432,39 @@ func excelBPSClassifyProviderFailure(raw []byte, status int, retryAfter string, 
 	// A longer valid hint wins. Values outside the bounded envelope decline
 	// recovery instead of being clamped and retried earlier than the provider.
 	for _, object := range []gjson.Result{detail, envelope} {
+		// Some provider SSE errors carry response headers inside error.headers.
+		// Honor their longest delay just like the outer HTTP Retry-After instead
+		// of trusting a shorter prose hint in the same error.
+		validHeaders := true
+		if headers := object.Get("headers"); headers.IsObject() {
+			headers.ForEach(func(key, value gjson.Result) bool {
+				var candidate time.Duration
+				var valid bool
+				switch strings.ToLower(strings.TrimSpace(key.String())) {
+				case "retry-after":
+					candidate, valid = excelBPSParseRetryAfter(value.String(), now)
+				case "retry-after-ms":
+					n, err := strconv.ParseFloat(value.String(), 64)
+					valid = err == nil && !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 0 && n <= float64((24*time.Hour)/time.Millisecond)
+					if valid {
+						candidate = time.Duration(n * float64(time.Millisecond))
+					}
+				default:
+					return true
+				}
+				if !valid {
+					validHeaders = false
+					return false
+				}
+				if candidate > delay {
+					delay = candidate
+				}
+				return true
+			})
+		}
+		if !validHeaders {
+			return failure
+		}
 		for _, hint := range []struct {
 			name string
 			unit time.Duration
