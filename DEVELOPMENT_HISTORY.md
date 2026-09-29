@@ -1,19 +1,19 @@
 # bps2api 开发历程
 
 > 项目长期记忆入口：当前状态 → 专题与会话 → 原始证据。
-> 最近更新：2026-09-28（UTC）。[agent 主动更新约定](AGENTS.md)。
+> 最近更新：2026-09-29（UTC）。[agent 主动更新约定](AGENTS.md)。
 
 ## 当前确认状态
 
 | 项目 | 状态与证据边界 |
 | --- | --- |
-| 当前对象 | `/bps/bps2api`，从 sub2api 派生的 BPS 协议代理项目 |
+| 当前对象 | 原始 /bps/bps2api 保持原字节；本轮候选 /bps/worktrees/selected-integration-20260929，分支 integrate/selected-20260929 |
 | 源码与发布身份 | 文档 `3ae017adc` → 择优整合 `a87bff01a` → `0.0.14` `a996ad636` → 工具修复 `0.0.15` `8c4d9d98b` → 能力整合 `81809a5eb` → 版本 `0.0.16` `9b76a651f` → 选定修复 `ad69a3ff9`；2026-09-28 12:51:06 UTC 已原子推送 `main` 与新标签 `v0.0.16`，发布产物仍待验收 |
 | 与交接的关系 | 旧分支 `c5a0323b6` 由 PR #11 纳入本轮起点 `2f54db96e`，当时两提交源码树一致；本轮随后增加文档与代码整合；旧 `/www/...` 不是本机目录 |
 | 当前路由 | 0.0.16 已支持实际 OpenAI OAuth 账号按映射后的模型名单选择 BPS；未配置名单表示全部映射模型，显式空名单不选择模型；hosted 保持 v0.0.15 自动兼容策略 |
-| 当前生产 | 2026-09-28 10:35:05 UTC 热切至 `sub2api-v016` / 8092，运行源码 `9b76a651f`；公网文本、required tool、SSE、原图及 function/custom/namespace 完整往返 7 项通过；跨切换旧 SSE 完整结束，30 次健康检查无失败，旧容器和图片 owner 链保留 |
-| 当前任务 | [0.0.16 推送与正式发布](docs/development/entries/2026-09-28-release-0.0.16-selected.md)已完成：应用 tag 固定 ad69a3ff9，Release workflow 成功；5 平台包、校验和、GHCR 双架构及版本/提交标识验收通过；线上未切换 |
-| 下一动作 | 本轮推送发版已完成；后续上线需独立切换新镜像。独立 CI 的 5 项 lint 与 1 项集成断言失败均为基线已有，已记录，不能把发布成功视为所有 CI 通过 |
+| 历史生产观察 | 2026-09-28 10:35:05 UTC 热切至 `sub2api-v016` / 8092，运行源码 `9b76a651f`；公网文本、required tool、SSE、原图及 function/custom/namespace 完整往返 7 项通过；跨切换旧 SSE 完整结束，30 次健康检查无失败，旧容器和图片 owner 链保留 |
+| 当前任务 | [九项上游能力与 BPS 瞬时故障恢复](docs/development/entries/2026-09-29-selected-integration.md)：本地集成完成，应用提交 345130adb；受影响核心后端 10,779 顶层通过、6 跳过，前端完整 2,999 项及最后增量 55 项通过，嵌入构建通过。最终同输入与回滚凭据沿用固定四角色，未推送或部署 |
+| 下一动作 | 本轮本地交付结果以固定 VERIFICATION.txt / transaction/triad-summary.json 为准；发布和生产切换是独立操作。历史独立 CI 的 lint/集成遗留问题不能因本轮局部与整包通过而视作消失 |
 
 ## 渐进式阅读
 
@@ -56,7 +56,8 @@
 
 | 日期（UTC） | 背景与目标 | 实际进展 |
 | --- | --- | --- |
-| 2026-09-29 | [BPS 瞬时错误与共享恢复预算](docs/development/entries/2026-09-29-bps-provider-retry.md) | 重试分支专项 153 个顶层回归及协议两包通过；追加心跳边界 10 例和 5 组旧回归通过；固定输入保留修改前失败；主整合、三态回滚及封包待完成，未推送或部署 |
+| 2026-09-29 | [九项择优合入与 BPS 恢复](docs/development/entries/2026-09-29-selected-integration.md) | 九项能力适配、HTTP/SSE 共享恢复预算、心跳边界、单次 BPS 观察和刷新截止竞态修复；本地整合测试与构建通过，四角色凭据独立留证；未推送或部署 |
+| 2026-09-29 | [BPS 恢复专项](docs/development/entries/2026-09-29-bps-provider-retry.md) · [刷新截止竞态](docs/development/entries/2026-09-29-token-refresh-deadline.md) | 恢复专项 153 顶层与心跳边界通过；刷新确定性输入复现原问题，240 次边界回归通过；最终 service 8,409 顶层通过 |
 | 2026-09-28 | [推送并发布 0.0.16](docs/development/entries/2026-09-28-release-0.0.16-selected.md) | main/tag 已推送，12:58:26 UTC 正式发布；18 项产物命令验收通过，生产未重启；完整 unit/前端通过，独立 CI 遗留失败与基线一致 |
 | 2026-09-28 | [选定上游修复的兼容性合并](docs/development/entries/2026-09-28-selected-upstream-merge.md) | 四组适配完成；保护 BPS 过期 Codex 快照行为，补齐原生/HTTP bridge 换窗工具关联；1,899 后端顶层、2,930 前端测试与构建通过，同输入回滚/补丁重建通过；开发阶段本地交付，后续推送发版另见发布条目 |
 | 2026-09-28 | [0.0.16 后上游更新与潜在问题](docs/development/entries/2026-09-28-post-v016-audit.md) | 审计完成：上游 62ac3a5dd / 2.9.0；3 类跨协议缺口隔离复现，2 条恢复风险仅源码确认；质量筛选和多实例/连接池边界已分级。仅审计记录，无应用合并或线上变更 |
