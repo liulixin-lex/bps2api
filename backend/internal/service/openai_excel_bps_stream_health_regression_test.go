@@ -112,7 +112,7 @@ func TestBPSAuditStreamHealthBoundaries(t *testing.T) {
 			svc.httpUpstream = &bpsTestUpstream{send: func(req *http.Request, _ string) (*http.Response, error) {
 				calls++
 				_ = req.Body.Close()
-				var body io.ReadCloser = io.NopCloser(strings.NewReader(tc.wire))
+					body := io.NopCloser(strings.NewReader(tc.wire))
 				if tc.readErr != nil {
 					body = io.NopCloser(bpsAuditErrorReader{err: tc.readErr})
 				}

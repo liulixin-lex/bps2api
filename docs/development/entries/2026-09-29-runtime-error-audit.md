@@ -76,3 +76,11 @@ web 工具实际返回 basispoints_endpoint_unsupported，已保留错误；随�
 用户在热修复验收后明确要求现在进行推送发版。已核对远端main仍为17db87971、最新正式Release为v0.0.19、v0.0.20未占用；先前未推送/不发版描述仅对应已完成的热修复阶段。本阶段将VERSION从0.0.19改为0.0.20，应用代码相对f9b7f408e不变。
 
 版本说明见[0.0.20](../../bps2api-0.0.20.md)。使用既有完整Release矩阵，main与注释标签原子推送，不发送Telegram通知。推送、发布成功与产物验收尚待真实结果；生产继续运行已验收的0.0.19-runtime.20260929，不将发版等同于再次部署。证据追加到既有四角色，版本事务与发布命令在/bps/artifacts/runtime-audit-20260929/release。
+
+### 发布验收与 CI 补充
+
+17:48:38 UTC 原子推送 main 与注释标签 v0.0.20，两者均指向 572ef8b8e2eef0b12a08743e184096c293760497。17:56:16 UTC Release 正式发布，工作流 36607572324 全部成功；公开五个平台归档及 checksums.txt 均下载核对，归档完整性、二进制版本与提交、GHCR linux/amd64 与 linux/arm64 镜像标签及运行版本共 18 项命令验收通过。发布地址 https://github.com/liulixin-lex/bps2api/releases/tag/v0.0.20；完整实录与报告在 release/published-assets/。发布期间公网 /health 为200、主实例 healthy；本次没有再次切换生产。
+
+版本事务同输入检查：BASELINE 0.0.19（exit1），MODIFIED 0.0.20（exit0），ROLLBACK 0.0.19（exit1）；回滚恢复 11 个变化路径并匹配基线哈希，补丁重建及目标再次应用匹配修改版。第一次 git apply 受进程 umask 影响仅使新文件模式 0600 对比归档 0664，内容哈希相同；按归档模式校正后完整清单比较通过，失败与纠正记录均保留。
+
+独立 CI 首次在本版新增一条测试代码 staticcheck QF1011（显式 io.ReadCloser 可推断），与历史五条 lint 诊断区分。随后将该声明改成推断赋值，专项 17 个用例通过；此为发布后 main 的小修，不移动已发布标签，也不宣称标签内已含该修复。原有 lint 与集成技术债仍单独记录；CI 最终状态以 release/ci-review.json 的实测为准。
