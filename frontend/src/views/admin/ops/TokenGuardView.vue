@@ -5,14 +5,14 @@
       <header class="ops-heading">
         <div>
           <p class="eyebrow">{{ t('accountOps.smartTitle') }}</p>
-          <h2>{{ t('tokenGuard.title') }}</h2>
-          <p class="subtitle">{{ t('tokenGuard.description') }}</p>
+          <h2>{{ t(viewMode === 'logout' ? 'tokenGuard.sessions.title' : viewMode === 'rotation' ? 'tokenGuard.rotation.title' : 'tokenGuard.title') }}</h2>
+          <p class="subtitle">{{ t(viewMode === 'logout' ? 'tokenGuard.sessions.description' : viewMode === 'rotation' ? 'tokenGuard.rotation.focusHint' : 'tokenGuard.description') }}</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <button class="btn btn-secondary inline-flex items-center gap-2" :disabled="loading" @click="load()">
             <Icon name="refresh" size="sm" :class="{ 'animate-spin': loading }" />{{ t('tokenGuard.refresh') }}
           </button>
-          <button class="btn btn-primary inline-flex items-center gap-2" :disabled="running || loading" @click="run">
+          <button v-if="viewMode === 'guard'" class="btn btn-primary inline-flex items-center gap-2" :disabled="running || loading" @click="run">
             <Icon name="play" size="sm" />{{ t(running ? 'tokenGuard.running' : 'tokenGuard.runNow') }}
           </button>
         </div>
@@ -21,14 +21,41 @@
       <p v-if="error" role="alert" class="error-banner">{{ error }}</p>
       <p v-if="notice" role="status" class="success-banner">{{ notice }}</p>
 
-      <section class="summary-grid">
+      <nav class="mb-5 flex flex-wrap gap-2" :aria-label="t('tokenGuard.rotation.sections')">
+        <button type="button" class="btn" :class="viewMode === 'logout' ? 'btn-primary' : 'btn-secondary'" :aria-pressed="viewMode === 'logout'" data-testid="logout-tab" @click="viewMode = 'logout'">{{ t('tokenGuard.sessions.tab') }}</button>
+        <button type="button" class="btn" :class="viewMode === 'rotation' ? 'btn-primary' : 'btn-secondary'" :aria-pressed="viewMode === 'rotation'" data-testid="rotation-tab" @click="viewMode = 'rotation'">{{ t('tokenGuard.rotation.tab') }}</button>
+        <button type="button" class="btn" :class="viewMode === 'guard' ? 'btn-primary' : 'btn-secondary'" :aria-pressed="viewMode === 'guard'" data-testid="guard-tab" @click="viewMode = 'guard'">{{ t('tokenGuard.rotation.guardTab') }}</button>
+      </nav>
+
+      <section v-show="viewMode === 'rotation'" class="stack" data-testid="rotation-workspace">
+        <TwoFARotationPanel v-if="remote" :configured="Boolean(remote.config.two_fa_rotation_endpoint)" :disabled="dirty || saving" :show-apply="false" @apply="applyRotation" />
+      </section>
+      <section v-show="viewMode === 'logout'" class="stack" data-testid="logout-workspace">
+        <SessionLogoutPanel v-if="remote" :configured="Boolean(remote.config.two_fa_rotation_endpoint)" :disabled="dirty || saving" :active="viewMode === 'logout'" />
+      </section>
+      <section v-show="viewMode !== 'guard'" class="stack mt-4">
+        <details v-if="draft" class="settings-card" :open="!remote?.config.two_fa_rotation_endpoint">
+          <summary class="cursor-pointer px-5 py-4 text-sm font-medium">{{ t('tokenGuard.rotation.serviceSettings') }}</summary>
+          <form class="settings-form" @submit.prevent="save">
+            <fieldset :disabled="saving">
+              <label class="field-label">{{ t('tokenGuard.rotation.endpoint') }}<input v-model.trim="draft.two_fa_rotation_endpoint" class="input w-full" placeholder="http://twofa-worker:8080" /></label>
+              <label class="field-label">{{ t('tokenGuard.rotation.token') }}<input v-model.trim="draft.two_fa_rotation_token" type="password" autocomplete="new-password" class="input w-full" /></label>
+              <p class="field-hint">{{ t('tokenGuard.rotation.endpointHint') }}</p>
+              <div class="settings-actions"><span>{{ dirty ? t('tokenGuard.unsaved') : t('tokenGuard.saved') }}</span><button class="btn btn-primary" :disabled="saving || !dirty">{{ t(saving ? 'qualityOps.saving' : 'tokenGuard.save') }}</button></div>
+            </fieldset>
+          </form>
+        </details>
+      </section>
+      <p v-if="viewMode === 'guard'" class="text-sm text-gray-500">{{ t('tokenGuard.rotation.guardHint') }}</p>
+
+      <section v-if="viewMode === 'guard'" class="summary-grid">
         <article class="summary-card"><span>{{ t('tokenGuard.statsProbed') }}</span><strong>{{ remote?.runtime.stats.probed ?? 0 }}</strong><small>{{ remote?.runtime.job?.status === 'running' ? `${remote.runtime.job.completed}/${remote.runtime.job.total}` : `${t('tokenGuard.interval')} ${draft?.interval_seconds ?? 0}s` }}</small></article>
         <article class="summary-card"><span>{{ t('tokenGuard.statsBad') }}</span><strong>{{ badCount }}</strong><small>{{ t('tokenGuard.failStreak') }} ≥ {{ draft?.fail_streak_threshold ?? 1 }}</small></article>
         <article class="summary-card"><span>{{ t('tokenGuard.statsRepaired') }}</span><strong>{{ remote?.runtime.stats.repaired ?? 0 }}</strong><small>{{ t('tokenGuard.stateFixed') }} {{ remote?.runtime.stats.state_fixed ?? 0 }}</small></article>
         <article class="summary-card"><span>{{ t('tokenGuard.lastRun') }}</span><strong class="text-base">{{ remote?.runtime.last_run ? date(remote.runtime.last_run) : t('tokenGuard.never') }}</strong><small>{{ remote?.runtime.last_message || '-' }}</small></article>
       </section>
 
-      <div class="ops-columns">
+      <div v-show="viewMode === 'guard'" class="ops-columns" data-testid="guard-workspace">
         <section class="settings-card">
           <div class="section-title"><span class="icon-tile"><Icon name="shield" size="md" /></span><div><h3>{{ t('tokenGuard.title') }}</h3><p>{{ t('tokenGuard.enabledHint') }}</p></div></div>
           <form v-if="draft" class="settings-form" @submit.prevent="save">
@@ -136,6 +163,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
+import TwoFARotationPanel from '@/components/admin/operations/TwoFARotationPanel.vue'
+import SessionLogoutPanel from '@/components/admin/operations/SessionLogoutPanel.vue'
+import { applyTwoFARotationResult, type TwoFARotationResult } from '@/api/admin/accountTwoFARotation'
 import Icon from '@/components/icons/Icon.vue'
 import Select from '@/components/common/Select.vue'
 import { groupsAPI } from '@/api/admin/groups'
@@ -153,6 +183,7 @@ import {
 } from '@/api/admin/accountTokenGuard'
 
 const { t } = useI18n()
+const viewMode = ref<'rotation' | 'guard' | 'logout'>('rotation')
 const remote = ref<TokenGuardStatus | null>(null)
 const draft = ref<TokenGuardConfig | null>(null)
 const reloginText = ref('')
@@ -283,6 +314,25 @@ async function save() {
   } finally {
     saving.value = false
   }
+}
+
+async function applyRotation(result: TwoFARotationResult) {
+  if (saving.value || dirty.value) return
+  saving.value = true; error.value = ''; notice.value = ''
+  try {
+    const latest = await getTokenGuardStatus()
+    const config = applyTwoFARotationResult(latest.config, result)
+    const saved = await saveTokenGuardConfig(config)
+    if (!alive) return
+    remote.value = { ...latest, config: saved }
+    draft.value = { ...saved }
+    reloginText.value = reloginTextOf(saved)
+    probeHeadersText.value = headersTextOf(saved.probe_headers)
+    reloginHeadersText.value = headersTextOf(saved.relogin_headers)
+    notice.value = t('tokenGuard.rotation.applied')
+  } catch {
+    if (alive) error.value = t('tokenGuard.rotation.applyFailed')
+  } finally { saving.value = false }
 }
 
 async function run() {

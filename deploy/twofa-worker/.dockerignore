@@ -1,0 +1,12 @@
+*
+!Dockerfile
+!worker.py
+!requirements.txt
+!requirements-bridge.txt
+!login_guard.py
+!rotation_service.py
+!patch_upstream.py
+!browser_login.py
+!requirements-browser.txt
+!session_logout.py
+!progress.py

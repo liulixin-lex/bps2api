@@ -1,7 +1,7 @@
 # bps2api 开发历程
 
 > 项目长期记忆入口：当前状态 → 专题与会话 → 原始证据。
-> 最近更新：2026-09-29（UTC）。[agent 主动更新约定](AGENTS.md)。
+> 最近更新：2026-09-30（UTC）。[agent 主动更新约定](AGENTS.md)。
 
 ## 当前确认状态
 
@@ -14,6 +14,28 @@
 | 当前生产 | 2026-09-29 17:03:55–17:03:58 UTC热切sub2api-runtime-20260929 / 8097；跨切换SSE、公网7项canary及79次健康检查通过；v019暖备，其余15旧实例停止保留 |
 | 当前任务 | [线上错误复查](docs/development/entries/2026-09-29-runtime-error-audit.md)完成：四处修复，PG连接93→15（双实例上线后18），三态、19,377 unit节点及160 race节点通过，公网验收完成 |
 | 下一动作 | v0.0.20公开产物18项已验收；继续观察真实负载与既有CI技术债，不重复生产热切 |
+
+## 本地 PR 开发
+
+[2026-09-30：任务进度与退出历史删除](docs/development/entries/2026-09-30-credential-progress.md)：12:44 UTC 已部署 0.0.18-pr12.p1 / c5cd783961；两页转圈/真实阶段/耗时、状态中断提示和退出历史勾选删除完成。143 worker、137 前端、Go 定向、隔离 SQLite、源码/部署回滚、公网浏览器合成与只读验收通过；原 17/5 条历史保留；用户确认后已将全部修复推送 GitHub 并更新 PR #12，见下方提交记录。
+
+[2026-09-30：验证码两次上限与历史管理](docs/development/entries/2026-09-30-credential-history.md)：12:05 UTC 已部署 0.0.18-pr12.history.7f47476955；输入框就绪后取码、首错清空换码、最多两次、每页 10 条及勾选删除已完成。132 项 worker、89 项前端、Go 定向、源码/部署回滚与公网浏览器验收通过；原 16/4 条任务保留。受测 MFA 403 明确 account_deactivated，未声称已修复上游账号限制；GitHub/PR 继续暂停。
+
+[2026-09-30：完整源码与 PR 提交](docs/development/entries/2026-09-30-pr12-submit.md)：本地同步 main 并保留双方开发索引，83 项前端、105 项 worker 与四包 Go 定向回归通过。此前暂停已由用户明确解除。14:44 UTC 已推送功能合并提交 2be9f631，全部修复与保留的 main 合并一并纳入，分支与 PR head 已核对；PR #12 open、非 draft、无内容冲突、未合并。近期 143 worker / 137 前端及 Go 定向验证通过；本轮不重新部署。
+
+[2026-09-30：退出会话整行粘贴](docs/development/entries/2026-09-30-logout-paste.md)：10:02 UTC 已部署 0f662b1a；单框粘贴自动识别，保留密码原字节、确认与幂等保护。83 项前端及类型/lint/build、源码/部署回滚与原生剪贴板浏览器验收通过；10 条更换任务保持，不执行真实账号退出。PR #12 已更新，保持 open、未合并。
+
+[2026-09-30：新凭据交付核验](docs/development/entries/2026-09-30-verified-result.md)：用户截图任务检查时已验证成功；最新任务与导出接口 200 已确认，10 条任务、0 活动任务。公网浏览器已实际复制并在内存核对三字段完全一致，剪贴板已清空。诊断完成，无业务修改/部署，不重放轮换。
+
+[2026-09-30：明确拒绝提交误报修复](docs/development/entries/2026-09-30-submission-rejection.md)：测试站应用已更新为 e72f486a，明确拒绝现在显示原因、恢复输入并链接旧任务；61 项前端、105 项 worker、后端回归与源码/部署回滚、浏览器验收通过。原 9 条任务保留，旧 500 保护不解锁；PR #12 已更新，保持 open、未合并。
+
+[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR open、未合并；当前测试站 app 于 2026-09-30 10:02 UTC 更新为 0f662b1a（0.0.18-pr12.0f662b1a），worker 保持 ece34aa0。08:34 UTC 的登录修复为历史基础。已补个人工作区自动选择和具体登录错误传递，同一截图账号真实登录/只读 MFA 查询 200；105 项 worker、39 项前端、后端定向回归及源码/部署回滚、浏览器验收通过。原 9 条任务保留，不重放真实轮换/退出。历史一次 2FA 成功、一次关闭旧 TOTP 返回 500 的证据和保护仍保留，不能称上游 500 已解决。详见[本次登录修复](docs/development/entries/2026-09-30-login-failures.md)及[历史测试部署记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。
+
+2026-09-30 补充约束：必须全自动，不接入人工浏览器验证；失败任务不自动重放。保留原 XY2API 可回切，只在本机开发/测试站部署并更新 PR，不改远端生产。
+
+[2026-09-30：退出所有 ChatGPT 会话](docs/development/entries/2026-09-30-chatgpt-logout-all.md)：07:15 UTC 已部署 f8d68ca5 / 0.0.18-pr12.f8d68ca5，新增最左侧菜单、独立任务/API/三字段表单；86 项 worker、35 项前端、后端定向回归和构建通过，源码/镜像实际回滚与公网浏览器合成提交验收通过。原 6 条任务/幂等记录保留，新增空退出任务表。真实探针仍登录失败，未执行真实退出或验证当前原生退出路径；保持全自动，不承诺 OAuth/API token 撤销。
+
+[2026-09-30：登录失败诊断](docs/development/entries/2026-09-30-login-failures.md)：用户反馈四次更换前登录失败；成功时与当前的 5 个核心登录文件逐字一致。实测分别出现授权页挑战、密码/TOTP 通过后会话超时；已确认参考流程漏掉个人工作区选择；修复候选已用同一截图账号完成密码/TOTP/工作区/会话全流程并只读查询 MFA 200，105 项 worker/39 项前端及后端回归通过；08:34 UTC 已部署 ece34aa0，实际回滚和公网浏览器验收完成，未重放真实更换/退出。
 
 ## 本次 429 修复进度
 
@@ -60,6 +82,12 @@
 
 | 日期（UTC） | 背景与目标 | 实际进展 |
 | --- | --- | --- |
+| 2026-09-30 | [退出会话整行粘贴](docs/development/entries/2026-09-30-logout-paste.md) | 0f662b1a 已部署；单框自动识别、原字节密码与幂等重试通过，源码/部署回滚及原生剪贴板浏览器验收完成 |
+| 2026-09-30 | [明确拒绝提交误报修复](docs/development/entries/2026-09-30-submission-rejection.md) | e72f486a 应用已部署；解除明确拒绝造成的输入锁定，旧任务保护不变；同输入回归、部署回滚与公网 UI 验收通过 |
+| 2026-09-30 | [登录工作区缺口修复](docs/development/entries/2026-09-30-login-failures.md) | ece34aa0 已部署；同截图账号密码/TOTP/个人工作区/会话成功及 MFA 200，具体错误传递修复，旧 9 条任务不改写 |
+| 2026-09-30 | [ChatGPT 退出所有会话](docs/development/entries/2026-09-30-chatgpt-logout-all.md) | f8d68ca5 已部署，独立菜单/API/任务、回归构建与源码/部署回滚通过；真实登录探针失败，真实退出仍未验证 |
+| 2026-09-29 | [PR #12 测试部署](docs/development/entries/2026-09-29-twofa-pr12-preview.md) | app/worker b0bbeae3 已部署并完成回滚；第二次任务 disable 返回 500，旧密钥只读复核有效；具体错误提示及旧结果操作隐藏已浏览器验收；五条任务不变，无新增轮换 |
+| 2026-09-29 | [账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md) | PR #12；管理员界面/接口、私有加密 worker、定向回归和源码回滚验证完成；后续测试部署另记 |
 | 2026-09-29 | [v0.0.20 正式发布](docs/development/entries/2026-09-29-runtime-error-audit.md) | main/tag原子推送572ef8b8e，17:56:16 UTC Release成功；五平台归档、校验和、GHCR双架构及版本共18项核验通过；生产维持此前热修复实例 |
 | 2026-09-29 | [线上错误复查](docs/development/entries/2026-09-29-runtime-error-audit.md) | 15旧实例退役、连接93→15/18；四处修复及三态竞态通过，8097已热切并公网验收 |
 | 2026-09-29 | [模型共享 TPM 与恢复加固](docs/development/entries/2026-09-29-bps-model-quota-recovery.md) | 三态 194 节点通过且回滚重现原行为；14:31 UTC 无感上线、14:39:47 UTC 正式发布、18 项产物通过；实际 4 条 gpt-6-sol TPM 429 仍耗尽重试预算，发布后 CI 修正单独验证 |

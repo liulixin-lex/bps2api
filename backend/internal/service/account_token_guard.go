@@ -61,24 +61,26 @@ type AccountTokenGuardReloginAccount struct {
 
 // AccountTokenGuardConfig 是页面上的全部可配置项。
 type AccountTokenGuardConfig struct {
-	Enabled             bool                              `json:"enabled"`
-	GroupIDs            []int64                           `json:"group_ids"`
-	IntervalSeconds     int                               `json:"interval_seconds"`
-	ProbeEndpoint       string                            `json:"probe_endpoint"`
-	ProbeModel          string                            `json:"probe_model"`
-	ProbeHeaders        map[string]string                 `json:"probe_headers"`
-	ProbeTimeoutSeconds int                               `json:"probe_timeout_seconds"`
-	ProbeConcurrency    int                               `json:"probe_concurrency"`
-	MaxProbePerCycle    int                               `json:"max_probe_per_cycle"`
-	AutoRelogin         bool                              `json:"auto_relogin"`
-	ReloginEndpoint     string                            `json:"relogin_endpoint"`
-	ReloginHeaders      map[string]string                 `json:"relogin_headers"`
-	ReloginAccounts     []AccountTokenGuardReloginAccount `json:"relogin_accounts"`
-	RestoreSchedulable  bool                              `json:"restore_schedulable"`
-	FailStreakThreshold int                               `json:"fail_streak_threshold"`
-	BarkKey             string                            `json:"bark_key"`
-	NotifyOnFix         bool                              `json:"notify_on_fix"`
-	NotifyOnFail        bool                              `json:"notify_on_fail"`
+	Enabled               bool                              `json:"enabled"`
+	GroupIDs              []int64                           `json:"group_ids"`
+	IntervalSeconds       int                               `json:"interval_seconds"`
+	ProbeEndpoint         string                            `json:"probe_endpoint"`
+	ProbeModel            string                            `json:"probe_model"`
+	ProbeHeaders          map[string]string                 `json:"probe_headers"`
+	ProbeTimeoutSeconds   int                               `json:"probe_timeout_seconds"`
+	ProbeConcurrency      int                               `json:"probe_concurrency"`
+	MaxProbePerCycle      int                               `json:"max_probe_per_cycle"`
+	AutoRelogin           bool                              `json:"auto_relogin"`
+	ReloginEndpoint       string                            `json:"relogin_endpoint"`
+	ReloginHeaders        map[string]string                 `json:"relogin_headers"`
+	ReloginAccounts       []AccountTokenGuardReloginAccount `json:"relogin_accounts"`
+	TwoFARotationEndpoint string                            `json:"two_fa_rotation_endpoint"`
+	TwoFARotationToken    string                            `json:"two_fa_rotation_token"`
+	RestoreSchedulable    bool                              `json:"restore_schedulable"`
+	FailStreakThreshold   int                               `json:"fail_streak_threshold"`
+	BarkKey               string                            `json:"bark_key"`
+	NotifyOnFix           bool                              `json:"notify_on_fix"`
+	NotifyOnFail          bool                              `json:"notify_on_fail"`
 }
 
 // AccountTokenGuardState 是一个账号最近一次巡检的展示状态。
@@ -263,6 +265,9 @@ func defaultAccountTokenGuardConfig() AccountTokenGuardConfig {
 
 // ValidateAccountTokenGuardConfig 校验配置范围与 URL 合法性。
 func ValidateAccountTokenGuardConfig(c AccountTokenGuardConfig) error {
+	if err := validateTwoFARotationConfig(c); err != nil {
+		return err
+	}
 	if c.IntervalSeconds < 30 || c.IntervalSeconds > 86400 {
 		return errors.New("巡检间隔需要在 30 到 86400 秒之间")
 	}
@@ -328,6 +333,8 @@ func validateGuardHTTPURL(raw, field string) error {
 }
 
 func normalizeAccountTokenGuardConfig(c AccountTokenGuardConfig) AccountTokenGuardConfig {
+	c.TwoFARotationEndpoint = strings.TrimRight(strings.TrimSpace(c.TwoFARotationEndpoint), "/")
+	c.TwoFARotationToken = strings.TrimSpace(c.TwoFARotationToken)
 	c.ProbeEndpoint = strings.TrimRight(strings.TrimSpace(c.ProbeEndpoint), "/")
 	c.ReloginEndpoint = strings.TrimRight(strings.TrimSpace(c.ReloginEndpoint), "/")
 	c.ProbeModel = strings.TrimSpace(c.ProbeModel)
