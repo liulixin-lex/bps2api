@@ -35,3 +35,18 @@
 ### 同输入回归
 
 105 项 worker、39 项前端定向测试、Go service/admin handler 的 TwoFA/SessionLogout/WorkspaceLogin 回归通过；类型与改动文件 ESLint 通过。源码同输入 BASELINE/MODIFIED/ROLLBACK/重建实际执行固定上游的 Cookie 等待代码块：旧版在 workspace 不点击而超时，新版唯一一次个人选择后取得 Cookie；包装后的 challenge 在旧版变成 login_failed，新版保留 login_interaction_required。回滚字节与基线一致，重施恢复候选，错误输出不包含模拟敏感内容。
+
+
+## 2026-09-30 08:34 UTC：部署与界面验收完成
+
+业务提交 ece34aa0d795e19b116a7bd3824951691c31fab2，测试站版本 0.0.18-pr12.ece34aa0。app/worker 镜像为 bps2api:pr12-ece34aa0 与 bps-twofa-worker:pr12-ece34aa0；后者与真实候选成功登录/MFA 200 的镜像身份一致。
+
+- 实际部署 BASELINE 08:34:08 → MODIFIED 08:34:22 → ROLLBACK 08:34:35 → FINAL 08:34:48 UTC，回滚恢复 f8d68ca5 后重新上线。每阶段健康、版本、原生 workspace 补丁有无、权限/no-store/未确认请求拒绝、守护配置及线上静态资源核验通过。
+- 数据库：jobs.db 原 9 条、rotation_requests、session_logout_jobs 的行哈希均不变；两个幂等/退出表结构不变，退出任务仍为空。未改写旧失败任务、未重放轮换、未执行退出。
+- 原 XY2API、PG/Redis 容器身份和健康不变，Caddy 未改；远端生产未修改。
+- 公网 Chromium 使用本地合成 GET 返回验证两个操作页均能显示工作区/会话未完成原因，额外验证提示不被降为通用错误；真实旧失败记录仍显示其原通用原因，不新增重试按钮。所有管理员写操作拦截，实际转发数零。截图脱敏并查看，版本 ece34aa0 可见。
+- 105 项 worker、39 项前端及 Go 定向回归、类型、lint、生产构建已通过；既有 Browserslist/大 chunk/Starlette 提示保留。
+
+源码四角色在 docs-local/login-failures-20260930/；部署四角色在 /opt/bps2api-twofa-preview/evidence/login-workspace-20260930/，均为 MODIFIED_FILE、DIFF_FILE、VERIFICATION.txt 和可执行 ROLLBACK.sh。源码副本回滚/重建与部署镜像回滚已实际执行，交付前重开。通过现有 PR #12 更新，不合并、不发正式版；发布远端 SHA 核对记录见本机 pr-publication.json。
+
+当前完成：已修复并实测这个账号的个人工作区登录分支，已部署测试站。用户刷新确认 ece34aa0 后可自行创建新的更换任务；旧失败记录不会自动变成功。仍未重试历史关闭旧 TOTP 500 任务，也未在本轮实测再次更换密钥或退出全部设备。Cloudflare 仍可独立阻止某次初始化，修复不代表普遍解除挑战。
