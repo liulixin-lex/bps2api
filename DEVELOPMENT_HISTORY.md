@@ -17,13 +17,13 @@
 
 ## 本地 PR 开发
 
-[2026-09-30：退出会话整行粘贴](docs/development/entries/2026-09-30-logout-paste.md)：进行中。改为粘贴 邮箱----密码----当前2FA密钥 自动识别，保留确认与幂等保护；不执行真实账号操作。
+[2026-09-30：退出会话整行粘贴](docs/development/entries/2026-09-30-logout-paste.md)：10:02 UTC 已部署 0f662b1a；单框粘贴自动识别，保留密码原字节、确认与幂等保护。83 项前端及类型/lint/build、源码/部署回滚与原生剪贴板浏览器验收通过；10 条更换任务保持，不执行真实账号退出。PR #12 推送待执行。
 
 [2026-09-30：新凭据交付核验](docs/development/entries/2026-09-30-verified-result.md)：用户截图任务检查时已验证成功；最新任务与导出接口 200 已确认，10 条任务、0 活动任务。公网浏览器已实际复制并在内存核对三字段完全一致，剪贴板已清空。诊断完成，无业务修改/部署，不重放轮换。
 
 [2026-09-30：明确拒绝提交误报修复](docs/development/entries/2026-09-30-submission-rejection.md)：测试站应用已更新为 e72f486a，明确拒绝现在显示原因、恢复输入并链接旧任务；61 项前端、105 项 worker、后端回归与源码/部署回滚、浏览器验收通过。原 9 条任务保留，旧 500 保护不解锁；PR #12 已更新，保持 open、未合并。
 
-[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR open、未合并；当前测试站 app 于 2026-09-30 09:01 UTC 更新为 e72f486a（0.0.18-pr12.e72f486a），worker 保持 ece34aa0。08:34 UTC 的登录修复为历史基础。已补个人工作区自动选择和具体登录错误传递，同一截图账号真实登录/只读 MFA 查询 200；105 项 worker、39 项前端、后端定向回归及源码/部署回滚、浏览器验收通过。原 9 条任务保留，不重放真实轮换/退出。历史一次 2FA 成功、一次关闭旧 TOTP 返回 500 的证据和保护仍保留，不能称上游 500 已解决。详见[本次登录修复](docs/development/entries/2026-09-30-login-failures.md)及[历史测试部署记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。
+[PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR open、未合并；当前测试站 app 于 2026-09-30 10:02 UTC 更新为 0f662b1a（0.0.18-pr12.0f662b1a），worker 保持 ece34aa0。08:34 UTC 的登录修复为历史基础。已补个人工作区自动选择和具体登录错误传递，同一截图账号真实登录/只读 MFA 查询 200；105 项 worker、39 项前端、后端定向回归及源码/部署回滚、浏览器验收通过。原 9 条任务保留，不重放真实轮换/退出。历史一次 2FA 成功、一次关闭旧 TOTP 返回 500 的证据和保护仍保留，不能称上游 500 已解决。详见[本次登录修复](docs/development/entries/2026-09-30-login-failures.md)及[历史测试部署记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。
 
 2026-09-30 补充约束：必须全自动，不接入人工浏览器验证；失败任务不自动重放。保留原 XY2API 可回切，只在本机开发/测试站部署并更新 PR，不改远端生产。
 
@@ -76,6 +76,7 @@
 
 | 日期（UTC） | 背景与目标 | 实际进展 |
 | --- | --- | --- |
+| 2026-09-30 | [退出会话整行粘贴](docs/development/entries/2026-09-30-logout-paste.md) | 0f662b1a 已部署；单框自动识别、原字节密码与幂等重试通过，源码/部署回滚及原生剪贴板浏览器验收完成 |
 | 2026-09-30 | [明确拒绝提交误报修复](docs/development/entries/2026-09-30-submission-rejection.md) | e72f486a 应用已部署；解除明确拒绝造成的输入锁定，旧任务保护不变；同输入回归、部署回滚与公网 UI 验收通过 |
 | 2026-09-30 | [登录工作区缺口修复](docs/development/entries/2026-09-30-login-failures.md) | ece34aa0 已部署；同截图账号密码/TOTP/个人工作区/会话成功及 MFA 200，具体错误传递修复，旧 9 条任务不改写 |
 | 2026-09-30 | [ChatGPT 退出所有会话](docs/development/entries/2026-09-30-chatgpt-logout-all.md) | f8d68ca5 已部署，独立菜单/API/任务、回归构建与源码/部署回滚通过；真实登录探针失败，真实退出仍未验证 |
