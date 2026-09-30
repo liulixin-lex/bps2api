@@ -41,7 +41,7 @@ func sanitizeSessionLogoutJob(job *AccountSessionLogoutJob) {
 	switch job.ErrorCode {
 	case "login_failed", "login_interaction_required", "invalid_credentials", "account_die",
 		"logout_control_missing", "logout_rejected", "logout_unconfirmed", "worker_interrupted",
-		"login_access_denied", "login_rate_limited", "identity_mismatch":
+		"login_access_denied", "login_rate_limited", "identity_mismatch", "login_workspace_selection_failed", "login_session_incomplete":
 	default:
 		job.ErrorCode = ""
 	}

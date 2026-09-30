@@ -44,7 +44,7 @@ const pending = ref<{ id: string; entry: TokenGuardReloginAccount } | null>(null
 let alive = true
 let timer: ReturnType<typeof setInterval> | undefined
 const states = ['queued', 'logging_in', 'revoking', 'accepted', 'login_failed', 'failed', 'needs_review', 'interrupted']
-const codes = ['login_failed', 'login_interaction_required', 'invalid_credentials', 'account_die', 'logout_control_missing', 'logout_rejected', 'logout_unconfirmed', 'worker_interrupted', 'login_access_denied', 'login_rate_limited', 'identity_mismatch']
+const codes = ['login_failed', 'login_interaction_required', 'login_workspace_selection_failed', 'login_session_incomplete', 'invalid_credentials', 'account_die', 'logout_control_missing', 'logout_rejected', 'logout_unconfirmed', 'worker_interrupted', 'login_access_denied', 'login_rate_limited', 'identity_mismatch']
 function stateText(job: SessionLogoutJob) { return t('tokenGuard.sessions.states.' + (states.includes(job.status) ? job.status : 'needs_review')) }
 function detailText(job: SessionLogoutJob) {
   if (job.status === 'accepted') return t('tokenGuard.sessions.acceptedHint')

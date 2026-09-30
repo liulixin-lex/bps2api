@@ -70,7 +70,7 @@ function failureText(job: TwoFARotationJob) {
   }
   if (!['login_failed', 'preflight_failed'].includes(job.status) || job.rotated_pending_verify) return ''
   const allowed = ['login_access_denied', 'login_rate_limited', 'login_bootstrap_rejected',
-    'login_interaction_required', 'login_state_invalid', 'invalid_credentials', 'account_die',
+    'login_interaction_required', 'login_workspace_selection_failed', 'login_session_incomplete', 'login_state_invalid', 'invalid_credentials', 'account_die',
     'login_failed', 'preflight_failed']
   const code = allowed.includes(job.error_code ?? '') ? job.error_code : 'login_failed'
   return t('tokenGuard.rotation.errors.' + code)

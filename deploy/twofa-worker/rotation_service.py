@@ -8,6 +8,7 @@ from login_guard import LoginBootstrapError
 LOGIN_CODES = frozenset({
     "login_access_denied", "login_rate_limited", "login_bootstrap_rejected",
     "login_interaction_required", "login_state_invalid", "invalid_credentials",
+    "login_workspace_selection_failed", "login_session_incomplete",
     "account_die", "login_failed", "preflight_failed",
 })
 PREFIX = "pre_rotation:"

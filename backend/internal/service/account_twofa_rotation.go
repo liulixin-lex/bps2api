@@ -46,6 +46,7 @@ func sanitizeTwoFARotationJob(job *AccountTwoFARotationJob) {
 	switch job.ErrorCode {
 	case "login_access_denied", "login_rate_limited", "login_bootstrap_rejected",
 		"login_interaction_required", "login_state_invalid", "invalid_credentials",
+		"login_workspace_selection_failed", "login_session_incomplete",
 		"account_die", "login_failed", "preflight_failed",
 		"rotation_disable_server_error", "rotation_disable_rejected":
 	default:

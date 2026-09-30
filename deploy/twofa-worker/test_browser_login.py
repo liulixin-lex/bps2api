@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from browser_login import get_browser_session, load_browser_settings, login_request_allowed, navigate_to_authorize
+from browser_login import browser_failure_code, get_browser_session, is_workspace_page, load_browser_settings, login_request_allowed, navigate_to_authorize, select_personal_workspace
 from login_guard import LoginBootstrapError
 
 
@@ -97,3 +97,70 @@ def test_pinned_browser_import_uses_complete_private_bridge():
     assert 'from browser_login import navigate_to_authorize as _navigate_to_authorize' in block
     assert 'from browser_phase import _navigate_to_authorize' not in block
     assert 'engine_order = ("camoufox",)' in block
+    assert 'await select_personal_workspace(page)' in block
+    assert 'workspace_selected = True' in block
+
+
+@pytest.mark.parametrize('code', ['login_interaction_required', 'login_access_denied', 'login_rate_limited', 'login_bootstrap_rejected', 'login_workspace_selection_failed', 'login_session_incomplete'])
+def test_browser_engine_wrapper_preserves_typed_guard_code(monkeypatch, code):
+    import session_phase
+    async def wrapped(**_kwargs):
+        try:
+            raise LoginBootstrapError(code)
+        except LoginBootstrapError as exc:
+            raise session_phase.SessionError('browser launch/driver error: private-cookie private-token') from exc
+    monkeypatch.setattr(session_phase, 'get_session', wrapped)
+    with pytest.raises(LoginBootstrapError) as caught:
+        asyncio.run(get_browser_session(email='synthetic@example.com', password='private-password', secret='JBSWY3DPEHPK3PXP'))
+    assert caught.value.code == code and str(caught.value) == code
+
+
+def test_error_chain_never_trusts_arbitrary_text_or_loops():
+    text = RuntimeError('server response: login_interaction_required private-token')
+    assert browser_failure_code(text) == 'login_failed'
+    text.__cause__ = text
+    assert browser_failure_code(text) == 'login_failed'
+    unknown = LoginBootstrapError('private-cookie')
+    text.__cause__ = unknown
+    assert browser_failure_code(text) == 'login_failed'
+    known = LoginBootstrapError('login_rate_limited')
+    unknown.__context__ = known
+    assert browser_failure_code(text) == 'login_rate_limited'
+
+
+@pytest.mark.parametrize('url,valid', [
+    ('https://auth.openai.com/workspace', True),
+    ('https://auth.openai.com/workspace/?state=not-logged', True),
+    ('https://auth.openai.com.attacker.test/workspace', False),
+    ('https://auth.openai.com:bad/workspace', False),
+    ('http://auth.openai.com/workspace', False),
+    ('https://auth.openai.com/other', False),
+])
+def test_workspace_page_requires_exact_trusted_origin(url, valid):
+    assert is_workspace_page(url) is valid
+
+
+@pytest.mark.parametrize('mode', ['one_personal', 'two_personal', 'none', 'external_link', 'navigation_during_click'])
+def test_workspace_selects_only_one_explicit_personal_control(monkeypatch, mode):
+    from unittest.mock import AsyncMock
+    import browser_login
+    async def sleep(_seconds): pass
+    monkeypatch.setattr(browser_login.asyncio, 'sleep', sleep)
+    click = AsyncMock(side_effect=RuntimeError('navigation interrupted') if mode == 'navigation_during_click' else None)
+    item = SimpleNamespace(is_visible=AsyncMock(return_value=True), click=click,
+                           get_attribute=AsyncMock(return_value='https://external.test/' if mode == 'external_link' else None))
+    empty = SimpleNamespace(count=AsyncMock(return_value=0))
+    choices = SimpleNamespace(count=AsyncMock(return_value=2 if mode == 'two_personal' else 0 if mode == 'none' else 1), nth=lambda _i:item)
+    page = SimpleNamespace(url='https://auth.openai.com/workspace',
+                           get_by_role=lambda role, **_kwargs: choices if role=='button' else empty,
+                           get_by_text=lambda *_args:SimpleNamespace(locator=lambda _selector:empty))
+    if mode in {'one_personal','navigation_during_click'}:
+        asyncio.run(select_personal_workspace(page));assert click.await_count==1
+    else:
+        with pytest.raises(LoginBootstrapError, match='login_workspace_selection_failed'):
+            asyncio.run(select_personal_workspace(page))
+        assert click.await_count==0
+
+
+def test_cookie_wait_timeout_is_not_reported_as_bad_credentials():
+    assert browser_failure_code(RuntimeError('timeout waiting session cookies. URL: private-state')) == 'login_session_incomplete'

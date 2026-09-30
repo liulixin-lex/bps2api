@@ -97,3 +97,12 @@ Cloudflare 明确返回 cf-mitigated: challenge 时，优先于通用 HTTP 403 �
 - 退出请求确认不代表已逐台验证设备立即退出，也不保证 SUB2API/CPA 已导入 OAuth 凭据失效。仍持有有效账号凭据的人可能再次登录。
 
 离线完整回归使用 python -m pytest -q 本目录，包含独立退出任务、网络请求判定与模拟原生按钮/确认流程。实际会话撤销需要明确指定的测试账号；部署验收不会自行提交库中账号。
+
+
+### 密码/TOTP 后的个人工作区选择
+
+某些账号在密码及 TOTP 校验后进入 auth.openai.com/workspace。固定上游原流程只等待 Cookie，缺少工作区选择会导致超时；桥接补丁现在只在这一官方页面，点击唯一明确标注 Personal account / 个人账户的原生控件，然后继续原来的回调与会话核验。不会任意选择团队或企业工作区、加入组织或发起额外授权；个人入口缺失/歧义时停止。选择最多点击一次，导航中断不会重复点击。
+
+登录桥接现在沿可信 LoginBootstrapError 异常链保留具体原因，避免固定上游 SessionError 包装后将 Cloudflare 验证误显示为普通登录失败。工作区选择失败与未取得完整会话分别使用 login_workspace_selection_failed / login_session_incomplete；原始响应和凭据不展示。旧记录已只保存 login_failed 的，不能事后推断为某种具体失败，更不能写库伪造成功。
+
+2026-09-30 修复候选已在用户截图中的一个账号完成无人操作登录：密码/TOTP/工作区选择成功，回调与 /api/auth/session 成功，随后只读 mfa_info 200、MFA 启用。没有实际更换 2FA 或退出会话。Cloudflare challenge 仍可能独立出现；此修复没有验证码代答、代理/指纹轮换或失败后自动重放。

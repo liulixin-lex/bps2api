@@ -6,6 +6,7 @@ This module never changes MFA settings or exposes a browser control port.
 import asyncio
 from contextvars import ContextVar
 from pathlib import Path
+import re
 import tempfile
 from types import SimpleNamespace
 from urllib.parse import urlsplit
@@ -13,6 +14,92 @@ from urllib.parse import urlsplit
 from login_guard import LoginBootstrapError, validate_authorize_url, validate_oauth_response
 
 _settings = ContextVar('twofa_browser_settings')
+
+
+def browser_failure_code(exc: BaseException) -> str:
+    """Preserve typed guard errors wrapped by the pinned browser engine.
+
+    The engine raises SessionError from LoginBootstrapError. Never parse a
+    code out of arbitrary response text or expose the wrapper's diagnostics.
+    """
+    current = exc
+    seen = set()
+    allowed = {'login_bootstrap_rejected', 'login_interaction_required',
+               'login_access_denied', 'login_rate_limited', 'login_failed',
+               'invalid_credentials', 'account_die', 'login_workspace_selection_failed',
+               'login_session_incomplete'}
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, LoginBootstrapError) and current.code in allowed:
+            return current.code
+        current = current.__cause__ or current.__context__
+    text = str(exc).lower()
+    if 'email verification' in text or 'totp input not found' in text:
+        return 'login_interaction_required'
+    if 'password error' in text:
+        return 'invalid_credentials'
+    if 'account deactivated' in text:
+        return 'account_die'
+    if 'timeout waiting session cookies' in text:
+        return 'login_session_incomplete'
+    return 'login_failed'
+
+
+def is_workspace_page(url: str) -> bool:
+    try:
+        parsed = urlsplit(url)
+        return (parsed.scheme == 'https' and parsed.hostname == 'auth.openai.com'
+                and parsed.port in {None, 443} and parsed.username is None
+                and parsed.password is None and parsed.path.rstrip('/') == '/workspace')
+    except ValueError:
+        return False
+
+
+async def select_personal_workspace(page):
+    """Finish the observed post-MFA workspace step using its native control.
+
+    Only the explicitly labeled personal account is selected. Never choose
+    an arbitrary organization or replay a submitted choice after navigation.
+    """
+    if not is_workspace_page(page.url):
+        raise LoginBootstrapError('login_workspace_selection_failed')
+    label = re.compile(r'\bPersonal account\b|个人账户|个人账号|個人帳戶', re.I)
+    for _ in range(20):
+        candidates = [page.get_by_role('button', name=label),
+                      page.get_by_role('link', name=label),
+                      page.get_by_text(re.compile(r'^(?:Personal account|个人账户|个人账号|個人帳戶)$', re.I)).locator('xpath=ancestor-or-self::*[self::button or @role="button" or self::a[@href]][1]')]
+        for locator in candidates:
+            count = await locator.count()
+            if count > 20:
+                raise LoginBootstrapError('login_workspace_selection_failed')
+            visible = []
+            for index in range(count):
+                item = locator.nth(index)
+                if await item.is_visible():
+                    visible.append(item)
+            if len(visible) > 1:
+                raise LoginBootstrapError('login_workspace_selection_failed')
+            if not visible:
+                continue
+            item = visible[0]
+            href = await item.get_attribute('href')
+            if href:
+                from urllib.parse import urljoin
+                target = urlsplit(urljoin(page.url, href))
+                if (target.scheme != 'https' or target.hostname != 'auth.openai.com'
+                        or target.port not in {None, 443} or target.username or target.password):
+                    raise LoginBootstrapError('login_workspace_selection_failed')
+            if not is_workspace_page(page.url):
+                raise LoginBootstrapError('login_workspace_selection_failed')
+            try:
+                await item.click(timeout=5000)
+            except Exception:
+                # Navigation can destroy the click context. Never click again;
+                # the existing cookie wait decides whether login completed.
+                pass
+            return
+        await asyncio.sleep(0.25)
+    raise LoginBootstrapError('login_workspace_selection_failed')
 
 
 def load_browser_settings():
@@ -79,14 +166,6 @@ async def get_browser_session(*, email, password, secret=None, proxy=None, log=N
         except (asyncio.CancelledError, LoginBootstrapError):
             raise
         except Exception as exc:
-            text = str(exc).lower()
-            code = 'login_failed'
-            if 'email verification' in text or 'totp input not found' in text:
-                code = 'login_interaction_required'
-            elif 'password error' in text:
-                code = 'invalid_credentials'
-            elif 'account deactivated' in text:
-                code = 'account_die'
-            raise LoginBootstrapError(code) from None
+            raise LoginBootstrapError(browser_failure_code(exc)) from None
         finally:
             _settings.reset(token)

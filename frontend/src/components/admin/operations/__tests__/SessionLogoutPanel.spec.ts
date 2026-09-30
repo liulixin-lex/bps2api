@@ -56,6 +56,13 @@ describe('independent session logout', () => {
     expect(wrapper.text()).toContain('sessions.acceptedHint')
     expect(api.startSessionLogout).not.toHaveBeenCalled()
   })
+  it.each(['login_workspace_selection_failed', 'login_session_incomplete'])('explains login completion failure: %s', async code => {
+    vi.mocked(api.listSessionLogouts).mockResolvedValue([{ ...job, status: 'login_failed', error_code: code }])
+    wrapper = mount(SessionLogoutPanel, { props: { configured: true, active: true } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('sessions.errors.' + code)
+    expect(wrapper.findAll('tbody button')).toHaveLength(0)
+  })
   it('does not display raw worker messages or retry a terminal uncertain operation', async () => {
     vi.mocked(api.listSessionLogouts).mockResolvedValue([{ ...job, status: 'unknown-private', error_code: 'private-cookie' }])
     wrapper = mount(SessionLogoutPanel, { props: { configured: true, active: true } }); await flushPromises()

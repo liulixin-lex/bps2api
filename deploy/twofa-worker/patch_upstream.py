@@ -23,9 +23,11 @@ def patch(source: Path):
     end = text.index('\nasync def get_session(', start)
     browser = text[start:end]
     browser_anchors = [
-        ('    settings = load_settings()', '    from browser_login import load_browser_settings\n    settings = load_browser_settings()'),
+        ('    settings = load_settings()', '    from browser_login import load_browser_settings, is_workspace_page, select_personal_workspace\n    settings = load_browser_settings()'),
         ('    engine_order = _browser_launch_order(settings.browser_engine)', '    engine_order = ("camoufox",)'),
         ('        from browser_phase import _navigate_to_authorize', '        from browser_login import navigate_to_authorize as _navigate_to_authorize'),
+        ('        session_ready = False\n        while time.monotonic() < deadline:\n            cookies = await ctx.cookies("https://chatgpt.com/")',
+         '        session_ready = False\n        workspace_selected = False\n        while time.monotonic() < deadline:\n            if not workspace_selected and is_workspace_page(page.url):\n                workspace_selected = True\n                await select_personal_workspace(page)\n            cookies = await ctx.cookies("https://chatgpt.com/")'),
     ]
     for old, new in browser_anchors:
         if browser.count(old) != 1:

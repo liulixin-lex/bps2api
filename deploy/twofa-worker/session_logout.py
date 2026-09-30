@@ -15,7 +15,7 @@ ACTIVE = frozenset({'queued', 'logging_in', 'revoking'})
 CODES = frozenset({'login_failed', 'login_interaction_required', 'invalid_credentials',
                    'account_die', 'logout_control_missing', 'logout_rejected',
                    'logout_unconfirmed', 'worker_interrupted', 'login_access_denied',
-                   'login_rate_limited', 'identity_mismatch'})
+                   'login_rate_limited', 'identity_mismatch', 'login_workspace_selection_failed', 'login_session_incomplete'})
 LOGOUT_LABEL = re.compile(r'^(?:log\s*out\s*(?:of\s*)?all(?:\s*(?:sessions|devices))?|logout\s*all|sign\s*out\s*(?:of\s*)?all(?:\s*(?:sessions|devices))?|退出所有(?:会话|设备)|登出所有(?:會話|裝置)|đăng\s*xuất\s*tất\s*cả)$', re.I)
 
 

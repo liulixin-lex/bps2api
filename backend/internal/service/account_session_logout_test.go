@@ -66,3 +66,15 @@ func TestSessionLogoutRejectsMismatchedTaskAndSanitizesUnknownState(t *testing.T
 		t.Fatal("unsafe diagnostic")
 	}
 }
+
+func TestWorkspaceLoginCodesSurviveBothOperationAPIs(t *testing.T) {
+	for _, code := range []string{"login_workspace_selection_failed", "login_session_incomplete"} {
+		rotation := AccountTwoFARotationJob{ErrorCode: code}
+		sanitizeTwoFARotationJob(&rotation)
+		logout := AccountSessionLogoutJob{Status: "login_failed", ErrorCode: code}
+		sanitizeSessionLogoutJob(&logout)
+		if rotation.ErrorCode != code || logout.ErrorCode != code {
+			t.Fatal("login completion diagnostic was discarded")
+		}
+	}
+}

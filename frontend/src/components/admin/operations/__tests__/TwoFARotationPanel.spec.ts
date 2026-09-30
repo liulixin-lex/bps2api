@@ -83,6 +83,13 @@ describe('explicit 2FA rotation workflow', () => {
     expect(wrapper.text()).not.toContain('rotation.copy')
     expect(api.startTwoFARotation).not.toHaveBeenCalled()
   })
+  it.each(['login_workspace_selection_failed', 'login_session_incomplete'])('explains login completion failure: %s', async code => {
+    vi.mocked(api.listTwoFARotations).mockResolvedValue([{ ...job, status: 'login_failed', error_code: code }])
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('rotation.errors.' + code)
+    expect(wrapper.findAll('tbody button')).toHaveLength(0)
+  })
   it('never displays unrecognized worker diagnostic text', async () => {
     vi.mocked(api.listTwoFARotations).mockResolvedValue([{ ...job, status: 'login_failed', error_code: 'private-secret-from-worker' }])
     wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
