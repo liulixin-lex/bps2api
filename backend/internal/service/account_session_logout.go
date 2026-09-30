@@ -53,6 +53,10 @@ func (s *AccountTokenGuardService) StartSessionLogout(ctx context.Context, req A
 	}
 	var job AccountSessionLogoutJob
 	if err := s.twoFARotationCall(ctx, http.MethodPost, "/session-logout/jobs", req, &job); err != nil {
+		var rejected *CredentialSubmissionRejection
+		if errors.As(err, &rejected) {
+			return nil, rejected
+		}
 		return nil, errors.New("退出请求未确认；请查询任务并沿用原任务标识，勿重复创建；维护服务忙碌或任务待确认时不会再次执行")
 	}
 	if !rotationIDPattern.MatchString(job.ID) || !strings.EqualFold(strings.TrimSpace(req.Email), job.Email) {

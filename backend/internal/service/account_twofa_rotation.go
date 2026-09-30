@@ -128,6 +128,9 @@ func (s *AccountTokenGuardService) twoFARotationCall(ctx context.Context, method
 		return errors.New("2FA 服务响应读取失败")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if rejected := credentialSubmissionRejection(method, path, resp.StatusCode, data); rejected != nil {
+			return rejected
+		}
 		// Never include upstream bodies/errors: they may echo credentials.
 		switch resp.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:

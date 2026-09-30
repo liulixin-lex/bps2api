@@ -16,11 +16,17 @@
       </div>
     </form>
     <p v-if="message" role="status" class="mt-3 text-sm text-amber-600">{{ message }}</p>
+    <ul v-if="rejected.length" role="status" class="mt-3 space-y-2 text-sm text-amber-600">
+      <li v-for="item in rejected" :key="item.id">
+        <span>{{ item.email }} — {{ t('tokenGuard.submission.' + item.reason) }}</span>
+        <a v-for="job in relatedJobs(item)" :key="job.id" :href="'#rotation-job-' + job.id" class="ml-2 underline">{{ t('tokenGuard.submission.relatedJob') }} {{ job.id }}</a>
+      </li>
+    </ul>
     <div v-if="jobs.length" class="mt-4 overflow-x-auto">
       <table class="w-full text-left text-sm">
         <thead><tr class="border-b dark:border-dark-600"><th class="p-2">{{ t('tokenGuard.account') }}</th><th class="p-2">{{ t('tokenGuard.rotation.status') }}</th><th class="p-2">{{ t('tokenGuard.actions') }}</th></tr></thead>
         <tbody>
-          <tr v-for="job in jobs" :key="job.id" class="border-b dark:border-dark-600">
+          <tr v-for="job in jobs" :id="'rotation-job-' + job.id" :key="job.id" class="border-b dark:border-dark-600">
             <td class="p-2"><div>{{ job.email }}</div><small class="text-gray-400">{{ job.id }}</small></td>
             <td class="p-2"><div>{{ stateText(job) }}</div><p v-if="failureText(job)" class="mt-1 max-w-lg text-xs text-amber-600">{{ failureText(job) }}</p></td>
             <td class="p-2">
@@ -41,6 +47,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { credentialSubmissionRejection, type CredentialSubmissionRejection } from '@/api/admin/credentialSubmission'
 import type { TokenGuardReloginAccount } from '@/api/admin/accountTokenGuard'
 import {
   formatTwoFARotationCredentials, getTwoFARotationResult, listTwoFARotations, parseTwoFARotationText,
@@ -54,6 +61,7 @@ const input = ref(''), confirmed = ref(false), message = ref(''), actionBusy = r
 const busy = ref(false), loading = ref(false)
 const jobs = ref<TwoFARotationJob[]>([])
 const pending = ref<{ id: string; entry: TokenGuardReloginAccount }[]>([])
+const rejected = ref<{ id: string; email: string; reason: CredentialSubmissionRejection }[]>([])
 let alive = true
 let timer: ReturnType<typeof setInterval> | undefined
 
@@ -82,6 +90,12 @@ function latestVerified(job: TwoFARotationJob) {
     && jobs.value.find(candidate => candidate.email === job.email)?.id === job.id
 }
 
+function relatedJobs(item: { email: string; reason: CredentialSubmissionRejection }) {
+  if (item.reason !== 'account_has_unresolved_job') return []
+  return jobs.value.filter(job => job.email.trim().toLowerCase() === item.email.trim().toLowerCase()
+    && (job.rotated_pending_verify || ['queued', 'running', 'needs_review'].includes(job.status)))
+}
+
 async function refresh() {
   if (!props.configured || loading.value || !alive) return
   loading.value = true
@@ -99,6 +113,7 @@ async function startBatch() {
     pending.value = parseTwoFARotationText(input.value).map(entry => ({ id: crypto.randomUUID(), entry }))
   } catch { message.value = t('tokenGuard.twoFA.invalid'); return }
   input.value = ''
+  rejected.value = []
   await submitPending()
 }
 
@@ -113,8 +128,17 @@ async function submitPending() {
       // An uncertain request keeps the SAME id and payload for a safe retry.
       pending.value = pending.value.filter(value => value.id !== item.id)
       item.entry.password = ''; item.entry.mfa_secret = ''
-    } catch {
-      if (alive) message.value = t('tokenGuard.rotation.submitUncertain')
+    } catch (error) {
+      if (!alive) break
+      const reason = credentialSubmissionRejection(error)
+      if (reason) {
+        rejected.value.push({ id: item.id, email: item.entry.email, reason })
+        pending.value = pending.value.filter(value => value.id !== item.id)
+        item.entry.password = ''; item.entry.mfa_secret = ''
+        // A rejected account must not strand other explicitly submitted accounts.
+        continue
+      }
+      message.value = t('tokenGuard.rotation.submitUncertain')
       break
     }
   }

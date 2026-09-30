@@ -12,16 +12,16 @@ func (h *AccountTokenGuardHandler) StartSessionLogout(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
 	var req service.AccountSessionLogoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "会话退出任务格式不正确")
+		credentialSubmissionInvalid(c, "会话退出任务格式不正确")
 		return
 	}
 	if err := service.ValidateAccountSessionLogoutRequest(req); err != nil {
-		response.BadRequest(c, err.Error())
+		credentialSubmissionInvalid(c, err.Error())
 		return
 	}
 	job, err := h.svc.StartSessionLogout(c.Request.Context(), req)
 	if err != nil {
-		response.Error(c, http.StatusServiceUnavailable, err.Error())
+		credentialSubmissionError(c, err)
 		return
 	}
 	response.Accepted(c, job)

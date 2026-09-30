@@ -1,4 +1,12 @@
 export default {
+  "submission": {
+    "account_has_unresolved_job": "No new task was created: this account has a running or unresolved 2FA task. Review the linked task. Refresh updates its status; it does not remove the protection for an unconfirmed change.",
+    "account_has_unresolved_logout": "No new task was created: this account has an unresolved logout task. Review the linked task before submitting again.",
+    "credential_worker_busy": "No new task was created: the maintenance service is busy. Wait for it to finish, then enter credentials and submit again.",
+    "worker_history_capacity": "No new task was created: task history is full. Contact the administrator.",
+    "credential_submission_invalid": "No new task was created: check the input format and confirmation, then enter credentials again.",
+    "relatedJob": "View related task"
+},
   "sessions": {
   "tab": "Log out all sessions",
   "title": "Log out all ChatGPT sessions",

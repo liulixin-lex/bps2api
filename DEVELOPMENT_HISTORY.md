@@ -17,6 +17,8 @@
 
 ## 本地 PR 开发
 
+[2026-09-30：明确拒绝提交误报修复](docs/development/entries/2026-09-30-submission-rejection.md)：进行中。已确认同账号旧变更待核查会在接收前拒绝新任务，但 Go/前端误报提交不确定，计划修复响应协议与输入锁定；不重放账号操作或解除旧保护。
+
 [PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR open、未合并；当前测试站 app/worker 于 2026-09-30 08:34 UTC 更新为 ece34aa0（0.0.18-pr12.ece34aa0）。已补个人工作区自动选择和具体登录错误传递，同一截图账号真实登录/只读 MFA 查询 200；105 项 worker、39 项前端、后端定向回归及源码/部署回滚、浏览器验收通过。原 9 条任务保留，不重放真实轮换/退出。历史一次 2FA 成功、一次关闭旧 TOTP 返回 500 的证据和保护仍保留，不能称上游 500 已解决。详见[本次登录修复](docs/development/entries/2026-09-30-login-failures.md)及[历史测试部署记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。
 
 2026-09-30 补充约束：必须全自动，不接入人工浏览器验证；失败任务不自动重放。保留原 XY2API 可回切，只在本机开发/测试站部署并更新 PR，不改远端生产。

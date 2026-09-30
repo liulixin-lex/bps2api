@@ -1,4 +1,12 @@
 export default {
+  "submission": {
+    "account_has_unresolved_job": "本次未创建任务：该账号已有进行中或结果待确认的 2FA 任务。请查看关联任务；刷新只更新状态，不会解除未确认变更的保护。",
+    "account_has_unresolved_logout": "本次未创建任务：该账号已有结果待确认的退出任务。请查看关联任务，勿重复退出。",
+    "credential_worker_busy": "本次未创建任务：维护服务正在处理其他任务，请等待完成后重新输入并提交。",
+    "worker_history_capacity": "本次未创建任务：维护服务的任务记录已达上限，请联系管理员处理。",
+    "credential_submission_invalid": "本次未创建任务：输入格式或确认信息不正确，请检查后重新输入。",
+    "relatedJob": "查看关联任务"
+},
   "sessions": {
   "tab": "退出所有会话",
   "title": "退出 ChatGPT 所有会话",

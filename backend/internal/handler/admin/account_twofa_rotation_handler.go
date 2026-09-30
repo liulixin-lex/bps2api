@@ -13,16 +13,16 @@ func (h *AccountTokenGuardHandler) StartTwoFARotation(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
 	var req service.AccountTwoFARotationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, "2FA 任务格式不正确")
+		credentialSubmissionInvalid(c, "2FA 任务格式不正确")
 		return
 	}
 	if err := service.ValidateAccountTwoFARotationRequest(req); err != nil {
-		response.BadRequest(c, err.Error())
+		credentialSubmissionInvalid(c, err.Error())
 		return
 	}
 	job, err := h.svc.StartTwoFARotation(c.Request.Context(), req)
 	if err != nil {
-		response.Error(c, http.StatusServiceUnavailable, err.Error())
+		credentialSubmissionError(c, err)
 		return
 	}
 	response.Accepted(c, job)

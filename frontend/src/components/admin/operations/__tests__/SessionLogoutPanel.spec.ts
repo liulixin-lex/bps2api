@@ -73,3 +73,21 @@ describe('independent session logout', () => {
     expect(api.startSessionLogout).not.toHaveBeenCalled()
   })
 })
+
+
+it('releases a rejected logout submission and links the protected historical task', async () => {
+  vi.mocked(api.startSessionLogout).mockRejectedValueOnce({ status: 409, reason: 'account_has_unresolved_logout', metadata: { submission: 'not_accepted' }, message: 'private-cookie' })
+  vi.mocked(api.listSessionLogouts).mockResolvedValue([{ ...job, status: 'needs_review' }])
+  wrapper = mount(SessionLogoutPanel, { props: { configured: true, active: true } })
+  await fill(); await wrapper.get('input[type=checkbox]').setValue(true); await wrapper.get('form').trigger('submit'); await flushPromises()
+  expect(wrapper.text()).toContain('submission.account_has_unresolved_logout')
+  expect(wrapper.text()).not.toContain('submitUncertain')
+  expect(wrapper.text()).not.toContain('retrySubmit')
+  expect(wrapper.text()).not.toContain('private-cookie')
+  expect((wrapper.get('#logout-password').element as HTMLInputElement).disabled).toBe(false)
+  expect(vi.mocked(api.startSessionLogout).mock.calls[0][0].password).toBe('')
+  expect(vi.mocked(api.startSessionLogout).mock.calls[0][0].mfa_secret).toBe('')
+  expect(wrapper.get('a').attributes('href')).toBe('#logout-job-' + job.id)
+  await wrapper.findAll('button').find(b => b.text() === 'tokenGuard.refresh')!.trigger('click'); await flushPromises()
+  expect(api.startSessionLogout).toHaveBeenCalledTimes(1)
+})
