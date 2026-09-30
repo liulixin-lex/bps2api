@@ -38,6 +38,6 @@ Go 仅识别新提交路径上的固定 409 detail 白名单，响应固定 reas
 
 ## 交付状态
 
-本轮提交状态修复及测试站验收完成；PR #12 推送待执行。旧任务最终变更状态仍待独立核验，不允许改库解除保护或重放；前端明确拒绝修复不等于完成了账号更换。
+本轮提交状态修复及测试站验收完成；PR #12 已更新，保持 open、未合并。旧任务最终变更状态仍待独立核验，不允许改库解除保护或重放；前端明确拒绝修复不等于完成了账号更换。
 
 四角色：源码 docs-local/submission-rejection-20260930/{MODIFIED_FILE,DIFF_FILE,VERIFICATION.txt,ROLLBACK.sh}；部署 /opt/bps2api-twofa-preview/evidence/submission-rejection-20260930 同名四角色。源码回滚脚本仅恢复本事务列出的字节；部署回滚脚本仅切回原应用镜像及部署证据，不改数据库。账号凭据不写入 Git、日志或本记录。
