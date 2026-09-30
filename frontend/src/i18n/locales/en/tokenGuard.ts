@@ -1,4 +1,44 @@
 export default {
+  "sessions": {
+  "tab": "Log out all sessions",
+  "title": "Log out all ChatGPT sessions",
+  "description": "Enter your email, password, and current 2FA secret. The server signs in automatically and requests logout of all sessions.",
+  "email": "Account email",
+  "password": "Account password",
+  "secret": "Current 2FA secret",
+  "confirm": "I manage this account and authorize logging out all its ChatGPT sessions, including the session performing this action.",
+  "submit": "Log out all sessions",
+  "status": "Logout status",
+  "scope": "Passwords and 2FA are unchanged. Valid credentials can sign in again. Revocation of OAuth credentials imported into SUB2API/CPA is not guaranteed.",
+  "invalid": "Enter the email, password, and current 2FA secret.",
+  "submitted": "Task submitted. The server will run it automatically; check the status below.",
+  "submitUncertain": "Submission is unconfirmed. Refresh tasks first, then retry with the original request ID; do not create a duplicate task.",
+  "loadFailed": "Could not read tasks. Check the shared worker configuration and version, then refresh.",
+  "acceptedHint": "The upstream acknowledged the log-out-all operation. Other devices may take time to sign out.",
+  "states": {
+    "queued": "Queued",
+    "logging_in": "Signing in automatically",
+    "revoking": "Submitting logout",
+    "accepted": "Logout request acknowledged",
+    "login_failed": "Login failed; no logout attempted",
+    "failed": "Logout preflight incomplete",
+    "needs_review": "Logout unconfirmed; do not resubmit",
+    "interrupted": "Interrupted; not automatically retried"
+  },
+  "errors": {
+    "login_failed": "Automatic login did not complete; no logout was submitted.",
+    "login_interaction_required": "Login needs additional verification; the automated flow stopped.",
+    "invalid_credentials": "The password or current 2FA code was rejected.",
+    "account_die": "Account unavailable; no logout submitted.",
+    "logout_control_missing": "The log-out-all control could not be found or used.",
+    "logout_rejected": "The upstream rejected logout; automatic retries stopped.",
+    "logout_unconfirmed": "No explicit acknowledgment was received. Page closure or a login redirect alone does not confirm logout.",
+    "worker_interrupted": "The worker stopped; the task was not replayed.",
+    "login_access_denied": "Login was denied; no logout attempted.",
+    "login_rate_limited": "Login was rate-limited; no logout attempted.",
+    "identity_mismatch": "The signed-in account did not match the requested email; logout stopped."
+  }
+},
   "rotation": {
     "sections": "Credential operations",
     "tab": "Automatic 2FA rotation",

@@ -5,8 +5,8 @@
       <header class="ops-heading">
         <div>
           <p class="eyebrow">{{ t('accountOps.smartTitle') }}</p>
-          <h2>{{ t(viewMode === 'rotation' ? 'tokenGuard.rotation.title' : 'tokenGuard.title') }}</h2>
-          <p class="subtitle">{{ t(viewMode === 'rotation' ? 'tokenGuard.rotation.focusHint' : 'tokenGuard.description') }}</p>
+          <h2>{{ t(viewMode === 'logout' ? 'tokenGuard.sessions.title' : viewMode === 'rotation' ? 'tokenGuard.rotation.title' : 'tokenGuard.title') }}</h2>
+          <p class="subtitle">{{ t(viewMode === 'logout' ? 'tokenGuard.sessions.description' : viewMode === 'rotation' ? 'tokenGuard.rotation.focusHint' : 'tokenGuard.description') }}</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
           <button class="btn btn-secondary inline-flex items-center gap-2" :disabled="loading" @click="load()">
@@ -22,12 +22,18 @@
       <p v-if="notice" role="status" class="success-banner">{{ notice }}</p>
 
       <nav class="mb-5 flex flex-wrap gap-2" :aria-label="t('tokenGuard.rotation.sections')">
+        <button type="button" class="btn" :class="viewMode === 'logout' ? 'btn-primary' : 'btn-secondary'" :aria-pressed="viewMode === 'logout'" data-testid="logout-tab" @click="viewMode = 'logout'">{{ t('tokenGuard.sessions.tab') }}</button>
         <button type="button" class="btn" :class="viewMode === 'rotation' ? 'btn-primary' : 'btn-secondary'" :aria-pressed="viewMode === 'rotation'" data-testid="rotation-tab" @click="viewMode = 'rotation'">{{ t('tokenGuard.rotation.tab') }}</button>
         <button type="button" class="btn" :class="viewMode === 'guard' ? 'btn-primary' : 'btn-secondary'" :aria-pressed="viewMode === 'guard'" data-testid="guard-tab" @click="viewMode = 'guard'">{{ t('tokenGuard.rotation.guardTab') }}</button>
       </nav>
 
       <section v-show="viewMode === 'rotation'" class="stack" data-testid="rotation-workspace">
         <TwoFARotationPanel v-if="remote" :configured="Boolean(remote.config.two_fa_rotation_endpoint)" :disabled="dirty || saving" :show-apply="false" @apply="applyRotation" />
+      </section>
+      <section v-show="viewMode === 'logout'" class="stack" data-testid="logout-workspace">
+        <SessionLogoutPanel v-if="remote" :configured="Boolean(remote.config.two_fa_rotation_endpoint)" :disabled="dirty || saving" :active="viewMode === 'logout'" />
+      </section>
+      <section v-show="viewMode !== 'guard'" class="stack mt-4">
         <details v-if="draft" class="settings-card" :open="!remote?.config.two_fa_rotation_endpoint">
           <summary class="cursor-pointer px-5 py-4 text-sm font-medium">{{ t('tokenGuard.rotation.serviceSettings') }}</summary>
           <form class="settings-form" @submit.prevent="save">
@@ -158,6 +164,7 @@ import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import SmartOpsNav from '@/components/admin/operations/SmartOpsNav.vue'
 import TwoFARotationPanel from '@/components/admin/operations/TwoFARotationPanel.vue'
+import SessionLogoutPanel from '@/components/admin/operations/SessionLogoutPanel.vue'
 import { applyTwoFARotationResult, type TwoFARotationResult } from '@/api/admin/accountTwoFARotation'
 import Icon from '@/components/icons/Icon.vue'
 import Select from '@/components/common/Select.vue'
@@ -176,7 +183,7 @@ import {
 } from '@/api/admin/accountTokenGuard'
 
 const { t } = useI18n()
-const viewMode = ref<'rotation' | 'guard'>('rotation')
+const viewMode = ref<'rotation' | 'guard' | 'logout'>('rotation')
 const remote = ref<TokenGuardStatus | null>(null)
 const draft = ref<TokenGuardConfig | null>(null)
 const reloginText = ref('')

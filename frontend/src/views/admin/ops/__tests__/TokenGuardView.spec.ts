@@ -27,6 +27,7 @@ beforeEach(() => {
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 async function openPage() {
   wrapper = mount(TokenGuardView, { global: { stubs: {
+    SessionLogoutPanel: { name: 'SessionLogoutPanel', props: ['configured', 'disabled', 'active'], template: '<div data-testid="logout-panel"><input data-testid="logout-draft" /></div>' },
     AppLayout: { template: '<div><slot /></div>' }, SmartOpsNav: true, Icon: true, Select: true,
     TwoFARotationPanel: { name: 'TwoFARotationPanel', props: ['configured', 'disabled', 'showApply'], template: '<div data-testid="rotation-panel"><input data-testid="rotation-draft" /></div>' }
   } } })
@@ -57,6 +58,26 @@ describe('focused 2FA workspace', () => {
     expect((page.get('[data-testid="rotation-draft"]').element as HTMLInputElement).value).toBe('draft still here')
     expect(api.startTokenGuardRun).not.toHaveBeenCalled()
     expect(api.saveTokenGuardConfig).not.toHaveBeenCalled()
+  })
+  it('places logout first in the menu and preserves both operation forms', async () => {
+    const page = await openPage()
+    expect(page.findAll('nav button')[0].attributes('data-testid')).toBe('logout-tab')
+    await page.get('[data-testid="rotation-draft"]').setValue('rotation draft')
+    await page.get('[data-testid="logout-tab"]').trigger('click')
+    expect(page.get('[data-testid="logout-workspace"]').isVisible()).toBe(true)
+    expect(page.get('[data-testid="rotation-workspace"]').isVisible()).toBe(false)
+    expect(page.findComponent({ name: 'SessionLogoutPanel' }).props('active')).toBe(true)
+    expect(page.get('details').element.parentElement?.style.display).not.toBe('none')
+    expect(page.get('details').attributes('open')).toBeUndefined()
+    page.get('details').element.setAttribute('open', '')
+    expect(page.get('details form').isVisible()).toBe(true)
+    await page.get('[data-testid="logout-draft"]').setValue('logout draft')
+    await page.get('[data-testid="rotation-tab"]').trigger('click')
+    expect((page.get('[data-testid="rotation-draft"]').element as HTMLInputElement).value).toBe('rotation draft')
+    await page.get('[data-testid="logout-tab"]').trigger('click')
+    expect((page.get('[data-testid="logout-draft"]').element as HTMLInputElement).value).toBe('logout draft')
+    expect(api.saveTokenGuardConfig).not.toHaveBeenCalled()
+    expect(api.startTokenGuardRun).not.toHaveBeenCalled()
   })
   it('saves the worker endpoint while preserving all existing guard settings', async () => {
     const page = await openPage()

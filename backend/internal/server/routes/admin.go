@@ -778,6 +778,8 @@ func registerScheduledTestRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	admin.POST("/account-ops/token-guard/two-fa-login", h.Admin.AccountTokenGuard.StartTwoFALogin)
 	admin.GET("/account-ops/token-guard/two-fa-login/:id", h.Admin.AccountTokenGuard.TwoFALogin)
 	admin.DELETE("/account-ops/token-guard/two-fa-login/:id", h.Admin.AccountTokenGuard.DeleteTwoFALogin)
+	admin.POST("/account-ops/token-guard/session-logout", h.Admin.AccountTokenGuard.StartSessionLogout)
+	admin.GET("/account-ops/token-guard/session-logout", h.Admin.AccountTokenGuard.SessionLogoutJobs)
 	admin.POST("/account-ops/token-guard/two-fa-rotation", h.Admin.AccountTokenGuard.StartTwoFARotation)
 	admin.GET("/account-ops/token-guard/two-fa-rotation", h.Admin.AccountTokenGuard.TwoFARotationJobs)
 	admin.POST("/account-ops/token-guard/two-fa-rotation/:id/verify", h.Admin.AccountTokenGuard.VerifyTwoFARotation)

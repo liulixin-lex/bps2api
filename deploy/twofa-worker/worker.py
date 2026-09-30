@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 from rotation_service import StagedRotationService, pre_rotation_failure, rotation_failure_code
+from session_logout import SessionLogoutRuntime
 
 
 class RotationInput(BaseModel):
@@ -125,6 +126,7 @@ class Runtime:
         self.lock = asyncio.Lock()
         requests.execute("CREATE TABLE IF NOT EXISTS rotation_requests (id TEXT PRIMARY KEY, digest BLOB NOT NULL, job_id TEXT)")
         requests.commit()
+        self.session_logout = SessionLogoutRuntime(self)
 
     def job(self, job_id: str):
         job = self.manager.jobs.get(job_id)
@@ -160,6 +162,8 @@ class Runtime:
                 if not prior[1]:
                     raise HTTPException(409, "submission_uncertain_review_jobs")
                 return self.summary(self.job(prior[1]))
+            if self.session_logout.active():
+                raise HTTPException(409, "credential_worker_busy")
             if len(self.manager.jobs) >= 1000:
                 raise HTTPException(409, "worker_history_capacity")
             # An earlier partial operation must be resolved before rotating again.
@@ -188,6 +192,8 @@ class Runtime:
             job = self.job(job_id)
             if not (job.status == "error" and job.rotated_pending_verify and job.retryable):
                 raise HTTPException(409, "verification_only_retry_required")
+            if self.session_logout.active():
+                raise HTTPException(409, "credential_worker_busy")
             self.manager.retry(job_id)
             return self.summary(job)
 
@@ -252,6 +258,8 @@ def create_app(runtime: Runtime | None = None, token: str | None = None) -> Fast
         try:
             yield
         finally:
+            if app.state.runtime is not None:
+                await app.state.runtime.session_logout.shutdown()
             if engine is not None:
                 await app.state.runtime.manager.shutdown()
                 app.state.runtime.requests.close()
@@ -293,6 +301,14 @@ def create_app(runtime: Runtime | None = None, token: str | None = None) -> Fast
     @app.get("/health")
     async def health():
         return {"ok": True}
+
+    @app.get("/session-logout/jobs")
+    async def logout_jobs(request: Request):
+        return {"jobs": request.app.state.runtime.session_logout.list_jobs()}
+
+    @app.post("/session-logout/jobs", status_code=202)
+    async def start_logout(entry: RotationInput, request: Request):
+        return await request.app.state.runtime.session_logout.submit(entry)
 
     @app.get("/jobs")
     async def jobs(request: Request):

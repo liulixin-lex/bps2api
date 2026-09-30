@@ -1,4 +1,44 @@
 export default {
+  "sessions": {
+  "tab": "退出所有会话",
+  "title": "退出 ChatGPT 所有会话",
+  "description": "输入邮箱、密码和当前 2FA 密钥，由服务器自动登录并提交退出所有会话请求。",
+  "email": "账号邮箱",
+  "password": "账号密码",
+  "secret": "当前 2FA 密钥",
+  "confirm": "我确认这是我管理的账号，并授权退出其所有 ChatGPT 登录会话（包括执行操作的当前会话）。",
+  "submit": "一键退出所有会话",
+  "status": "退出状态",
+  "scope": "此操作不修改密码或 2FA。持有有效凭据的人仍可重新登录；不承诺同时撤销已导入 SUB2API／CPA 的 OAuth 凭据。",
+  "invalid": "请填写完整的邮箱、密码和当前 2FA 密钥。",
+  "submitted": "任务已提交，服务器将自动执行，请查看下方状态。",
+  "submitUncertain": "提交尚未确认，请先刷新任务。需要再次提交时沿用原任务标识，不要新建重复任务。",
+  "loadFailed": "任务读取失败，请检查共用维护服务配置与版本后刷新。",
+  "acceptedHint": "上游已确认接收退出所有会话操作；各设备退出可能存在延迟。",
+  "states": {
+    "queued": "排队中",
+    "logging_in": "正在自动登录",
+    "revoking": "正在提交退出请求",
+    "accepted": "退出请求已确认",
+    "login_failed": "登录失败，未执行退出",
+    "failed": "退出前检查未完成",
+    "needs_review": "退出结果待确认，请勿重复提交",
+    "interrupted": "任务已中断，未自动重试"
+  },
+  "errors": {
+    "login_failed": "自动登录未完成，尚未提交退出操作。",
+    "login_interaction_required": "登录需要额外验证，当前自动流程已停止。",
+    "invalid_credentials": "账号密码或当前 2FA 校验未通过。",
+    "account_die": "账号不可用，未提交退出操作。",
+    "logout_control_missing": "未找到或无法操作“退出所有会话”入口，未确认提交退出。",
+    "logout_rejected": "上游拒绝了退出请求，已停止自动重试。",
+    "logout_unconfirmed": "未收到明确的退出确认，不能仅凭页面关闭或登录跳转判定成功。",
+    "worker_interrupted": "维护服务中断，原任务没有自动重放。",
+    "login_access_denied": "登录被上游拒绝，未执行退出操作。",
+    "login_rate_limited": "登录请求被限流，未执行退出操作。",
+    "identity_mismatch": "登录账号与提交邮箱不一致，已停止退出操作。"
+  }
+},
   "rotation": {
     "sections": "凭证操作",
     "tab": "自动更换 2FA",
