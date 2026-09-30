@@ -17,6 +17,8 @@
 
 ## 本地 PR 开发
 
+[2026-09-30：新凭据交付核验](docs/development/entries/2026-09-30-verified-result.md)：用户截图任务检查时已验证成功；最新任务与导出接口 200 已确认，10 条任务、0 活动任务。公网浏览器已实际复制并在内存核对三字段完全一致，剪贴板已清空。诊断完成，无业务修改/部署，不重放轮换。
+
 [2026-09-30：明确拒绝提交误报修复](docs/development/entries/2026-09-30-submission-rejection.md)：测试站应用已更新为 e72f486a，明确拒绝现在显示原因、恢复输入并链接旧任务；61 项前端、105 项 worker、后端回归与源码/部署回滚、浏览器验收通过。原 9 条任务保留，旧 500 保护不解锁；PR #12 已更新，保持 open、未合并。
 
 [PR #12：账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md)：PR open、未合并；当前测试站 app 于 2026-09-30 09:01 UTC 更新为 e72f486a（0.0.18-pr12.e72f486a），worker 保持 ece34aa0。08:34 UTC 的登录修复为历史基础。已补个人工作区自动选择和具体登录错误传递，同一截图账号真实登录/只读 MFA 查询 200；105 项 worker、39 项前端、后端定向回归及源码/部署回滚、浏览器验收通过。原 9 条任务保留，不重放真实轮换/退出。历史一次 2FA 成功、一次关闭旧 TOTP 返回 500 的证据和保护仍保留，不能称上游 500 已解决。详见[本次登录修复](docs/development/entries/2026-09-30-login-failures.md)及[历史测试部署记录](docs/development/entries/2026-09-29-twofa-pr12-preview.md)。
