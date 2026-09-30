@@ -10,9 +10,11 @@ import uuid
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
+from progress import report_phase, track_progress
 
 ACTIVE = frozenset({'queued', 'logging_in', 'revoking'})
-CODES = frozenset({'login_failed', 'login_interaction_required', 'invalid_credentials',
+DELETABLE = frozenset({'accepted', 'login_failed', 'failed', 'interrupted'})
+CODES = frozenset({'login_failed', 'login_password_rejected', 'login_mfa_retry_exhausted', 'login_mfa_rejected', 'login_upstream_error', 'login_browser_challenge', 'login_email_verification_required', 'login_interaction_required', 'invalid_credentials',
                    'account_die', 'logout_control_missing', 'logout_rejected',
                    'logout_unconfirmed', 'worker_interrupted', 'login_access_denied',
                    'login_rate_limited', 'identity_mismatch', 'login_workspace_selection_failed', 'login_session_incomplete'})
@@ -182,17 +184,39 @@ class SessionLogoutRuntime:
         self.login_fn = login_fn or get_browser_session
         self.revoke_fn = revoke_fn or revoke_browser_sessions
         self.tasks = set()
+        self.progress = {}
         self.db.execute('''CREATE TABLE IF NOT EXISTS session_logout_jobs (
             id TEXT PRIMARY KEY, request_id TEXT UNIQUE NOT NULL, digest BLOB NOT NULL,
             email TEXT NOT NULL, status TEXT NOT NULL, error_code TEXT NOT NULL,
             created_at REAL NOT NULL, finished_at REAL)''')
+        # Keep request identities after deletion; compatible with legacy jobs.
+        self.db.execute('''CREATE TABLE IF NOT EXISTS session_logout_deleted (
+            request_id TEXT PRIMARY KEY, digest BLOB NOT NULL, job_id TEXT NOT NULL)''')
         # No secrets are kept on disk; interrupted work is never resumed.
         self.db.execute("UPDATE session_logout_jobs SET status=CASE WHEN status='revoking' THEN 'needs_review' ELSE 'interrupted' END, error_code='worker_interrupted',finished_at=? WHERE status IN ('queued','logging_in','revoking')", (time.time(),))
         self.db.commit()
 
     def list_jobs(self):
         rows = self.db.execute('SELECT id,email,status,error_code,created_at,finished_at FROM session_logout_jobs ORDER BY created_at DESC,rowid DESC').fetchall()
-        return [dict(zip(('id', 'email', 'status', 'error_code', 'created_at', 'finished_at'), row)) for row in rows]
+        result = [dict(zip(('id', 'email', 'status', 'error_code', 'created_at', 'finished_at'), row)) for row in rows]
+        for job in result:
+            job['deletable'] = job['status'] in DELETABLE
+            if job['status'] in ACTIVE:
+                job.update(self.progress.get(job['id'], {}))
+        return result
+
+    async def delete_jobs(self, ids):
+        async with self.runtime.lock:
+            rows = [self.db.execute('SELECT id,request_id,digest,status FROM session_logout_jobs WHERE id=?', (key,)).fetchone() for key in ids]
+            if any(row is not None and row[3] not in DELETABLE for row in rows):
+                raise HTTPException(409, 'job_history_protected')
+            # Tombstone and delete are atomic: removal never reopens dispatch.
+            with self.db:
+                for row in rows:
+                    if row is not None:
+                        self.db.execute('INSERT OR IGNORE INTO session_logout_deleted VALUES (?,?,?)', (row[1], row[2], row[0]))
+                        self.db.execute('DELETE FROM session_logout_jobs WHERE id=?', (row[0],))
+            return {'deleted_ids': ids}
 
     def active(self):
         return self.db.execute("SELECT 1 FROM session_logout_jobs WHERE status IN ('queued','logging_in','revoking') LIMIT 1").fetchone() is not None
@@ -208,6 +232,11 @@ class SessionLogoutRuntime:
         encoded = json.dumps(entry.model_dump(), sort_keys=True, ensure_ascii=False).encode()
         digest = hmac.new(self.runtime.digest_key, b'session-logout:' + encoded, hashlib.sha256).digest()
         async with self.runtime.lock:
+            deleted = self.db.execute('SELECT digest FROM session_logout_deleted WHERE request_id=?', (entry.request_id,)).fetchone()
+            if deleted:
+                if not hmac.compare_digest(deleted[0], digest):
+                    raise HTTPException(409, 'request_id_reused')
+                raise HTTPException(410, 'job_history_deleted')
             prior = self.db.execute('SELECT id,digest FROM session_logout_jobs WHERE request_id=?', (entry.request_id,)).fetchone()
             if prior:
                 if not hmac.compare_digest(prior[1], digest):
@@ -229,6 +258,18 @@ class SessionLogoutRuntime:
             return next(j for j in self.list_jobs() if j['id'] == job_id)
 
     async def _run(self, job_id, entry):
+        self.progress[job_id] = {'started_at': time.time()}
+        def update(phase):
+            value = self.progress[job_id]
+            if value.get('phase') != phase:
+                value.update(phase=phase, phase_started_at=time.time())
+        with track_progress(update):
+            try:
+                await self._execute(job_id, entry)
+            finally:
+                self.progress.pop(job_id, None)
+
+    async def _execute(self, job_id, entry):
         sent = False
         logged_in = False
         session = None
@@ -236,13 +277,16 @@ class SessionLogoutRuntime:
             nonlocal sent
             sent = True
             self._status(job_id, 'revoking')
+            report_phase('revoking')
         try:
             self._status(job_id, 'logging_in')
+            report_phase('login_start')
             session = await asyncio.wait_for(self.login_fn(email=entry.email, password=entry.password,
                                                           secret=entry.mfa_secret), 210)
             if (not isinstance(session, dict) or str(session.get('user', {}).get('email', '')).strip().casefold() != entry.email.casefold()):
                 raise LogoutError('identity_mismatch')
             logged_in = True
+            report_phase('logout_preflight')
             result = await asyncio.wait_for(self.revoke_fn(session, entry.email, before_send), 100)
             if result is not True or not sent:
                 raise LogoutError('logout_unconfirmed')

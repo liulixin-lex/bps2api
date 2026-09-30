@@ -41,6 +41,10 @@ class Manager:
         self.order.append(job.id)
         return [{"id": job.id}]
 
+    def delete(self, job_id):
+        self.jobs.pop(job_id)
+        self.order.remove(job_id)
+
     def retry(self, job_id):
         self.retry_calls += 1
         self.jobs[job_id].status = "queued"
@@ -270,3 +274,62 @@ def test_proven_login_failure_can_be_resubmitted_only_with_new_confirmation(clie
     assert runtime.manager.add_calls == 1
     assert client.post('/jobs', json=entry()).status_code == 202
     assert runtime.manager.add_calls == 2
+
+
+def finished(client, runtime, **kwargs):
+    payload = entry(**kwargs)
+    result = client.post('/jobs', json=payload)
+    assert result.status_code == 202
+    job = runtime.job(result.json()['id'])
+    job.status = 'success'
+    job.login_verified = True
+    return payload, job
+
+
+def test_delete_history_requires_auth_and_valid_bounded_ids(client):
+    assert client.request('DELETE', '/jobs', json={'ids': ['a'*32]}, headers={'Authorization': ''}).status_code == 401
+    for ids in [[], ['a'*32]*101, ['../secret'], ['x'*32]]:
+        assert client.request('DELETE', '/jobs', json={'ids': ids}).status_code == 422
+
+
+def test_delete_result_never_replays_request_or_reveals_an_old_secret(client, runtime):
+    _, old = finished(client, runtime)
+    payload, latest = finished(client, runtime)
+    assert client.get('/jobs/' + old.id + '/result').status_code == 409
+    result = client.request('DELETE', '/jobs', json={'ids': [latest.id, latest.id]})
+    assert result.status_code == 200 and result.json() == {'deleted_ids': [latest.id]}
+    assert latest.id not in runtime.manager.jobs
+    assert client.get('/jobs/' + latest.id + '/result').status_code == 404
+    assert client.get('/jobs/' + old.id + '/result').status_code == 409
+    assert client.post('/jobs', json=payload).status_code == 410
+    assert runtime.manager.add_calls == 2
+    assert client.request('DELETE', '/jobs', json={'ids': [latest.id]}).status_code == 200
+    restored = Runtime(runtime.manager, runtime.requests, b'test-key')
+    assert not restored.summary(old)['is_latest']
+    with pytest.raises(HTTPException) as error:
+        restored.result(old.id)
+    assert error.value.status_code == 409
+
+
+@pytest.mark.parametrize('status,pending,error_kind', [('queued',False,None),('running',False,None),('error',True,'technical_error'),('error',False,'technical_error'),('cancelled',False,None)])
+def test_delete_protects_whole_selection(client, runtime, status, pending, error_kind):
+    _, done = finished(client, runtime, email='finished@example.com')
+    _, protected = finished(client, runtime, email='other@example.com')
+    protected.status = status
+    protected.login_verified = False
+    protected.rotated_pending_verify = pending
+    protected.error_kind = error_kind
+    response = client.request('DELETE', '/jobs', json={'ids': [done.id, protected.id]})
+    assert response.status_code == 409
+    assert len(runtime.manager.jobs) == 2
+
+
+def test_pre_mutation_failure_history_is_deletable(client, runtime):
+    _, job = finished(client, runtime)
+    job.status = 'error'
+    job.login_verified = False
+    job.error_kind = 'pre_rotation:login_browser_challenge'
+    job.error = 'pre_rotation:login_browser_challenge'
+    assert runtime.summary(job)['deletable']
+    assert client.request('DELETE', '/jobs', json={'ids': [job.id]}).status_code == 200
+    assert client.get('/jobs').json()['jobs'] == []

@@ -15,6 +15,7 @@ import os
 import re
 import sqlite3
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -28,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 from rotation_service import StagedRotationService, pre_rotation_failure, rotation_failure_code
 from session_logout import SessionLogoutRuntime
+from progress import track_progress
 
 
 class RotationInput(BaseModel):
@@ -62,6 +64,18 @@ class RotationInput(BaseModel):
     @classmethod
     def id_valid(cls, value: str) -> str:
         return uuid.UUID(value).hex
+
+
+class DeleteHistoryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ids: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("ids")
+    @classmethod
+    def valid_ids(cls, values):
+        if any(not re.fullmatch(r"[a-fA-F0-9]{32}|[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}", v) for v in values):
+            raise ValueError("invalid_job_ids")
+        return list(dict.fromkeys(uuid.UUID(v).hex for v in values))
 
 
 class EncryptedJobRepository:
@@ -108,6 +122,9 @@ class EncryptedJobRepository:
     def get_logs(self, _job_id: str):
         return []
 
+    def delete(self, job_id: str):
+        return self.repository.delete(job_id)
+
     def recover_interrupted(self):
         for row in self.list_all():
             if row.get("status") not in {"running", "queued", "cancelled"}:
@@ -125,6 +142,12 @@ class Runtime:
         self.lock_file = lock_file  # Holds the exclusive process lock until shutdown.
         self.lock = asyncio.Lock()
         requests.execute("CREATE TABLE IF NOT EXISTS rotation_requests (id TEXT PRIMARY KEY, digest BLOB NOT NULL, job_id TEXT)")
+        # Retain only the latest job identity when history is deleted. Deleting
+        # a newer result must never make an older 2FA secret exportable again.
+        requests.execute("CREATE TABLE IF NOT EXISTS rotation_latest (email TEXT PRIMARY KEY, job_id TEXT NOT NULL)")
+        for key in reversed(manager.order):
+            job = manager.jobs[key]
+            requests.execute("INSERT OR IGNORE INTO rotation_latest VALUES (?,?)", (job.email, job.id))
         requests.commit()
         self.session_logout = SessionLogoutRuntime(self)
 
@@ -147,7 +170,34 @@ class Runtime:
             "rotated_pending_verify": job.rotated_pending_verify,
             "retryable": job.status == "error" and job.rotated_pending_verify and job.retryable,
             "created_at": job.created_at, "error_code": failure or rotation_failure_code(job),
+            "is_latest": self.is_latest(job),
+            "started_at": getattr(job, "started_at", None),
+            **(getattr(self.manager, "progress", {}).get(job.id, {}) if job.status == "running" else {}),
+            "deletable": not job.rotated_pending_verify and status in {"success", "login_failed", "preflight_failed"},
         }
+
+    def is_latest(self, job: Any) -> bool:
+        marker = self.requests.execute("SELECT job_id FROM rotation_latest WHERE email=?", (job.email,)).fetchone()
+        if marker:
+            return marker[0] == job.id
+        latest = next((self.manager.jobs[key] for key in reversed(self.manager.order) if self.manager.jobs[key].email == job.email), None)
+        return latest is job
+
+    async def delete_jobs(self, ids: list[str]) -> dict:
+        async with self.lock:
+            jobs = [self.job(key) for key in ids if key in self.manager.jobs]
+            # Validate the entire selection before removing any row.
+            if any(not self.summary(job)["deletable"] for job in jobs):
+                raise HTTPException(409, "job_history_protected")
+            for job in jobs:
+                latest = next(self.manager.jobs[key] for key in reversed(self.manager.order) if self.manager.jobs[key].email == job.email)
+                self.requests.execute("INSERT OR IGNORE INTO rotation_latest VALUES (?,?)", (job.email, latest.id))
+            self.requests.commit()
+            for job in jobs:
+                # The pinned engine deletes the encrypted row and its logs.
+                # rotation_requests is retained to prevent same-ID replay.
+                self.manager.delete(job.id)
+            return {"deleted_ids": ids}
 
     async def submit(self, entry: RotationInput) -> dict:
         if not entry.confirmed:
@@ -161,6 +211,8 @@ class Runtime:
                     raise HTTPException(409, "request_id_reused")
                 if not prior[1]:
                     raise HTTPException(409, "submission_uncertain_review_jobs")
+                if prior[1] not in self.manager.jobs:
+                    raise HTTPException(410, "job_history_deleted")
                 return self.summary(self.job(prior[1]))
             if self.session_logout.active():
                 raise HTTPException(409, "credential_worker_busy")
@@ -182,6 +234,7 @@ class Runtime:
                 jobs = self.manager.add([json.dumps({"email": entry.email, "password": entry.password, "mfa_secret": entry.mfa_secret})], "change_2fa")
                 job_id = jobs[0]["id"]
                 self.requests.execute("UPDATE rotation_requests SET job_id=? WHERE id=?", (job_id, entry.request_id))
+                self.requests.execute("INSERT OR REPLACE INTO rotation_latest VALUES (?,?)", (entry.email, job_id))
                 self.requests.commit()
                 return self.summary(self.job(job_id))
             except Exception:
@@ -201,8 +254,7 @@ class Runtime:
         job = self.job(job_id)
         if job.status != "success" or not job.login_verified or not job.secret:
             raise HTTPException(409, "result_not_verified")
-        latest = next((self.manager.jobs[key] for key in reversed(self.manager.order) if self.manager.jobs[key].email == job.email), None)
-        if latest is not job:
+        if not self.is_latest(job):
             raise HTTPException(409, "result_superseded")
         return {"id": job.id, "email": job.email, "password": job.password, "mfa_secret": job.secret, "login_verified": True}
 
@@ -231,6 +283,16 @@ def build_runtime() -> tuple[Runtime, Any]:
     encrypted.recover_interrupted()
 
     class StructuredManager(TwoFAJobManager):
+        async def _run(self, job):
+            def update(phase):
+                if self.progress.get(job.id, {}).get('phase') != phase:
+                    self.progress[job.id] = {'phase': phase, 'phase_started_at': time.time()}
+            with track_progress(update):
+                try:
+                    await super()._run(job)
+                finally:
+                    self.progress.pop(job.id, None)
+
         @staticmethod
         def parse_combo(line):
             entry = json.loads(line)
@@ -238,6 +300,7 @@ def build_runtime() -> tuple[Runtime, Any]:
             return entry["email"], entry["password"], entry["mfa_secret"]
 
     manager = StructuredManager(encrypted, get_settings_repo(engine), service=StagedRotationService())
+    manager.progress = {}
     manager.settings.update({"twofa.max_concurrent": 1, "twofa.auto_retry": False, "twofa.change_enabled": True})
     requests = sqlite3.connect(str(data / "requests.db"), check_same_thread=False)
     return Runtime(manager, requests, hashlib.sha256(key).digest(), lock_file), engine
@@ -314,6 +377,14 @@ def create_app(runtime: Runtime | None = None, token: str | None = None) -> Fast
     async def jobs(request: Request):
         rt = request.app.state.runtime
         return {"jobs": [rt.summary(rt.manager.jobs[key]) for key in reversed(rt.manager.order)]}
+
+    @app.delete("/session-logout/jobs")
+    async def delete_logout_jobs(entry: DeleteHistoryInput, request: Request):
+        return await request.app.state.runtime.session_logout.delete_jobs(entry.ids)
+
+    @app.delete("/jobs")
+    async def delete_jobs(entry: DeleteHistoryInput, request: Request):
+        return await request.app.state.runtime.delete_jobs(entry.ids)
 
     @app.post("/jobs", status_code=202)
     async def submit(entry: RotationInput, request: Request):

@@ -81,8 +81,79 @@ def test_acknowledged_logout_is_idempotent_and_stores_no_credentials(client, run
     output = client.get('/session-logout/jobs').text
     for value in [PASSWORD, SECRET, 'private-token', 'private-cookie']:
         assert value not in dump and value not in output
-    assert set(result) == {'id', 'email', 'status', 'error_code', 'created_at', 'finished_at'}
+    assert set(result) == {'id', 'email', 'status', 'error_code', 'created_at', 'finished_at', 'deletable'}
     assert client.get('/jobs').json()['jobs'] == []
+
+
+def test_logout_delete_retains_idempotency_and_is_repeatable(client, runtime):
+    calls = []
+    async def revoke(session, email, before_send):
+        calls.append(email)
+        await before_send()
+        return True
+    runtime.session_logout.revoke_fn = revoke
+    data = entry()
+    assert client.post('/session-logout/jobs', json=data).status_code == 202
+    result = settle(client)
+    assert result['deletable']
+    for _ in range(2):
+        response = client.request('DELETE', '/session-logout/jobs', json={'ids': [result['id']]})
+        assert response.status_code == 200 and response.json()['deleted_ids'] == [result['id']]
+    assert client.get('/session-logout/jobs').json()['jobs'] == []
+    assert client.post('/session-logout/jobs', json=data).status_code == 410
+    assert client.post('/session-logout/jobs', json={**data, 'password': 'changed'}).status_code == 409
+    runtime.session_logout = SessionLogoutRuntime(runtime, login_fn=login, revoke_fn=revoke)
+    assert client.post('/session-logout/jobs', json=data).status_code == 410
+    assert len(calls) == 1
+    dump = '\n'.join(runtime.requests.iterdump())
+    for value in [PASSWORD, SECRET, 'private-token', 'private-cookie']:
+        assert value not in dump
+
+
+@pytest.mark.parametrize('status', ['queued', 'logging_in', 'revoking', 'needs_review', 'unknown'])
+def test_logout_delete_validates_whole_batch_before_removal(client, runtime, status):
+    ids = [uuid.uuid4().hex, uuid.uuid4().hex]
+    for key, state in zip(ids, ['accepted', status]):
+        runtime.requests.execute('INSERT INTO session_logout_jobs VALUES (?,?,?,?,?,?,?,NULL)', (key, uuid.uuid4().hex, b'digest', 'test@example.com', state, '', 1))
+    runtime.requests.commit()
+    result = client.request('DELETE', '/session-logout/jobs', json={'ids': ids})
+    assert result.status_code == 409
+    assert len(runtime.session_logout.list_jobs()) == 2
+    assert runtime.requests.execute('SELECT COUNT(*) FROM session_logout_deleted').fetchone()[0] == 0
+
+
+def test_logout_delete_validates_input_and_authentication(client):
+    for data in [{'ids': []}, {'ids': ['../private']}, {'ids': ['a'*32]*101}, {'ids': ['a'*32], 'password': PASSWORD}]:
+        response = client.request('DELETE', '/session-logout/jobs', json=data)
+        assert response.status_code == 422 and PASSWORD not in response.text
+    assert client.request('DELETE', '/session-logout/jobs', json={'ids': ['a'*32]}, headers={'Authorization': ''}).status_code == 401
+
+
+def test_logout_reports_real_stages_without_leaking_credentials(runtime):
+    from progress import report_phase
+    async def scenario():
+        observed = []
+        async def capture_login(**kwargs):
+            report_phase('password')
+            observed.append(runtime.session_logout.list_jobs()[0])
+            report_phase('mfa_retry')
+            observed.append(runtime.session_logout.list_jobs()[0])
+            return await login(**kwargs)
+        async def revoke(session, email, before_send):
+            observed.append(runtime.session_logout.list_jobs()[0])
+            await before_send()
+            observed.append(runtime.session_logout.list_jobs()[0])
+            return True
+        runtime.session_logout.login_fn = capture_login
+        runtime.session_logout.revoke_fn = revoke
+        await runtime.session_logout.submit(RotationInput(**entry()))
+        await asyncio.gather(*runtime.session_logout.tasks)
+        assert [j['phase'] for j in observed] == ['password', 'mfa_retry', 'logout_preflight', 'revoking']
+        assert all(j['phase_started_at'] >= j['started_at'] > 0 and not j['deletable'] for j in observed)
+        final = runtime.session_logout.list_jobs()[0]
+        assert final['status'] == 'accepted' and 'phase' not in final
+        assert runtime.session_logout.progress == {}
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize('mode,status,code,sent', [

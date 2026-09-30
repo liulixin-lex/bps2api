@@ -23,12 +23,25 @@ def patch(source: Path):
     end = text.index('\nasync def get_session(', start)
     browser = text[start:end]
     browser_anchors = [
-        ('    settings = load_settings()', '    from browser_login import load_browser_settings, is_workspace_page, select_personal_workspace\n    settings = load_browser_settings()'),
+        ('    settings = load_settings()', '    from browser_login import load_browser_settings, is_workspace_page, select_personal_workspace, raise_login_failure, submit_totp_with_retry\n    settings = load_browser_settings()'),
+        ('            code = generate_code(secret)', '            # Generate after the OTP input is ready; never retain an aging code.'),
         ('    engine_order = _browser_launch_order(settings.browser_engine)', '    engine_order = ("camoufox",)'),
         ('        from browser_phase import _navigate_to_authorize', '        from browser_login import navigate_to_authorize as _navigate_to_authorize'),
         ('        session_ready = False\n        while time.monotonic() < deadline:\n            cookies = await ctx.cookies("https://chatgpt.com/")',
-         '        session_ready = False\n        workspace_selected = False\n        while time.monotonic() < deadline:\n            if not workspace_selected and is_workspace_page(page.url):\n                workspace_selected = True\n                await select_personal_workspace(page)\n            cookies = await ctx.cookies("https://chatgpt.com/")'),
+         '        session_ready = False\n        workspace_selected = False\n        while time.monotonic() < deadline:\n            raise_login_failure()\n            if not workspace_selected and is_workspace_page(page.url):\n                workspace_selected = True\n                await select_personal_workspace(page)\n            cookies = await ctx.cookies("https://chatgpt.com/")'),
     ]
+    old_submit = """            await _replace_input_text(otp_input, code, delay=60)
+            log(f"[session] TOTP code entered")
+            await asyncio.sleep(0.5)
+
+            await _submit_auth_form(otp_input, (
+                'button[type="submit"]',
+                'button:has-text("Continue")',
+                'button:has-text("Verify")',
+            ), step="MFA")
+
+            await asyncio.sleep(3.0)"""
+    browser_anchors.append((old_submit, '            await submit_totp_with_retry(page, otp_input, secret, _replace_input_text, _submit_auth_form)'))
     for old, new in browser_anchors:
         if browser.count(old) != 1:
             raise RuntimeError('Upstream browser anchor mismatch')

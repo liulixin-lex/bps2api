@@ -2108,7 +2108,7 @@ func inferResponsesFailedOpsErrorType(code string) string {
 		return "overloaded_error"
 	case "service_unavailable", "service_unavailable_error", "server_error", "basispoints_image_request_busy":
 		return "service_unavailable_error"
-	case "basispoints_stream_timeout":
+	case "basispoints_stream_timeout", "basispoints_request_timeout":
 		return "upstream_error"
 	case "authentication_failed":
 		return "authentication_error"
@@ -2132,7 +2132,7 @@ func inferStreamFailureStatus(_ *gin.Context, parsed parsedOpsError) int {
 		return http.StatusServiceUnavailable
 	case "service_unavailable", "service_unavailable_error", "server_error", "basispoints_image_request_busy":
 		return http.StatusServiceUnavailable
-	case "basispoints_stream_timeout":
+	case "basispoints_stream_timeout", "basispoints_request_timeout":
 		return http.StatusGatewayTimeout
 	case "authentication_failed":
 		return http.StatusUnauthorized

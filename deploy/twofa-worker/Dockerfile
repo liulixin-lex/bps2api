@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-browser.txt \
 RUN apt-get update && apt-get install -y --no-install-recommends libx11-xcb1 \
     && rm -rf /var/lib/apt/lists/* \
     && python -c "from pathlib import Path; import os, subprocess; p=next(Path('/opt/camoufox-cache').rglob('libxul.so')); r=subprocess.run(['ldd', str(p)], env=dict(os.environ, LD_LIBRARY_PATH=str(p.parent)), capture_output=True, text=True, check=True); assert 'not found' not in r.stdout, r.stdout"
-COPY worker.py login_guard.py rotation_service.py patch_upstream.py browser_login.py session_logout.py ./
+COPY worker.py login_guard.py rotation_service.py patch_upstream.py browser_login.py session_logout.py progress.py ./
 RUN python patch_upstream.py /opt/change2fa
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     CHANGE2FA_SOURCE_DIR=/opt/change2fa TWOFA_DATA_DIR=/data \

@@ -1,4 +1,33 @@
 export default {
+  "progress": {
+  "title": "Operation progress",
+  "submitting": "Submitting, please wait…",
+  "elapsed": "Elapsed: {seconds}s",
+  "phaseElapsed": "Current step: {seconds}s",
+  "stale": "Status updates interrupted; current progress is unavailable.",
+  "lastKnown": "Last confirmed: {phase}. Refresh the task; do not resubmit.",
+  "hint": "Refreshes every 3 seconds. Elapsed time is informational; stages and results come from the server.",
+  "phases": {
+    "login_start": "Starting browser and initializing login",
+    "password": "Verifying password",
+    "mfa": "Generating and verifying 2FA code (attempt 1)",
+    "mfa_retry": "Retrying with a fresh 2FA code (attempt 2, final)",
+    "workspace": "Selecting personal workspace",
+    "session": "Waiting for login session",
+    "preflight": "Login complete; checking account before rotation",
+    "rotating": "Rotating the 2FA secret",
+    "logout_preflight": "Login complete; locating and checking logout control",
+    "revoking": "Logout request sent; waiting for confirmation",
+    "verify_login_start": "New secret saved; starting verification login",
+    "verify_password": "Verifying new secret: password",
+    "verify_mfa": "Verifying new secret: 2FA code (attempt 1)",
+    "verify_mfa_retry": "Verifying new secret: fresh code (attempt 2, final)",
+    "verify_workspace": "Verifying new secret: personal workspace",
+    "verify_session": "Verifying new secret: waiting for session",
+    "verify_preflight": "New-secret login complete; finishing account check"
+  }
+},
+  "history": {"logoutDeleteHint": "10 records per page. Select individual or all completed records on this page to delete. Active or unconfirmed tasks are protected; deleting history never repeats logout.", "deleteSelected": "Delete selected ({count})", "selectPage": "Select deletable records on this page", "selectRecord": "Select record for {email}", "deleteHint": "10 records per page. Deletion also removes saved credentials; copy any results you need first. Active, pending verification, and uncertain jobs cannot be deleted.", "deleted": "Selected records deleted.", "deleteFailed": "Deletion was not confirmed. Refresh to check; active or uncertain jobs cannot be deleted."},
   "submission": {
     "account_has_unresolved_job": "No new task was created: this account has a running or unresolved 2FA task. Review the linked task. Refresh updates its status; it does not remove the protection for an unconfirmed change.",
     "account_has_unresolved_logout": "No new task was created: this account has an unresolved logout task. Review the linked task before submitting again.",
@@ -39,7 +68,7 @@ export default {
   },
   "errors": {
     "login_failed": "Automatic login did not complete; no logout was submitted.",
-    "login_workspace_selection_failed": "Personal workspace selection did not complete after authentication. No account security changes were attempted.", "login_session_incomplete": "Authentication did not produce a complete session. No account security changes were attempted.", "login_interaction_required": "Login needs additional verification; the automated flow stopped.",
+    "login_workspace_selection_failed": "Personal workspace selection did not complete after authentication. No account security changes were attempted.", "login_session_incomplete": "Authentication did not produce a complete session. No account security changes were attempted.", "login_password_rejected": "The password verification endpoint rejected login; no security changes were made. Check the password and account status.", "login_mfa_retry_exhausted": "After an incorrect or expired code, the field was cleared and a new code was tried once. Verification was rejected again; no rotation or logout was attempted.", "login_mfa_rejected": "The password step passed, but MFA verification rejected login. Check the current secret, code validity, and account restrictions. No rotation or logout was attempted; avoid repeated submissions.", "login_upstream_error": "The login service returned a server error (5xx); no security changes were made. Try again later.", "login_browser_challenge": "Cloudflare challenged the login flow before rotation or logout. This unattended flow cannot complete the challenge; avoid repeated submissions.", "login_email_verification_required": "Login requires an additional email code. Password and TOTP alone cannot complete this step; no security settings were changed.", "login_interaction_required": "Login needs additional verification; the automated flow stopped.",
     "invalid_credentials": "The password or current 2FA code was rejected.",
     "account_die": "Account unavailable; no logout submitted.",
     "logout_control_missing": "The log-out-all control could not be found or used.",
@@ -80,7 +109,7 @@ export default {
     "submitUncertain": "Submission unconfirmed. Original request IDs are retained. Refresh jobs and continue with the same IDs; do not create the batch again.",
     "actionFailed": "Action incomplete. Refresh status; unverified or superseded secrets cannot be exported.",
     "superseded": "A newer rotation job exists for this account. Old credential export is disabled until the latest job is reviewed.",
-    "errors": {"rotation_disable_server_error": "The old-2FA disable endpoint returned a server error (5xx). New-secret enrollment was not reached. Verify whether the existing secret is still valid before submitting again.", "rotation_disable_rejected": "The upstream rejected the old-2FA disable request (4xx). New-secret enrollment was not reached. Review the account before submitting again.", "rotation_unconfirmed": "Rotation was interrupted and the current 2FA state is unconfirmed. Automatic retries are stopped. Review the account before submitting again.", "login_access_denied": "OpenAI rejected login initialization (403). Check the login environment; complete any required verification in a browser.", "login_rate_limited": "OpenAI rate-limited login (429). Try again later.", "login_bootstrap_rejected": "Login session initialization failed; subsequent actions stopped.", "login_workspace_selection_failed": "Personal workspace selection did not complete after authentication. No account security changes were attempted.", "login_session_incomplete": "Authentication did not produce a complete session. No account security changes were attempted.", "login_interaction_required": "Login requires browser, email, or other interactive verification.", "login_state_invalid": "OpenAI rejected the login state (409 invalid_state); no 2FA rotation was attempted.", "invalid_credentials": "Login credentials or the current 2FA code were rejected. Check the input.", "account_die": "OpenAI reported the account as deactivated; no rotation attempted.", "login_failed": "Login did not complete; no 2FA rotation attempted.", "preflight_failed": "Preflight checks failed; 2FA was not modified."},
+    "errors": {"rotation_disable_server_error": "The old-2FA disable endpoint returned a server error (5xx). New-secret enrollment was not reached. Verify whether the existing secret is still valid before submitting again.", "rotation_disable_rejected": "The upstream rejected the old-2FA disable request (4xx). New-secret enrollment was not reached. Review the account before submitting again.", "rotation_unconfirmed": "Rotation was interrupted and the current 2FA state is unconfirmed. Automatic retries are stopped. Review the account before submitting again.", "login_access_denied": "OpenAI rejected login initialization (403). Check the login environment; complete any required verification in a browser.", "login_rate_limited": "OpenAI rate-limited login (429). Try again later.", "login_bootstrap_rejected": "Login session initialization failed; subsequent actions stopped.", "login_workspace_selection_failed": "Personal workspace selection did not complete after authentication. No account security changes were attempted.", "login_session_incomplete": "Authentication did not produce a complete session. No account security changes were attempted.", "login_password_rejected": "The password verification endpoint rejected login; no security changes were made. Check the password and account status.", "login_mfa_retry_exhausted": "After an incorrect or expired code, the field was cleared and a new code was tried once. Verification was rejected again; no rotation or logout was attempted.", "login_mfa_rejected": "The password step passed, but MFA verification rejected login. Check the current secret, code validity, and account restrictions. No rotation or logout was attempted; avoid repeated submissions.", "login_upstream_error": "The login service returned a server error (5xx); no security changes were made. Try again later.", "login_browser_challenge": "Cloudflare challenged the login flow before rotation or logout. This unattended flow cannot complete the challenge; avoid repeated submissions.", "login_email_verification_required": "Login requires an additional email code. Password and TOTP alone cannot complete this step; no security settings were changed.", "login_interaction_required": "Login requires browser, email, or other interactive verification.", "login_state_invalid": "OpenAI rejected the login state (409 invalid_state); no 2FA rotation was attempted.", "invalid_credentials": "Login credentials or the current 2FA code were rejected. Check the input.", "account_die": "OpenAI reported the account as deactivated; no rotation attempted.", "login_failed": "Login did not complete; no 2FA rotation attempted.", "preflight_failed": "Preflight checks failed; 2FA was not modified."},
     "states": {"login_failed": "ChatGPT login failed; 2FA unchanged", "preflight_failed": "Preflight failed; 2FA unchanged",  "queued": "Queued", "running": "Running", "success": "Rotated and verified", "error": "Incomplete", "cancelled": "Cancelled; review required", "needs_review": "Uncertain; manual review required", "pendingVerify": "Rotated; awaiting verification" }
   },
   "twoFA": {

@@ -9,7 +9,7 @@ vi.mock('vue-i18n', async importOriginal => ({
 }))
 vi.mock('@/api/admin/accountTwoFARotation', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/admin/accountTwoFARotation')>()
-  return { ...actual, startTwoFARotation: vi.fn(), listTwoFARotations: vi.fn(), verifyTwoFARotation: vi.fn(), getTwoFARotationResult: vi.fn() }
+  return { ...actual, deleteTwoFARotations: vi.fn(), startTwoFARotation: vi.fn(), listTwoFARotations: vi.fn(), verifyTwoFARotation: vi.fn(), getTwoFARotationResult: vi.fn() }
 })
 
 let wrapper: VueWrapper | undefined
@@ -217,4 +217,83 @@ describe('explicit submission rejections', () => {
     expect((wrapper.get('textarea').element as HTMLTextAreaElement).disabled).toBe(true)
     expect(vi.mocked(api.startTwoFARotation).mock.calls[0][0].password).toBe('pass')
   })
+})
+
+
+describe('rotation history pagination and deletion', () => {
+  function history(count: number) {
+    return Array.from({ length: count }, (_, index) => ({ ...job, id: index.toString(16).padStart(32, '0'), email: 'row' + index + '@example.com', status: 'login_failed', error_code: 'login_browser_challenge', created_at: count-index, deletable: true }))
+  }
+  it('renders ten rows per page, clears selection on page changes, and deletes only selected ids', async () => {
+    const records = history(21)
+    vi.mocked(api.listTwoFARotations).mockResolvedValue(records)
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await flushPromises()
+    expect(wrapper.findAll('tbody tr')).toHaveLength(10)
+    await wrapper.get('[data-testid="select-page"]').setValue(true)
+    // Navigate using the shared component event to avoid locale-specific labels.
+    const pagination = wrapper.findComponent({ name: 'Pagination' })
+    pagination.vm.$emit('update:page', 3)
+    await flushPromises()
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect((wrapper.get('[data-testid="delete-selected"]').element as HTMLButtonElement).disabled).toBe(true)
+    const last = records[20]
+    await wrapper.get('[data-testid="select-history-row"]').setValue(true)
+    vi.mocked(api.deleteTwoFARotations).mockResolvedValue({ deleted_ids: [last.id] })
+    vi.mocked(api.listTwoFARotations).mockResolvedValue(records.slice(0,20))
+    await wrapper.get('[data-testid="delete-selected"]').trigger('click')
+    await flushPromises()
+    expect(api.deleteTwoFARotations).toHaveBeenCalledWith([last.id])
+    expect(wrapper.findAll('tbody tr')).toHaveLength(10)
+    expect(pagination.props('page')).toBe(2)
+    expect(api.startTwoFARotation).not.toHaveBeenCalled()
+  })
+  it('protects uncertain and pending records from selection', async () => {
+    vi.mocked(api.listTwoFARotations).mockResolvedValue([
+      { ...job, status: 'needs_review', deletable: false },
+      { ...job, id: 'b'.repeat(32), status: 'error', rotated_pending_verify: true },
+      { ...job, id: 'c'.repeat(32), status: 'login_failed', deletable: true }
+    ])
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await flushPromises()
+    const boxes = wrapper.findAll('[data-testid="select-history-row"]')
+    expect((boxes[0].element as HTMLInputElement).disabled).toBe(true)
+    expect((boxes[1].element as HTMLInputElement).disabled).toBe(true)
+    await wrapper.get('[data-testid="select-page"]').setValue(true)
+    vi.mocked(api.deleteTwoFARotations).mockResolvedValue({ deleted_ids: ['c'.repeat(32)] })
+    await wrapper.get('[data-testid="delete-selected"]').trigger('click')
+    await flushPromises()
+    expect(api.deleteTwoFARotations).toHaveBeenCalledWith(['c'.repeat(32)])
+  })
+  it('retains rows and selection when deletion fails and respects the worker latest marker', async () => {
+    const record = { ...job, status: 'success', login_verified: true, is_latest: false, deletable: true }
+    vi.mocked(api.listTwoFARotations).mockResolvedValue([record])
+    vi.mocked(api.deleteTwoFARotations).mockRejectedValue(new Error('network failed'))
+    wrapper = mount(TwoFARotationPanel, { props: { configured: true } })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('tokenGuard.rotation.copy')
+    await wrapper.get('[data-testid="select-history-row"]').setValue(true)
+    await wrapper.get('[data-testid="delete-selected"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.text()).toContain('tokenGuard.history.deleteFailed')
+    expect((wrapper.get('[data-testid="select-history-row"]').element as HTMLInputElement).checked).toBe(true)
+  })
+})
+
+it('shows progress for active new-secret verification and stops for a pending terminal result', async () => {
+  vi.mocked(api.listTwoFARotations).mockResolvedValue([{ ...job, status: 'running', rotated_pending_verify: true, phase: 'verify_mfa' }])
+  wrapper = mount(TwoFARotationPanel, { props: { configured: true } }); await flushPromises()
+  expect(wrapper.text()).toContain('progress.phases.verify_mfa')
+  expect(wrapper.text()).toContain('rotation.states.running')
+  expect(wrapper.text()).not.toContain('rotation.states.pendingVerify')
+  vi.mocked(api.listTwoFARotations).mockRejectedValueOnce(new Error('offline'))
+  await wrapper.findAll('button').find(b => b.text() === 'tokenGuard.refresh')!.trigger('click'); await flushPromises()
+  expect(wrapper.text()).toContain('progress.stale')
+  expect(wrapper.find('[data-testid="progress-spinner"]').exists()).toBe(false)
+  vi.mocked(api.listTwoFARotations).mockResolvedValue([{ ...job, status: 'error', rotated_pending_verify: true }])
+  await wrapper.findAll('button').find(b => b.text() === 'tokenGuard.refresh')!.trigger('click'); await flushPromises()
+  expect(wrapper.find('[data-testid="active-task-summary"]').exists()).toBe(false)
+  expect(wrapper.text()).toContain('rotation.states.pendingVerify')
+  expect(api.startTwoFARotation).not.toHaveBeenCalled()
 })

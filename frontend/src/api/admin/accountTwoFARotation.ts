@@ -2,6 +2,10 @@ import { apiClient } from '../client'
 import { parseTwoFALoginText, type TokenGuardConfig, type TokenGuardReloginAccount } from './accountTokenGuard'
 
 export interface TwoFARotationJob {
+  phase?: string
+  phase_started_at?: number
+  started_at?: number
+
   id: string
   email: string
   status: string
@@ -10,6 +14,8 @@ export interface TwoFARotationJob {
   rotated_pending_verify: boolean
   retryable: boolean
   created_at: number
+  is_latest?: boolean
+  deletable?: boolean
 }
 
 export interface TwoFARotationResult {
@@ -66,4 +72,8 @@ export function applyTwoFARotationResult(config: TokenGuardConfig, result: TwoFA
       ? { ...entry, mfa_secret: result.mfa_secret }
       : { ...entry })
   }
+}
+
+export async function deleteTwoFARotations(ids: string[]): Promise<{ deleted_ids: string[] }> {
+  return (await apiClient.delete(path, { data: { ids } })).data
 }

@@ -248,8 +248,19 @@ func (b *Bridge) preservesToolOperations(original, corrected []object) bool {
 		} else {
 			var payload object
 			field := "code"
-			if strings.HasPrefix(text(transportArguments(corrected[i])["summary"]), functionCmdTransportPrefix) {
+			correctedArgs := transportArguments(corrected[i])
+			summary := text(correctedArgs["summary"])
+			if strings.HasPrefix(summary, functionCmdTransportPrefix) {
 				field = "cmd"
+			} else if strings.HasPrefix(summary, functionCodeTransportPrefix) {
+				info, allowed := b.tools[strings.TrimPrefix(summary, functionCodeTransportPrefix)]
+				if !allowed {
+					return false
+				}
+				field = functionCodeTransportField(info.Parameters)
+				if field == "" {
+					return false
+				}
 			}
 			if decode([]byte(text(after["arguments"])), &payload) != nil || payload[field] != code {
 				return false

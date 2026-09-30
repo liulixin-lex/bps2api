@@ -20,6 +20,11 @@ export function parseSessionLogoutText(raw: string): TokenGuardReloginAccount {
 }
 
 export interface SessionLogoutJob {
+  phase?: string
+  phase_started_at?: number
+  started_at?: number
+  deletable?: boolean
+
   id: string
   email: string
   status: string
@@ -33,4 +38,8 @@ export async function startSessionLogout(entry: TokenGuardReloginAccount, reques
 }
 export async function listSessionLogouts(): Promise<SessionLogoutJob[]> {
   return (await apiClient.get(path)).data.jobs ?? []
+}
+
+export async function deleteSessionLogouts(ids: string[]): Promise<{ deleted_ids: string[] }> {
+  return (await apiClient.delete(path, { data: { ids } })).data
 }

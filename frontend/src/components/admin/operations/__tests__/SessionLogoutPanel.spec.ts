@@ -3,7 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import SessionLogoutPanel from '../SessionLogoutPanel.vue'
 import * as api from '@/api/admin/accountSessionLogout'
 vi.mock('vue-i18n', async importOriginal => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key }) }))
-vi.mock('@/api/admin/accountSessionLogout', async importOriginal => ({ ...await importOriginal<typeof import('@/api/admin/accountSessionLogout')>(), listSessionLogouts: vi.fn(), startSessionLogout: vi.fn() }))
+vi.mock('@/api/admin/accountSessionLogout', async importOriginal => ({ ...await importOriginal<typeof import('@/api/admin/accountSessionLogout')>(), deleteSessionLogouts: vi.fn(), listSessionLogouts: vi.fn(), startSessionLogout: vi.fn() }))
 const job = { id: 'a'.repeat(32), email: 'test@example.com', status: 'queued', created_at: 1 }
 let wrapper: VueWrapper | undefined
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(api.listSessionLogouts).mockResolvedValue([]); vi.mocked(api.startSessionLogout).mockResolvedValue(job) })
@@ -119,4 +119,54 @@ it('clears a pasted pending credential on unmount after an uncertain response', 
   expect(entry.password).not.toBe('')
   wrapper.unmount(); wrapper = undefined
   expect(entry.password).toBe(''); expect(entry.mfa_secret).toBe('')
+})
+
+it('paginates logout history, selects only safe rows and clamps the page after deletion', async () => {
+  const records = Array.from({ length: 21 }, (_, i) => ({ ...job, id: i.toString(16).padStart(32, '0'), status: i === 0 ? 'needs_review' : 'accepted', deletable: i !== 0 }))
+  vi.mocked(api.listSessionLogouts).mockResolvedValue(records)
+  wrapper = mount(SessionLogoutPanel, { props: { configured: true, active: true } }); await flushPromises()
+  expect(wrapper.findAll('tbody tr')).toHaveLength(10)
+  expect((wrapper.get('[data-testid="select-history-row"]').element as HTMLInputElement).disabled).toBe(true)
+  await wrapper.get('[data-testid="select-page"]').setValue(true)
+  expect(wrapper.findAll('[data-testid="select-history-row"]').filter(b => (b.element as HTMLInputElement).checked)).toHaveLength(9)
+  const pagination = wrapper.findComponent({ name: 'Pagination' }); pagination.vm.$emit('update:page', 3); await flushPromises()
+  expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+  expect((wrapper.get('[data-testid="delete-selected"]').element as HTMLButtonElement).disabled).toBe(true)
+  await wrapper.get('[data-testid="select-history-row"]').setValue(true)
+  vi.mocked(api.deleteSessionLogouts).mockResolvedValue({ deleted_ids: [records[20].id] })
+  vi.mocked(api.listSessionLogouts).mockResolvedValue(records.slice(0, 20))
+  await wrapper.get('[data-testid="delete-selected"]').trigger('click'); await flushPromises()
+  expect(api.deleteSessionLogouts).toHaveBeenCalledWith([records[20].id])
+  expect(pagination.props('page')).toBe(2)
+  expect(wrapper.findAll('tbody tr')).toHaveLength(10)
+  expect(api.startSessionLogout).not.toHaveBeenCalled()
+})
+
+it('keeps records when deletion fails and protects active, uncertain and unknown states', async () => {
+  vi.mocked(api.listSessionLogouts).mockResolvedValue(['queued', 'logging_in', 'revoking', 'needs_review', 'unknown', 'accepted'].map((status, i) => ({ ...job, id: String(i).repeat(32), status })))
+  wrapper = mount(SessionLogoutPanel, { props: { configured: true, active: true } }); await flushPromises()
+  const boxes = wrapper.findAll('[data-testid="select-history-row"]')
+  expect(boxes.slice(0, 5).every(b => (b.element as HTMLInputElement).disabled)).toBe(true)
+  await boxes[5].setValue(true)
+  vi.mocked(api.deleteSessionLogouts).mockRejectedValue(new Error('private-worker-message'))
+  await wrapper.get('[data-testid="delete-selected"]').trigger('click'); await flushPromises()
+  expect(wrapper.findAll('tbody tr')).toHaveLength(6)
+  expect(wrapper.text()).toContain('history.deleteFailed'); expect(wrapper.text()).not.toContain('private-worker-message')
+})
+
+it('shows changing progress, warns on failed refresh and stops spinning on a terminal status', async () => {
+  const refresh = async () => { await wrapper!.findAll('button').find(b => b.text() === 'tokenGuard.refresh')!.trigger('click'); await flushPromises() }
+  vi.mocked(api.listSessionLogouts).mockResolvedValue([{ ...job, status: 'logging_in', phase: 'mfa' }])
+  wrapper = mount(SessionLogoutPanel, { props: { configured: true, active: true } }); await flushPromises()
+  expect(wrapper.text()).toContain('progress.phases.mfa')
+  expect(wrapper.find('[data-testid="progress-spinner"]').exists()).toBe(true)
+  vi.mocked(api.listSessionLogouts).mockRejectedValueOnce(new Error('offline')); await refresh()
+  expect(wrapper.text()).toContain('progress.stale')
+  expect(wrapper.find('[data-testid="progress-spinner"]').exists()).toBe(false)
+  vi.mocked(api.listSessionLogouts).mockResolvedValue([{ ...job, status: 'revoking', phase: 'revoking' }]); await refresh()
+  expect(wrapper.text()).toContain('progress.phases.revoking')
+  expect(wrapper.text()).not.toContain('progress.stale')
+  vi.mocked(api.listSessionLogouts).mockResolvedValue([{ ...job, status: 'accepted', phase: 'revoking' }]); await refresh()
+  expect(wrapper.find('[data-testid="active-task-summary"]').exists()).toBe(false)
+  expect(api.startSessionLogout).not.toHaveBeenCalled()
 })

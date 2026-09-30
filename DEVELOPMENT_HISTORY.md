@@ -7,15 +7,21 @@
 
 | 项目 | 状态与证据边界 |
 | --- | --- |
-| 当前对象 | 原始 /bps/bps2api 保持原字节；当前候选 /bps/worktrees/incident-429-20260929，分支 fix/bps-retry-candidate-validation |
-| 源码与发布身份 | v0.0.18 已于 2026-09-29 10:53:43 UTC 正式发布，应用提交 2bca855496；五平台包与 GHCR 双架构共 18 项产物命令验收通过，后续结果文档单独推进 main，标签保持固定 |
+| 当前对象 | 原始 /bps/bps2api 与已发布源码保留；当前修复副本 /bps/worktrees/runtime-errors-20260929，分支 fix/runtime-errors-20260929 |
+| 源码与发布身份 | 热修复应用f9b7f408e / 0.0.19-runtime.20260929已本机部署；v0.0.20标签固定572ef8b8e，17:56:16 UTC正式发布；后续main仅补充测试lint与文档 |
 | 与交接的关系 | 旧分支 `c5a0323b6` 由 PR #11 纳入本轮起点 `2f54db96e`，当时两提交源码树一致；本轮随后增加文档与代码整合；旧 `/www/...` 不是本机目录 |
 | 当前路由 | 0.0.16 已支持实际 OpenAI OAuth 账号按映射后的模型名单选择 BPS；未配置名单表示全部映射模型，显式空名单不选择模型；hosted 保持 v0.0.15 自动兼容策略 |
-| 当前生产 | 2026-09-29 10:34 UTC 已热切 sub2api-v018 / 8095，源码 2bca855496；跨切换 SSE 完整、39+30 次健康采样无失败，旧实例与图片 owner 链保留 |
-| 当前任务 | [0.0.18 429 修复与发布](docs/development/entries/2026-09-29-bps-429-stale-candidate.md)：补齐真实候选终检与嵌套 Retry-After，39 个同输入节点通过、回滚重现原问题；4 个实际 429 已恢复为 200，公网 7 类 canary 最终通过 |
-| 下一动作 | 本次修复、线上、发布和产物验收已完成；独立 CI 完整 unit 与 timing 通过，剩余 5 条 lint 和 1 条 integration 断言均与旧基线一致，无新增；不声称全绿。旧 worker 保留期间不要启用新增观察/多 scope 计划 |
+| 当前生产 | 2026-09-29 17:03:55–17:03:58 UTC热切sub2api-runtime-20260929 / 8097；跨切换SSE、公网7项canary及79次健康检查通过；v019暖备，其余15旧实例停止保留 |
+| 当前任务 | [线上错误复查](docs/development/entries/2026-09-29-runtime-error-audit.md)完成：四处修复，PG连接93→15（双实例上线后18），三态、19,377 unit节点及160 race节点通过，公网验收完成 |
+| 下一动作 | v0.0.20公开产物18项已验收；继续观察真实负载与既有CI技术债，不重复生产热切 |
 
 ## 本地 PR 开发
+
+[2026-09-30：任务进度与退出历史删除](docs/development/entries/2026-09-30-credential-progress.md)：12:44 UTC 已部署 0.0.18-pr12.p1 / c5cd783961；两页转圈/真实阶段/耗时、状态中断提示和退出历史勾选删除完成。143 worker、137 前端、Go 定向、隔离 SQLite、源码/部署回滚、公网浏览器合成与只读验收通过；原 17/5 条历史保留；用户随后确认并重新授权提交，见下方 PR 提交记录。
+
+[2026-09-30：验证码两次上限与历史管理](docs/development/entries/2026-09-30-credential-history.md)：12:05 UTC 已部署 0.0.18-pr12.history.7f47476955；输入框就绪后取码、首错清空换码、最多两次、每页 10 条及勾选删除已完成。132 项 worker、89 项前端、Go 定向、源码/部署回滚与公网浏览器验收通过；原 16/4 条任务保留。受测 MFA 403 明确 account_deactivated，未声称已修复上游账号限制；GitHub/PR 继续暂停。
+
+[2026-09-30：完整源码与 PR 提交](docs/development/entries/2026-09-30-pr12-submit.md)：本地同步 main 并保留双方开发索引，83 项前端、105 项 worker 与四包 Go 定向回归通过。此前按用户要求暂停；后续问题修复并获用户确认，现已重新授权提交全部源码并更新既有 PR #12。正在完成提交/远端核验；不重新部署。
 
 [2026-09-30：退出会话整行粘贴](docs/development/entries/2026-09-30-logout-paste.md)：10:02 UTC 已部署 0f662b1a；单框粘贴自动识别，保留密码原字节、确认与幂等保护。83 项前端及类型/lint/build、源码/部署回滚与原生剪贴板浏览器验收通过；10 条更换任务保持，不执行真实账号退出。PR #12 已更新，保持 open、未合并。
 
@@ -82,6 +88,9 @@
 | 2026-09-30 | [ChatGPT 退出所有会话](docs/development/entries/2026-09-30-chatgpt-logout-all.md) | f8d68ca5 已部署，独立菜单/API/任务、回归构建与源码/部署回滚通过；真实登录探针失败，真实退出仍未验证 |
 | 2026-09-29 | [PR #12 测试部署](docs/development/entries/2026-09-29-twofa-pr12-preview.md) | app/worker b0bbeae3 已部署并完成回滚；第二次任务 disable 返回 500，旧密钥只读复核有效；具体错误提示及旧结果操作隐藏已浏览器验收；五条任务不变，无新增轮换 |
 | 2026-09-29 | [账号 2FA 更换接入](docs/development/entries/2026-09-29-account-twofa-rotation.md) | PR #12；管理员界面/接口、私有加密 worker、定向回归和源码回滚验证完成；后续测试部署另记 |
+| 2026-09-29 | [v0.0.20 正式发布](docs/development/entries/2026-09-29-runtime-error-audit.md) | main/tag原子推送572ef8b8e，17:56:16 UTC Release成功；五平台归档、校验和、GHCR双架构及版本共18项核验通过；生产维持此前热修复实例 |
+| 2026-09-29 | [线上错误复查](docs/development/entries/2026-09-29-runtime-error-audit.md) | 15旧实例退役、连接93→15/18；四处修复及三态竞态通过，8097已热切并公网验收 |
+| 2026-09-29 | [模型共享 TPM 与恢复加固](docs/development/entries/2026-09-29-bps-model-quota-recovery.md) | 三态 194 节点通过且回滚重现原行为；14:31 UTC 无感上线、14:39:47 UTC 正式发布、18 项产物通过；实际 4 条 gpt-6-sol TPM 429 仍耗尽重试预算，发布后 CI 修正单独验证 |
 | 2026-09-29 | [0.0.18 429 候选缓存修复与发布](docs/development/entries/2026-09-29-bps-429-stale-candidate.md) | 10:34 UTC 无感切换、10:53:43 UTC 正式发布；39 节点同输入通过且回滚重现原缺陷，4 次实际 429 恢复 200，18 项产物验收通过；独立 CI 仅剩已核对的原有 5 条 lint 与 1 条集成断言 |
 | 2026-09-29 | [0.0.17 无感上线与远端发布](docs/development/entries/2026-09-29-release-0.0.17.md) | 先上线验收，再原子推送 main/tag，08:28:23 UTC 正式发布，18 项产物验收通过；应用标签固定 041947a69；独立 CI 与静态清理另记 |
 | 2026-09-29 | [九项择优合入与 BPS 恢复](docs/development/entries/2026-09-29-selected-integration.md) | 九项能力适配、HTTP/SSE 共享恢复预算、心跳边界、单次 BPS 观察和刷新截止竞态修复；本地整合测试与构建通过，四角色凭据独立留证；未推送或部署 |

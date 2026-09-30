@@ -15,7 +15,10 @@ type protocolError struct{ error }
 
 func (e protocolError) Unwrap() error { return e.error }
 
-type passthroughError struct{ error }
+type passthroughError struct {
+	error
+	usagePayload []byte
+}
 
 func (e passthroughError) Unwrap() error { return e.error }
 
@@ -25,7 +28,17 @@ func PreserveError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return passthroughError{err}
+	return passthroughError{error: err}
+}
+
+// PreservedErrorUsage returns only billed usage retained when a repair callback
+// failed operationally before its original terminal response could be emitted.
+func PreservedErrorUsage(err error) []byte {
+	var preserved passthroughError
+	if errors.As(err, &preserved) {
+		return preserved.usagePayload
+	}
+	return nil
 }
 
 type streamBody struct {
@@ -295,6 +308,13 @@ func (b *Bridge) transformWithRepairs(ctx context.Context, reader io.Reader, wri
 	if err != nil && !errors.Is(err, io.EOF) {
 		var passthrough passthroughError
 		if errors.As(err, &passthrough) {
+			// Unknown-target repair callbacks have no response argument. Retain
+			// the original billed usage here without emitting rejected tool data
+			// or changing the operational error's identity.
+			if usage := terminalResponse["usage"]; usage != nil {
+				payload, _ := json.Marshal(object{"type": "response.failed", "response": object{"usage": usage}})
+				return passthroughError{error: err, usagePayload: payload}
+			}
 			return err
 		}
 		var invalid protocolError

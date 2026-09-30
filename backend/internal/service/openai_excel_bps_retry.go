@@ -19,6 +19,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
+	"golang.org/x/net/http2"
 )
 
 // One state is shared by HTTP recovery, stream regeneration and tool repair.
@@ -129,16 +130,18 @@ func (r *excelBPSRecovery) reserve(now time.Time, minimumDelay time.Duration) (t
 	if delay > r.maxDelay {
 		delay = r.maxDelay
 	}
-	// Spread simultaneous recoveries while never shortening a provider hint.
-	delay += time.Duration(float64(delay) * rand.Float64() / 4)
-	if delay > r.maxDelay {
-		delay = r.maxDelay
-	}
 	if minimumDelay > delay {
 		delay = minimumDelay
 	}
 	if delay > r.maxDelay || !now.Add(delay).Before(r.deadline) {
 		return 0, time.Time{}, false
+	}
+	// Apply jitter after the provider floor: otherwise a common Retry-After
+	// replaces the randomized local delay and synchronizes every recovery.
+	// Only use spare room; neither the provider floor nor either cap changes.
+	room := min(delay/4, r.maxDelay-delay, r.deadline.Sub(now)-delay-time.Nanosecond)
+	if room > 0 {
+		delay += time.Duration(rand.Int64N(int64(room))) + time.Nanosecond
 	}
 	r.remaining--
 	r.retries++
@@ -157,22 +160,51 @@ func (r *excelBPSRecovery) begin(ctx context.Context, minimumDelay time.Duration
 		closeAttempt()
 	}
 	retryCtx, cancel := r.withDeadline(ctx)
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-retryCtx.Done():
-		return retryCtx, cancel, true, retryCtx.Err()
-	case <-timer.C:
-		return retryCtx, cancel, true, nil
-	}
+	err := excelBPSWaitRecoveryDelay(retryCtx, delay)
+	return retryCtx, cancel, true, err
 }
 
 func excelBPSRetryableStreamError(err error) bool {
-	if err == nil || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || errors.Is(err, errOpenAISSEIdle) || errors.Is(err, errOpenAISSEFirstOutput) {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	// HTTP/2 stream/GOAWAY errors do not implement net.Error. Recognize only
+	// transient codes before falling through to the existing network policy.
+	// The caller must still have no committed output, a live context, and a
+	// send/time reservation: INTERNAL_ERROR does not prove the request unsent.
+	var streamError http2.StreamError
+	if errors.As(err, &streamError) {
+		return excelBPSRetryableHTTP2StreamError(streamError)
+	}
+	var streamErrorPointer *http2.StreamError
+	if errors.As(err, &streamErrorPointer) {
+		return streamErrorPointer != nil && excelBPSRetryableHTTP2StreamError(*streamErrorPointer)
+	}
+	var goAwayError http2.GoAwayError
+	if errors.As(err, &goAwayError) {
+		return goAwayError.ErrCode == http2.ErrCodeNo || goAwayError.ErrCode == http2.ErrCodeInternal
+	}
+	var goAwayErrorPointer *http2.GoAwayError
+	if errors.As(err, &goAwayErrorPointer) {
+		return goAwayErrorPointer != nil && (goAwayErrorPointer.ErrCode == http2.ErrCodeNo || goAwayErrorPointer.ErrCode == http2.ErrCodeInternal)
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || errors.Is(err, errOpenAISSEIdle) || errors.Is(err, errOpenAISSEFirstOutput) {
 		return true
 	}
 	var networkError net.Error
 	return errors.As(err, &networkError)
+}
+
+func excelBPSRetryableHTTP2StreamError(err http2.StreamError) bool {
+	// Cause is not an Unwrap target in x/net/http2. Never turn cancellation
+	// into recovery, even when the outer reset reports a transient code.
+	if errors.Is(err.Cause, context.Canceled) {
+		return false
+	}
+	return err.Code == http2.ErrCodeRefusedStream || err.Code == http2.ErrCodeInternal
 }
 
 func excelBPSRetryableTransportError(err error) bool {
@@ -184,6 +216,15 @@ func excelBPSRetryableTransportError(err error) bool {
 	}
 	// The caller checks its own context separately: a transport deadline can be
 	// a recoverable response-header timeout while the request remains active.
+	// Preserve the existing network policy for unknown Do failures, but HTTP/2
+	// protocol/cancel resets must obey the same whitelist as stream reads.
+	var streamError http2.StreamError
+	var streamPointer *http2.StreamError
+	var goAwayError http2.GoAwayError
+	var goAwayPointer *http2.GoAwayError
+	if errors.As(err, &streamError) || errors.As(err, &streamPointer) || errors.As(err, &goAwayError) || errors.As(err, &goAwayPointer) {
+		return excelBPSRetryableStreamError(err)
+	}
 	return true
 }
 
@@ -252,16 +293,20 @@ func excelBPSHTTPRetryDelay(status int, retryAfter string, now time.Time) (time.
 }
 
 type excelBPSProviderFailure struct {
-	status    int
-	code      string
-	delay     time.Duration
-	retry     bool
-	permanent bool
+	status         int
+	code           string
+	delay          time.Duration
+	retryAfter     string
+	quotaGroupHash string
+	quotaModel     string
+	retry          bool
+	permanent      bool
 }
 
 // Preserve transient repair failures through the tool bridge without turning
 // them into a protocol-repair prompt. Only the outer output guard may replay.
 type excelBPSProviderRetryError struct {
+	modelScoped  bool
 	failure      excelBPSProviderFailure
 	retryAfter   string
 	usagePayload []byte
@@ -333,6 +378,12 @@ func (s *OpenAIGatewayService) excelBPSReserveAccountSwitch(ctx context.Context,
 		if _, paused := candidate.Extra[OpenAIExcelBPSPausedOn403AtExtraKey]; paused {
 			continue
 		}
+		// Do not sacrifice the final current-account retry for an alternative
+		// already known to share a live quota cooldown. Initial scheduling
+		// still admits such accounts so their send gate can wait within budget.
+		if s.excelBPSQuotaGate.delay(candidate.RPMAccountID(), upstreamModel, time.Now()) > 0 {
+			continue
+		}
 		if compatible, _ := scheduler.isAccountRequestCompatibleReason(ctx, candidate, req); !compatible {
 			continue
 		}
@@ -350,7 +401,7 @@ var excelBPSRetryHint = regexp.MustCompile(`(?i)(?:try again in|retry after)\s+(
 // terminal needs a recognized provider code or explicit error status. Quota,
 // credential and policy failures always override a transient status or hint.
 func excelBPSClassifyProviderFailure(raw []byte, status int, retryAfter string, now time.Time) excelBPSProviderFailure {
-	failure := excelBPSProviderFailure{status: status}
+	failure := excelBPSProviderFailure{status: status, retryAfter: excelBPSRetryAfterHeader(retryAfter)}
 	envelope := gjson.ParseBytes(raw)
 	detail := envelope.Get("response.error")
 	if !detail.IsObject() {
@@ -429,6 +480,7 @@ func excelBPSClassifyProviderFailure(raw []byte, status int, retryAfter string, 
 	if !retry {
 		return failure
 	}
+	hasRetryHint := strings.TrimSpace(retryAfter) != ""
 	// A longer valid hint wins. Values outside the bounded envelope decline
 	// recovery instead of being clamped and retried earlier than the provider.
 	for _, object := range []gjson.Result{detail, envelope} {
@@ -456,6 +508,7 @@ func excelBPSClassifyProviderFailure(raw []byte, status int, retryAfter string, 
 					validHeaders = false
 					return false
 				}
+				hasRetryHint = true
 				if candidate > delay {
 					delay = candidate
 				}
@@ -473,6 +526,7 @@ func excelBPSClassifyProviderFailure(raw []byte, status int, retryAfter string, 
 			if !value.Exists() {
 				continue
 			}
+			hasRetryHint = true
 			n, err := strconv.ParseFloat(value.String(), 64)
 			if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > float64((24*time.Hour)/hint.unit) {
 				return failure
@@ -483,6 +537,7 @@ func excelBPSClassifyProviderFailure(raw []byte, status int, retryAfter string, 
 		}
 	}
 	if match := excelBPSRetryHint.FindStringSubmatch(message); len(match) > 0 {
+		hasRetryHint = true
 		n, err := strconv.ParseFloat(match[1], 64)
 		unit := time.Second
 		if strings.HasPrefix(strings.ToLower(match[2]), "m") {
@@ -496,6 +551,17 @@ func excelBPSClassifyProviderFailure(raw []byte, status int, retryAfter string, 
 		}
 	}
 	failure.delay, failure.retry = delay, true
+	// Preserve the same effective floor at terminal, cooldown and failover
+	// boundaries even when the HTTP response itself omitted Retry-After.
+	if hasRetryHint {
+		// Preserve an authoritative outer HTTP-date when no longer embedded
+		// hint supersedes it. Existing clients accept both legal header forms.
+		date, err := http.ParseTime(failure.retryAfter)
+		if err != nil || date.Sub(now) < delay {
+			failure.retryAfter = strconv.FormatInt(int64(math.Ceil(delay.Seconds())), 10)
+		}
+	}
+	failure.quotaGroupHash, failure.quotaModel = excelBPSQuotaIdentity(failure, errorType, detail.Get("message").String())
 	return failure
 }
 

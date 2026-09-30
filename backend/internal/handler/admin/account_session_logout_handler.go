@@ -36,3 +36,23 @@ func (h *AccountTokenGuardHandler) SessionLogoutJobs(c *gin.Context) {
 	}
 	response.Success(c, gin.H{"jobs": jobs})
 }
+
+func (h *AccountTokenGuardHandler) DeleteSessionLogoutJobs(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+	var req service.AccountTwoFARotationDeleteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "删除记录请求格式不正确")
+		return
+	}
+	if err := service.ValidateTwoFARotationDelete(req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	result, err := h.svc.DeleteSessionLogoutJobs(c.Request.Context(), req)
+	if err != nil {
+		response.Error(c, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	response.Success(c, result)
+}

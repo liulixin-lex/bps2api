@@ -33,3 +33,18 @@ func TestTwoFARotationHandlerRejectsInvalidBodiesWithoutLeakingCredentials(t *te
 		}
 	}
 }
+
+func TestTwoFARotationDeleteHandlerRejectsInvalidBodies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &AccountTokenGuardHandler{}
+	for _, body := range []string{"{private-invalid-json", "{\"ids\":[]}", "{\"ids\":[\"../private\"]}", "{\"ids\":[\"" + strings.Repeat("x", 17<<10) + "\"]}"} {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodDelete, "/", strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		h.DeleteTwoFARotationJobs(c)
+		if recorder.Code != http.StatusBadRequest || recorder.Header().Get("Cache-Control") != "no-store" || strings.Contains(recorder.Body.String(), "private") {
+			t.Fatal("unsafe delete validation")
+		}
+	}
+}

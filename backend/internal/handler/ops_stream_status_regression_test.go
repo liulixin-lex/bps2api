@@ -21,6 +21,7 @@ func TestOpsStreamingFailureKeepsLogicalGatewayStatus(t *testing.T) {
 		{gatewayQueueFullCode, 429, true},
 		{"basispoints_image_request_busy", 503, false},
 		{"basispoints_stream_timeout", 504, false},
+		{"basispoints_request_timeout", 504, false},
 		{"basispoints_protocol_error", 502, false},
 	} {
 		t.Run(tc.code, func(t *testing.T) {

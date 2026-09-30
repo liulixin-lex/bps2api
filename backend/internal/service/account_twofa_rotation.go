@@ -23,6 +23,10 @@ type AccountTwoFARotationRequest struct {
 }
 
 type AccountTwoFARotationJob struct {
+	Phase          string   `json:"phase,omitempty"`
+	PhaseStartedAt *float64 `json:"phase_started_at,omitempty"`
+	StartedAt      *float64 `json:"started_at,omitempty"`
+
 	ID                   string  `json:"id"`
 	Email                string  `json:"email"`
 	Status               string  `json:"status"`
@@ -31,6 +35,8 @@ type AccountTwoFARotationJob struct {
 	RotatedPendingVerify bool    `json:"rotated_pending_verify"`
 	Retryable            bool    `json:"retryable"`
 	CreatedAt            float64 `json:"created_at"`
+	IsLatest             *bool   `json:"is_latest,omitempty"`
+	Deletable            bool    `json:"deletable"`
 }
 
 type AccountTwoFARotationResult struct {
@@ -43,9 +49,14 @@ type AccountTwoFARotationResult struct {
 
 // Only fixed diagnostic codes cross the admin API; never forward upstream text.
 func sanitizeTwoFARotationJob(job *AccountTwoFARotationJob) {
+	job.Phase = sanitizeCredentialPhase(job.Phase)
+	if job.Status != "running" {
+		job.Phase = ""
+		job.PhaseStartedAt = nil
+	}
 	switch job.ErrorCode {
 	case "login_access_denied", "login_rate_limited", "login_bootstrap_rejected",
-		"login_interaction_required", "login_state_invalid", "invalid_credentials",
+		"login_password_rejected", "login_mfa_retry_exhausted", "login_mfa_rejected", "login_upstream_error", "login_browser_challenge", "login_email_verification_required", "login_interaction_required", "login_state_invalid", "invalid_credentials",
 		"login_workspace_selection_failed", "login_session_incomplete",
 		"account_die", "login_failed", "preflight_failed",
 		"rotation_disable_server_error", "rotation_disable_rejected":
@@ -136,6 +147,9 @@ func (s *AccountTokenGuardService) twoFARotationCall(ctx context.Context, method
 		case http.StatusUnauthorized, http.StatusForbidden:
 			return errors.New("2FA 维护服务鉴权失败")
 		case http.StatusConflict:
+			if method == http.MethodDelete && (path == "/jobs" || path == "/session-logout/jobs") {
+				return errors.New("所选记录含进行中或结果待确认任务，不能删除；请刷新后重选")
+			}
 			return errors.New("2FA 任务冲突或状态待确认，请查询原任务；仅已更换待验证任务可继续验证")
 		case http.StatusNotFound:
 			return errors.New("2FA 任务不存在")
@@ -202,6 +216,38 @@ func (s *AccountTokenGuardService) TwoFARotationResult(ctx context.Context, id s
 	}
 	if result.ID != id || !result.LoginVerified || result.Email == "" || strings.TrimSpace(result.MFASecret) == "" {
 		return nil, errors.New("新 2FA 尚未验证成功，不能导出或回写")
+	}
+	return &result, nil
+}
+
+// Delete history only; the private worker rejects unfinished or uncertain jobs.
+type AccountTwoFARotationDeleteRequest struct {
+	IDs []string `json:"ids"`
+}
+
+type AccountTwoFARotationDeleteResult struct {
+	DeletedIDs []string `json:"deleted_ids"`
+}
+
+func ValidateTwoFARotationDelete(req AccountTwoFARotationDeleteRequest) error {
+	if len(req.IDs) == 0 || len(req.IDs) > 100 {
+		return errors.New("请选择 1–100 条已完成的记录")
+	}
+	for _, id := range req.IDs {
+		if !rotationIDPattern.MatchString(id) {
+			return errors.New("2FA 任务标识不合法")
+		}
+	}
+	return nil
+}
+
+func (s *AccountTokenGuardService) DeleteTwoFARotationJobs(ctx context.Context, req AccountTwoFARotationDeleteRequest) (*AccountTwoFARotationDeleteResult, error) {
+	if err := ValidateTwoFARotationDelete(req); err != nil {
+		return nil, err
+	}
+	var result AccountTwoFARotationDeleteResult
+	if err := s.twoFARotationCall(ctx, http.MethodDelete, "/jobs", req, &result); err != nil {
+		return nil, err
 	}
 	return &result, nil
 }

@@ -181,3 +181,50 @@ func TestTwoFARotationSafeFailureCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestTwoFARotationDeleteHistory(t *testing.T) {
+	calls := 0
+	svc := rotationTestService(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodDelete || r.URL.Path != "/jobs" || r.Header.Get("Authorization") != "Bearer "+rotationTestToken {
+			t.Fatal("wrong delete route or auth")
+		}
+		var req AccountTwoFARotationDeleteRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if len(req.IDs) != 1 || req.IDs[0] != rotationTestID {
+			t.Fatal("incorrect ids")
+		}
+		_ = json.NewEncoder(w).Encode(AccountTwoFARotationDeleteResult{DeletedIDs: req.IDs})
+	})
+	for _, ids := range [][]string{nil, {"../private"}, make([]string, 101)} {
+		if _, err := svc.DeleteTwoFARotationJobs(context.Background(), AccountTwoFARotationDeleteRequest{IDs: ids}); err == nil {
+			t.Fatal("invalid request accepted")
+		}
+	}
+	if calls != 0 {
+		t.Fatal("invalid delete forwarded")
+	}
+	result, err := svc.DeleteTwoFARotationJobs(context.Background(), AccountTwoFARotationDeleteRequest{IDs: []string{rotationTestID}})
+	if err != nil || len(result.DeletedIDs) != 1 || result.DeletedIDs[0] != rotationTestID {
+		t.Fatalf("delete failed: %v", err)
+	}
+}
+
+func TestTwoFARotationHistoryMetadataAndFailurePhases(t *testing.T) {
+	for _, code := range []string{"login_browser_challenge", "login_email_verification_required", "login_password_rejected", "login_mfa_rejected", "login_upstream_error"} {
+		svc := rotationTestService(t, func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, "{\"jobs\":[{\"id\":\""+rotationTestID+"\",\"status\":\"login_failed\",\"error_code\":\""+code+"\",\"is_latest\":false,\"deletable\":true}]}")
+		})
+		jobs, err := svc.TwoFARotationJobs(context.Background())
+		if err != nil || len(jobs) != 1 || jobs[0].ErrorCode != code || jobs[0].IsLatest == nil || *jobs[0].IsLatest || !jobs[0].Deletable {
+			t.Fatalf("history metadata dropped: %v", err)
+		}
+		logout := AccountSessionLogoutJob{Status: "login_failed", ErrorCode: code}
+		sanitizeSessionLogoutJob(&logout)
+		if logout.ErrorCode != code {
+			t.Fatal("logout phase dropped")
+		}
+	}
+}

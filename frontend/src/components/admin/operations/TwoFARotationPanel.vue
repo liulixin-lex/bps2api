@@ -11,46 +11,65 @@
       <textarea id="rotation-input" v-model="input" rows="3" class="input w-full font-mono text-sm" autocomplete="off" spellcheck="false" :disabled="busy || pending.length > 0" placeholder="email@example.com----password----CURRENT_TOTP_SECRET" />
       <label class="my-3 flex items-start gap-2 text-sm"><input v-model="confirmed" type="checkbox" class="mt-1" /><span>{{ t('tokenGuard.rotation.confirm') }}</span></label>
       <div class="flex flex-wrap gap-2">
-        <button class="btn btn-primary" :disabled="!configured || disabled || !confirmed || busy || pending.length > 0">{{ t('tokenGuard.rotation.start') }}</button>
+        <button class="btn btn-primary" :disabled="!configured || disabled || !confirmed || busy || pending.length > 0"><span v-if="busy" aria-hidden="true" class="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />{{ busy ? t('tokenGuard.progress.submitting') : t('tokenGuard.rotation.start') }}</button>
         <button v-if="pending.length" type="button" class="btn btn-secondary" :disabled="busy || disabled || !confirmed" @click="submitPending">{{ t('tokenGuard.rotation.retrySubmit') }} ({{ pending.length }})</button>
       </div>
     </form>
+    <div v-if="busy || activeJobs.length" data-testid="active-task-summary" class="mt-4 space-y-3 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/30">
+      <p class="text-sm font-medium">{{ t('tokenGuard.progress.title') }}</p>
+      <p v-if="busy" role="status" class="flex items-center gap-2 text-sm"><span v-if="busy" aria-hidden="true" class="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />{{ t('tokenGuard.progress.submitting') }}</p>
+      <div v-for="job in activeJobs" :key="job.id">
+        <p class="mb-1 text-xs text-gray-500">{{ job.email }}</p>
+        <CredentialTaskProgress :job="job" :active="true" :stale="statusStale" :fallback="stateText(job)" />
+      </div>
+      <p class="text-xs text-gray-500">{{ t('tokenGuard.progress.hint') }}</p>
+    </div>
     <p v-if="message" role="status" class="mt-3 text-sm text-amber-600">{{ message }}</p>
     <ul v-if="rejected.length" role="status" class="mt-3 space-y-2 text-sm text-amber-600">
       <li v-for="item in rejected" :key="item.id">
         <span>{{ item.email }} — {{ t('tokenGuard.submission.' + item.reason) }}</span>
-        <a v-for="job in relatedJobs(item)" :key="job.id" :href="'#rotation-job-' + job.id" class="ml-2 underline">{{ t('tokenGuard.submission.relatedJob') }} {{ job.id }}</a>
+        <a v-for="job in relatedJobs(item)" :key="job.id" :href="'#rotation-job-' + job.id" @click.prevent="showRelatedJob(job.id)" class="ml-2 underline">{{ t('tokenGuard.submission.relatedJob') }} {{ job.id }}</a>
       </li>
     </ul>
-    <div v-if="jobs.length" class="mt-4 overflow-x-auto">
+    <div v-if="jobs.length" class="mt-4">
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p class="text-xs text-gray-500">{{ t('tokenGuard.history.deleteHint') }}</p>
+        <button type="button" data-testid="delete-selected" class="btn btn-secondary" :disabled="!selected.length || deleting || loading || disabled || Boolean(actionBusy)" @click="deleteSelected">{{ t('tokenGuard.history.deleteSelected', { count: selected.length }) }}</button>
+      </div>
+      <div class="overflow-x-auto">
       <table class="w-full text-left text-sm">
-        <thead><tr class="border-b dark:border-dark-600"><th class="p-2">{{ t('tokenGuard.account') }}</th><th class="p-2">{{ t('tokenGuard.rotation.status') }}</th><th class="p-2">{{ t('tokenGuard.actions') }}</th></tr></thead>
+        <thead><tr class="border-b dark:border-dark-600"><th class="p-2"><input type="checkbox" data-testid="select-page" :checked="allPageSelected" :disabled="!selectableJobs.length || deleting || loading || disabled" :aria-label="t('tokenGuard.history.selectPage')" @change="togglePageSelection" /></th><th class="p-2">{{ t('tokenGuard.account') }}</th><th class="p-2">{{ t('tokenGuard.rotation.status') }}</th><th class="p-2">{{ t('tokenGuard.actions') }}</th></tr></thead>
         <tbody>
-          <tr v-for="job in jobs" :id="'rotation-job-' + job.id" :key="job.id" class="border-b dark:border-dark-600">
+          <tr v-for="job in visibleJobs" :id="'rotation-job-' + job.id" :key="job.id" class="border-b dark:border-dark-600">
+            <td class="p-2"><input v-model="selected" type="checkbox" :value="job.id" data-testid="select-history-row" :disabled="!canDelete(job) || deleting || loading || disabled || actionBusy === job.id" :aria-label="t('tokenGuard.history.selectRecord', { email: job.email })" /></td>
             <td class="p-2"><div>{{ job.email }}</div><small class="text-gray-400">{{ job.id }}</small></td>
-            <td class="p-2"><div>{{ stateText(job) }}</div><p v-if="failureText(job)" class="mt-1 max-w-lg text-xs text-amber-600">{{ failureText(job) }}</p></td>
+            <td class="p-2"><div class="flex items-center gap-2"><span v-if="isActive(job) && !statusStale" aria-hidden="true" class="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />{{ stateText(job) }}</div><p v-if="failureText(job)" class="mt-1 max-w-lg text-xs text-amber-600">{{ failureText(job) }}</p></td>
             <td class="p-2">
               <div class="flex flex-wrap gap-2">
-                <button v-if="job.retryable" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || disabled" @click="verify(job)">{{ t('tokenGuard.rotation.verify') }}</button>
-                <button v-if="latestVerified(job)" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id" @click="copyResult(job)">{{ t('tokenGuard.rotation.copy') }}</button>
-                <button v-if="showApply && latestVerified(job)" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || disabled" @click="apply(job)">{{ t('tokenGuard.rotation.apply') }}</button>
+                <button v-if="job.retryable" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || deleting || disabled" @click="verify(job)"><span v-if="actionBusy === job.id" aria-hidden="true" class="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />{{ t('tokenGuard.rotation.verify') }}</button>
+                <button v-if="latestVerified(job)" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || deleting" @click="copyResult(job)">{{ t('tokenGuard.rotation.copy') }}</button>
+                <button v-if="showApply && latestVerified(job)" type="button" class="btn btn-secondary" :disabled="actionBusy === job.id || deleting || disabled" @click="apply(job)">{{ t('tokenGuard.rotation.apply') }}</button>
                 <span v-if="job.status === 'success' && job.login_verified && !latestVerified(job)" class="max-w-xs text-xs text-gray-500">{{ t('tokenGuard.rotation.superseded') }}</span>
               </div>
             </td>
           </tr>
         </tbody>
       </table>
+      </div>
+      <Pagination v-model:page="page" :total="jobs.length" :page-size="pageSize" :show-page-size-selector="false" />
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import Pagination from '@/components/common/Pagination.vue'
+import CredentialTaskProgress from './CredentialTaskProgress.vue'
 import { useI18n } from 'vue-i18n'
 import { credentialSubmissionRejection, type CredentialSubmissionRejection } from '@/api/admin/credentialSubmission'
 import type { TokenGuardReloginAccount } from '@/api/admin/accountTokenGuard'
 import {
-  formatTwoFARotationCredentials, getTwoFARotationResult, listTwoFARotations, parseTwoFARotationText,
+  deleteTwoFARotations, formatTwoFARotationCredentials, getTwoFARotationResult, listTwoFARotations, parseTwoFARotationText,
   startTwoFARotation, verifyTwoFARotation, type TwoFARotationJob, type TwoFARotationResult
 } from '@/api/admin/accountTwoFARotation'
 
@@ -60,13 +79,57 @@ const { t } = useI18n()
 const input = ref(''), confirmed = ref(false), message = ref(''), actionBusy = ref('')
 const busy = ref(false), loading = ref(false)
 const jobs = ref<TwoFARotationJob[]>([])
+const statusStale = ref(false)
+const activeJobs = computed(() => jobs.value.filter(isActive))
+const page = ref(1), pageSize = 10
+const selected = ref<string[]>([]), deleting = ref(false)
+const visibleJobs = computed(() => jobs.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+const selectableJobs = computed(() => visibleJobs.value.filter(canDelete))
+const allPageSelected = computed(() => selectableJobs.value.length > 0 && selectableJobs.value.every(job => selected.value.includes(job.id)))
+function canDelete(job: TwoFARotationJob) {
+  return job.deletable !== false && !job.rotated_pending_verify && ['success', 'login_failed', 'preflight_failed'].includes(job.status)
+}
+function togglePageSelection() {
+  const ids = selectableJobs.value.map(job => job.id)
+  selected.value = allPageSelected.value ? selected.value.filter(id => !ids.includes(id)) : [...new Set([...selected.value, ...ids])]
+}
+watch(page, () => { selected.value = [] })
+watch(jobs, () => {
+  page.value = Math.min(page.value, Math.max(1, Math.ceil(jobs.value.length / pageSize)))
+  selected.value = selected.value.filter(id => jobs.value.some(job => job.id === id && canDelete(job)))
+})
+async function showRelatedJob(id: string) {
+  const index = jobs.value.findIndex(job => job.id === id)
+  if (index < 0) return
+  page.value = Math.floor(index / pageSize) + 1
+  await nextTick()
+  document.getElementById('rotation-job-' + id)?.scrollIntoView?.({ block: 'nearest' })
+}
+async function deleteSelected() {
+  if (deleting.value || props.disabled || actionBusy.value || !selected.value.length) return
+  deleting.value = true
+  try {
+    const result = await deleteTwoFARotations([...selected.value])
+    if (!alive) return
+    jobs.value = jobs.value.filter(job => !result.deleted_ids.includes(job.id))
+    selected.value = []
+    message.value = t('tokenGuard.history.deleted')
+  } catch {
+    if (alive) message.value = t('tokenGuard.history.deleteFailed')
+  } finally {
+    deleting.value = false
+    await refresh()
+  }
+}
 const pending = ref<{ id: string; entry: TokenGuardReloginAccount }[]>([])
 const rejected = ref<{ id: string; email: string; reason: CredentialSubmissionRejection }[]>([])
 let alive = true
 let timer: ReturnType<typeof setInterval> | undefined
 
+function isActive(job: TwoFARotationJob) { return ['queued', 'running'].includes(job.status) }
+
 function stateText(job: TwoFARotationJob) {
-  const state = job.rotated_pending_verify ? 'pendingVerify' : job.status
+  const state = job.rotated_pending_verify && !isActive(job) ? 'pendingVerify' : job.status
   return t('tokenGuard.rotation.states.' + (['queued', 'running', 'success', 'error', 'cancelled', 'needs_review', 'pendingVerify', 'login_failed', 'preflight_failed'].includes(state) ? state : 'needs_review'))
 }
 
@@ -77,7 +140,7 @@ function failureText(job: TwoFARotationJob) {
     return t('tokenGuard.rotation.errors.' + code)
   }
   if (!['login_failed', 'preflight_failed'].includes(job.status) || job.rotated_pending_verify) return ''
-  const allowed = ['login_access_denied', 'login_rate_limited', 'login_bootstrap_rejected',
+  const allowed = ['login_password_rejected', 'login_mfa_retry_exhausted', 'login_mfa_rejected', 'login_upstream_error', 'login_browser_challenge', 'login_email_verification_required', 'login_access_denied', 'login_rate_limited', 'login_bootstrap_rejected',
     'login_interaction_required', 'login_workspace_selection_failed', 'login_session_incomplete', 'login_state_invalid', 'invalid_credentials', 'account_die',
     'login_failed', 'preflight_failed']
   const code = allowed.includes(job.error_code ?? '') ? job.error_code : 'login_failed'
@@ -86,7 +149,7 @@ function failureText(job: TwoFARotationJob) {
 
 function latestVerified(job: TwoFARotationJob) {
   // The worker returns newest first and restricts result export to that job.
-  return job.status === 'success' && job.login_verified
+  return job.status === 'success' && job.login_verified && job.is_latest !== false
     && jobs.value.find(candidate => candidate.email === job.email)?.id === job.id
 }
 
@@ -97,19 +160,20 @@ function relatedJobs(item: { email: string; reason: CredentialSubmissionRejectio
 }
 
 async function refresh() {
-  if (!props.configured || loading.value || !alive) return
+  if (!props.configured || loading.value || deleting.value || !alive) return
   loading.value = true
   try {
     const result = await listTwoFARotations()
-    if (alive) jobs.value = result
+    if (alive) { jobs.value = result; statusStale.value = false; if (message.value === t('tokenGuard.rotation.loadFailed')) message.value = '' }
   } catch {
-    if (alive) message.value = t('tokenGuard.rotation.loadFailed')
+    if (alive) { statusStale.value = true; message.value = t('tokenGuard.rotation.loadFailed') }
   } finally { loading.value = false }
 }
 
 async function startBatch() {
   if (!confirmed.value || !props.configured || props.disabled || busy.value || pending.value.length) return
   try {
+    page.value = 1
     pending.value = parseTwoFARotationText(input.value).map(entry => ({ id: crypto.randomUUID(), entry }))
   } catch { message.value = t('tokenGuard.twoFA.invalid'); return }
   input.value = ''
@@ -124,7 +188,8 @@ async function submitPending() {
   for (const item of [...pending.value]) {
     if (!alive) break
     try {
-      await startTwoFARotation(item.entry, item.id)
+      const job = await startTwoFARotation(item.entry, item.id)
+      if (alive) jobs.value = [job, ...jobs.value.filter(value => value.id !== job.id)]
       // An uncertain request keeps the SAME id and payload for a safe retry.
       pending.value = pending.value.filter(value => value.id !== item.id)
       item.entry.password = ''; item.entry.mfa_secret = ''
@@ -147,7 +212,7 @@ async function submitPending() {
 }
 
 async function verify(job: TwoFARotationJob) {
-  if (!job.retryable || props.disabled || actionBusy.value) return
+  if (!job.retryable || props.disabled || deleting.value || actionBusy.value) return
   actionBusy.value = job.id
   try { await verifyTwoFARotation(job.id); await refresh() }
   catch { message.value = t('tokenGuard.rotation.actionFailed') }
@@ -155,7 +220,7 @@ async function verify(job: TwoFARotationJob) {
 }
 
 async function copyResult(job: TwoFARotationJob) {
-  if (actionBusy.value) return
+  if (deleting.value || actionBusy.value) return
   actionBusy.value = job.id
   try {
     const result = await getTwoFARotationResult(job.id)
@@ -167,7 +232,7 @@ async function copyResult(job: TwoFARotationJob) {
 }
 
 async function apply(job: TwoFARotationJob) {
-  if (props.disabled || actionBusy.value) return
+  if (props.disabled || deleting.value || actionBusy.value) return
   actionBusy.value = job.id
   try {
     const result = await getTwoFARotationResult(job.id)
@@ -180,7 +245,7 @@ watch(() => props.configured, () => { void refresh() })
 onMounted(() => {
   void refresh()
   timer = setInterval(() => {
-    if (jobs.value.some(job => job.status === 'queued' || job.status === 'running') || busy.value) void refresh()
+    if (activeJobs.value.length || busy.value || pending.value.length || statusStale.value) void refresh()
   }, 3000)
 })
 onBeforeUnmount(() => {

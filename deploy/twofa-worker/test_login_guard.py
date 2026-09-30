@@ -33,12 +33,12 @@ def test_valid_authorize_url():
 
 @pytest.mark.parametrize('status,headers,url,code', [
     (403, {}, 'https://auth.openai.com/api/accounts/authorize', 'login_access_denied'),
-    (403, {'cf-mitigated': 'challenge'}, 'https://auth.openai.com/api/accounts/authorize', 'login_interaction_required'),
-    (403, {'cf-mitigated': ' CHALLENGE '}, 'https://auth.openai.com/api/accounts/authorize', 'login_interaction_required'),
+    (403, {'cf-mitigated': 'challenge'}, 'https://auth.openai.com/api/accounts/authorize', 'login_browser_challenge'),
+    (403, {'cf-mitigated': ' CHALLENGE '}, 'https://auth.openai.com/api/accounts/authorize', 'login_browser_challenge'),
     (403, {'cf-mitigated': 'unknown-sensitive-value'}, 'https://auth.openai.com/api/accounts/authorize', 'login_access_denied'),
     (429, {}, 'https://auth.openai.com/api/accounts/authorize', 'login_rate_limited'),
     (500, {}, 'https://auth.openai.com/api/accounts/authorize', 'login_bootstrap_rejected'),
-    (200, {'cf-mitigated': 'challenge'}, 'https://auth.openai.com/log-in', 'login_interaction_required'),
+    (200, {'cf-mitigated': 'challenge'}, 'https://auth.openai.com/log-in', 'login_browser_challenge'),
     (200, {}, 'https://chatgpt.com/api/auth/error?secret=private', 'login_bootstrap_rejected'),
 ])
 def test_oauth_rejection_stops_before_next_step(status, headers, url, code):
@@ -53,7 +53,7 @@ def test_valid_oauth_landing():
 
 
 @pytest.mark.skipif(not os.getenv('CHANGE2FA_SOURCE_DIR'), reason='pinned engine source not supplied')
-@pytest.mark.parametrize('challenge,code', [(False, 'login_access_denied'), (True, 'login_interaction_required')])
+@pytest.mark.parametrize('challenge,code', [(False, 'login_access_denied'), (True, 'login_browser_challenge')])
 def test_bootstrap_403_never_calls_authorize_continue(monkeypatch, challenge, code):
     import request_phase
     import session_phase

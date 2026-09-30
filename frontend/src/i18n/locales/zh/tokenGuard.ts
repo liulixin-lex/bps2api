@@ -1,4 +1,33 @@
 export default {
+  "progress": {
+  "title": "执行进度",
+  "submitting": "正在提交，请稍候…",
+  "elapsed": "已用时 {seconds} 秒",
+  "phaseElapsed": "当前步骤 {seconds} 秒",
+  "stale": "状态更新中断，暂时无法确认当前进度。",
+  "lastKnown": "最后确认：{phase}。请刷新任务，勿重复提交。",
+  "hint": "每 3 秒自动刷新。耗时仅供参考，以服务器返回的实际阶段和最终结果为准。",
+  "phases": {
+    "login_start": "正在启动浏览器并初始化登录",
+    "password": "正在提交密码验证",
+    "mfa": "正在生成并验证动态验证码（第 1 次）",
+    "mfa_retry": "首次验证码未通过，正在换用新码重试（第 2 次，最后一次）",
+    "workspace": "正在选择个人工作区",
+    "session": "正在等待登录会话就绪",
+    "preflight": "登录已完成，正在进行更换前检查",
+    "rotating": "正在更换 2FA 密钥",
+    "logout_preflight": "登录已完成，正在查找并核对退出入口",
+    "revoking": "已提交退出请求，正在等待上游确认",
+    "verify_login_start": "新密钥已保存，正在重新登录验证",
+    "verify_password": "正在验证新密钥：密码验证",
+    "verify_mfa": "正在验证新密钥：动态验证码（第 1 次）",
+    "verify_mfa_retry": "正在验证新密钥：换用新码（第 2 次，最后一次）",
+    "verify_workspace": "正在验证新密钥：选择个人工作区",
+    "verify_session": "正在验证新密钥：等待登录会话",
+    "verify_preflight": "新密钥登录已完成，正在完成账号检查"
+  }
+},
+  "history": {"logoutDeleteHint": "每页 10 条，可勾选部分或本页全部已结束记录删除。进行中或退出结果待确认的记录不能删除；删除历史不会再次执行退出。", "deleteSelected": "删除选中记录（{count}）", "selectPage": "选择本页可删除记录", "selectRecord": "选择 {email} 的记录", "deleteHint": "每页 10 条。删除会同时移除该记录保存的凭据，请先复制需要保留的结果；进行中、待验证或结果不确定的任务不能删除。", "deleted": "已删除选中的记录。", "deleteFailed": "删除未确认，请刷新后核对；进行中或结果待确认的任务不能删除。"},
   "submission": {
     "account_has_unresolved_job": "本次未创建任务：该账号已有进行中或结果待确认的 2FA 任务。请查看关联任务；刷新只更新状态，不会解除未确认变更的保护。",
     "account_has_unresolved_logout": "本次未创建任务：该账号已有结果待确认的退出任务。请查看关联任务，勿重复退出。",
@@ -39,7 +68,7 @@ export default {
   },
   "errors": {
     "login_failed": "自动登录未完成，尚未提交退出操作。",
-    "login_workspace_selection_failed": "密码和 2FA 校验后未能完成个人工作区选择，尚未进行账号安全设置操作。", "login_session_incomplete": "登录校验后未取得完整会话，尚未进行账号安全设置操作。", "login_interaction_required": "登录需要额外验证，当前自动流程已停止。",
+    "login_workspace_selection_failed": "密码和 2FA 校验后未能完成个人工作区选择，尚未进行账号安全设置操作。", "login_session_incomplete": "登录校验后未取得完整会话，尚未进行账号安全设置操作。", "login_password_rejected": "密码验证接口拒绝了本次登录，尚未执行安全设置操作。请核对密码和账号状态。", "login_mfa_retry_exhausted": "首次验证码错误或过期后，已清空输入并换用下一轮新验证码重试一次，但仍被拒绝。尚未执行更换或退出，请核对当前密钥和账号状态。", "login_mfa_rejected": "密码步骤已通过，但 2FA 校验接口拒绝了本次登录；可能与当前密钥、验证码有效期或账号限制有关。尚未执行更换或退出，请勿连续重试。", "login_upstream_error": "登录服务返回服务器错误（5xx），尚未执行安全设置操作。请稍后再试。", "login_browser_challenge": "登录阶段遇到 Cloudflare 浏览器验证，尚未执行更换或退出。当前全自动流程无法完成此验证，请勿连续重复提交。", "login_email_verification_required": "登录要求额外的邮箱验证码，仅有密码和 2FA 密钥无法完成这一步；尚未执行安全设置操作。", "login_interaction_required": "登录需要额外验证，当前自动流程已停止。",
     "invalid_credentials": "账号密码或当前 2FA 校验未通过。",
     "account_die": "账号不可用，未提交退出操作。",
     "logout_control_missing": "未找到或无法操作“退出所有会话”入口，未确认提交退出。",
@@ -80,7 +109,7 @@ export default {
     "submitUncertain": "提交未确认，已保留原请求标识。请先刷新任务，再用原标识继续；不要重新创建同一批。",
     "actionFailed": "操作未完成，请刷新任务状态；尚未验证或已被后续任务替换的密钥不能导出。",
     "superseded": "该记录之后已有更换任务，已停用旧凭据的复制，请先核查最新任务。",
-    "errors": {"rotation_disable_server_error": "关闭旧 2FA 的接口返回服务器错误（5xx），流程尚未进入新密钥生成步骤。旧密钥是否仍有效需核验，请勿重复提交。", "rotation_disable_rejected": "关闭旧 2FA 的请求被上游拒绝（4xx），流程尚未进入新密钥生成步骤。请先核查账号状态，勿重复提交。", "rotation_unconfirmed": "更换流程中断，尚不能确认账号当前的 2FA 状态。系统已停止自动重试，请先核查，勿重复提交。", "login_access_denied": "OpenAI 登录初始化被拒绝（403）。请检查登录环境；如需额外验证，请在浏览器中完成。", "login_rate_limited": "OpenAI 限制了登录请求（429），请稍后再试。", "login_bootstrap_rejected": "登录会话初始化失败，已停止后续操作。", "login_workspace_selection_failed": "密码和 2FA 校验后未能完成个人工作区选择，尚未进行账号安全设置操作。", "login_session_incomplete": "登录校验后未取得完整会话，尚未进行账号安全设置操作。", "login_interaction_required": "登录需要浏览器或邮箱等额外验证，当前自动流程无法完成。", "login_state_invalid": "OpenAI 登录状态无效（409 invalid_state），尚未执行 2FA 更换。", "invalid_credentials": "登录凭据或当前 2FA 验证失败，请核对输入。", "account_die": "OpenAI 返回账号停用状态，未执行更换。", "login_failed": "登录未完成，尚未执行 2FA 更换。", "preflight_failed": "更换前检查未通过，尚未修改 2FA。"},
+    "errors": {"rotation_disable_server_error": "关闭旧 2FA 的接口返回服务器错误（5xx），流程尚未进入新密钥生成步骤。旧密钥是否仍有效需核验，请勿重复提交。", "rotation_disable_rejected": "关闭旧 2FA 的请求被上游拒绝（4xx），流程尚未进入新密钥生成步骤。请先核查账号状态，勿重复提交。", "rotation_unconfirmed": "更换流程中断，尚不能确认账号当前的 2FA 状态。系统已停止自动重试，请先核查，勿重复提交。", "login_access_denied": "OpenAI 登录初始化被拒绝（403）。请检查登录环境；如需额外验证，请在浏览器中完成。", "login_rate_limited": "OpenAI 限制了登录请求（429），请稍后再试。", "login_bootstrap_rejected": "登录会话初始化失败，已停止后续操作。", "login_workspace_selection_failed": "密码和 2FA 校验后未能完成个人工作区选择，尚未进行账号安全设置操作。", "login_session_incomplete": "登录校验后未取得完整会话，尚未进行账号安全设置操作。", "login_password_rejected": "密码验证接口拒绝了本次登录，尚未执行安全设置操作。请核对密码和账号状态。", "login_mfa_retry_exhausted": "首次验证码错误或过期后，已清空输入并换用下一轮新验证码重试一次，但仍被拒绝。尚未执行更换或退出，请核对当前密钥和账号状态。", "login_mfa_rejected": "密码步骤已通过，但 2FA 校验接口拒绝了本次登录；可能与当前密钥、验证码有效期或账号限制有关。尚未执行更换或退出，请勿连续重试。", "login_upstream_error": "登录服务返回服务器错误（5xx），尚未执行安全设置操作。请稍后再试。", "login_browser_challenge": "登录阶段遇到 Cloudflare 浏览器验证，尚未执行更换或退出。当前全自动流程无法完成此验证，请勿连续重复提交。", "login_email_verification_required": "登录要求额外的邮箱验证码，仅有密码和 2FA 密钥无法完成这一步；尚未执行安全设置操作。", "login_interaction_required": "登录需要浏览器或邮箱等额外验证，当前自动流程无法完成。", "login_state_invalid": "OpenAI 登录状态无效（409 invalid_state），尚未执行 2FA 更换。", "invalid_credentials": "登录凭据或当前 2FA 验证失败，请核对输入。", "account_die": "OpenAI 返回账号停用状态，未执行更换。", "login_failed": "登录未完成，尚未执行 2FA 更换。", "preflight_failed": "更换前检查未通过，尚未修改 2FA。"},
     "states": {"login_failed": "ChatGPT 登录失败，未更换 2FA", "preflight_failed": "更换前检查失败，未更换 2FA",  "queued": "排队中", "running": "执行中", "success": "更换并验证成功", "error": "未完成", "cancelled": "已取消，需核查", "needs_review": "结果不确定，需人工核查", "pendingVerify": "已更换，等待验证" }
   },
   "twoFA": {

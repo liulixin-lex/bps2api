@@ -4,10 +4,11 @@ import os
 import re
 
 from login_guard import LoginBootstrapError
+from progress import report_phase, verification_progress
 
 LOGIN_CODES = frozenset({
     "login_access_denied", "login_rate_limited", "login_bootstrap_rejected",
-    "login_interaction_required", "login_state_invalid", "invalid_credentials",
+    "login_password_rejected", "login_mfa_retry_exhausted", "login_mfa_rejected", "login_upstream_error", "login_browser_challenge", "login_email_verification_required", "login_interaction_required", "login_state_invalid", "invalid_credentials",
     "login_workspace_selection_failed", "login_session_incomplete",
     "account_die", "login_failed", "preflight_failed",
 })
@@ -83,7 +84,10 @@ class StagedRotationService:
 
         async def login(**inputs):
             nonlocal phase
-            session = await self.login_fn(**inputs)
+            with verification_progress(phase == "rotation"):
+                report_phase('login_start')
+                session = await self.login_fn(**inputs)
+                report_phase('preflight')
             if phase == "login":
                 phase = "preflight"
             return session
@@ -92,6 +96,7 @@ class StagedRotationService:
             nonlocal phase
             # Mark BEFORE entering upstream: even its first request may mutate.
             phase = "rotation"
+            report_phase('rotating')
             return await self.rotate_fn(**inputs)
 
         service = TwoFAService(login_fn=login, rotate_fn=rotate,
@@ -108,6 +113,12 @@ class StagedRotationService:
 
     async def verify(self, **kwargs):
         from service import TwoFAService
-        service = TwoFAService(login_fn=self.login_fn, rotate_fn=self.rotate_fn,
+        async def login(**inputs):
+            session = await self.login_fn(**inputs)
+            report_phase('preflight')
+            return session
+        service = TwoFAService(login_fn=login, rotate_fn=self.rotate_fn,
                                entitlement_fn=self.entitlement_fn, login_attempts=1)
-        return await service.verify(**kwargs)
+        with verification_progress():
+            report_phase('login_start')
+            return await service.verify(**kwargs)
