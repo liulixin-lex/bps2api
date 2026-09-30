@@ -7,11 +7,11 @@
     <p v-if="!configured" class="mb-3 text-sm text-amber-600">{{ t('tokenGuard.rotation.configureFirst') }}</p>
     <p v-if="disabled" class="mb-3 text-sm text-amber-600">{{ t('tokenGuard.rotation.saveFirst') }}</p>
     <form @submit.prevent="submit">
-      <div class="grid gap-3 md:grid-cols-3">
-        <label class="text-sm" for="logout-email">{{ t('tokenGuard.sessions.email') }}<input id="logout-email" v-model="email" type="email" class="input mt-1 w-full" autocomplete="off" :disabled="busy || Boolean(pending)" required /></label>
-        <label class="text-sm" for="logout-password">{{ t('tokenGuard.sessions.password') }}<input id="logout-password" v-model="password" type="password" class="input mt-1 w-full" autocomplete="new-password" :disabled="busy || Boolean(pending)" required /></label>
-        <label class="text-sm" for="logout-secret">{{ t('tokenGuard.sessions.secret') }}<input id="logout-secret" v-model="secret" type="password" class="input mt-1 w-full font-mono" autocomplete="off" spellcheck="false" :disabled="busy || Boolean(pending)" required /></label>
-      </div>
+      <label for="logout-credentials" class="mb-2 block text-sm">{{ t('tokenGuard.sessions.credentials') }}</label>
+      <textarea id="logout-credentials" v-model="input" rows="2" class="input w-full font-mono text-sm" autocomplete="off" spellcheck="false" :disabled="busy || Boolean(pending)" placeholder="email@example.com----password----CURRENT_TOTP_SECRET" aria-describedby="logout-input-hint" required />
+      <p id="logout-input-hint" class="mt-2 text-xs text-gray-500">{{ t('tokenGuard.sessions.credentialsHint') }}</p>
+      <p v-if="parsed" role="status" class="mt-2 text-sm text-emerald-600">{{ t('tokenGuard.sessions.recognized', { email: parsed.email }) }}</p>
+      <p v-else-if="input.trim()" role="status" class="mt-2 text-sm text-amber-600">{{ t('tokenGuard.sessions.invalid') }}</p>
       <label class="my-4 flex items-start gap-2 text-sm"><input v-model="confirmed" type="checkbox" class="mt-1" /><span>{{ t('tokenGuard.sessions.confirm') }}</span></label>
       <div class="flex flex-wrap gap-2">
         <button type="submit" class="btn btn-primary" :disabled="!configured || disabled || !confirmed || busy || Boolean(pending)">{{ t('tokenGuard.sessions.submit') }}</button>
@@ -36,14 +36,17 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { listSessionLogouts, startSessionLogout, type SessionLogoutJob } from '@/api/admin/accountSessionLogout'
+import { listSessionLogouts, parseSessionLogoutText, startSessionLogout, type SessionLogoutJob } from '@/api/admin/accountSessionLogout'
 import { credentialSubmissionRejection, type CredentialSubmissionRejection } from '@/api/admin/credentialSubmission'
 import type { TokenGuardReloginAccount } from '@/api/admin/accountTokenGuard'
 const props = defineProps<{ configured: boolean; disabled?: boolean; active: boolean }>()
 const { t } = useI18n()
-const email = ref(''), password = ref(''), secret = ref(''), confirmed = ref(false), message = ref('')
+const input = ref(''), confirmed = ref(false), message = ref('')
+const parsed = computed(() => {
+  try { return parseSessionLogoutText(input.value) } catch { return null }
+})
 const busy = ref(false), loading = ref(false), jobs = ref<SessionLogoutJob[]>([])
 const pending = ref<{ id: string; entry: TokenGuardReloginAccount } | null>(null)
 const rejected = ref<{ email: string; reason: CredentialSubmissionRejection } | null>(null)
@@ -71,9 +74,9 @@ async function refresh() {
 }
 async function submit() {
   if (!confirmed.value || !props.configured || props.disabled || busy.value || pending.value) return
-  if (!email.value.trim() || !password.value || !secret.value.trim()) { message.value = t('tokenGuard.sessions.invalid'); return }
-  pending.value = { id: crypto.randomUUID(), entry: { email: email.value.trim(), password: password.value, mfa_secret: secret.value.trim() } }
-  password.value = ''; secret.value = ''
+  if (!parsed.value) { message.value = t('tokenGuard.sessions.invalid'); return }
+  pending.value = { id: crypto.randomUUID(), entry: { ...parsed.value } }
+  input.value = ''
   rejected.value = null
   await sendPending()
 }
@@ -103,7 +106,7 @@ watch(() => [props.active, props.configured], () => { void refresh() })
 onMounted(() => { void refresh(); timer = setInterval(() => { void refresh() }, 5000) })
 onBeforeUnmount(() => {
   alive = false; if (timer) clearInterval(timer)
-  password.value = ''; secret.value = ''
+  input.value = ''
   if (pending.value) { pending.value.entry.password = ''; pending.value.entry.mfa_secret = '' }
 })
 </script>

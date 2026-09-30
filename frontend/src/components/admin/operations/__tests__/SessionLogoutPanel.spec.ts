@@ -3,15 +3,13 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import SessionLogoutPanel from '../SessionLogoutPanel.vue'
 import * as api from '@/api/admin/accountSessionLogout'
 vi.mock('vue-i18n', async importOriginal => ({ ...await importOriginal<typeof import('vue-i18n')>(), useI18n: () => ({ t: (key: string) => key }) }))
-vi.mock('@/api/admin/accountSessionLogout', () => ({ listSessionLogouts: vi.fn(), startSessionLogout: vi.fn() }))
+vi.mock('@/api/admin/accountSessionLogout', async importOriginal => ({ ...await importOriginal<typeof import('@/api/admin/accountSessionLogout')>(), listSessionLogouts: vi.fn(), startSessionLogout: vi.fn() }))
 const job = { id: 'a'.repeat(32), email: 'test@example.com', status: 'queued', created_at: 1 }
 let wrapper: VueWrapper | undefined
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(api.listSessionLogouts).mockResolvedValue([]); vi.mocked(api.startSessionLogout).mockResolvedValue(job) })
 afterEach(() => { wrapper?.unmount(); wrapper = undefined })
 async function fill() {
-  await wrapper!.get('#logout-email').setValue('test@example.com')
-  await wrapper!.get('#logout-password').setValue(' p|a,ss$[]+----word ')
-  await wrapper!.get('#logout-secret').setValue('JBSWY3DPEHPK3PXP')
+  await wrapper!.get('#logout-credentials').setValue('test@example.com---- p|a,ss$[]+----word ----JBSWY3DPEHPK3PXP')
 }
 describe('independent session logout', () => {
   it('requires explicit confirmation and saved worker settings', async () => {
@@ -30,8 +28,7 @@ describe('independent session logout', () => {
     wrapper = mount(SessionLogoutPanel, { props: { configured: true, active: true } })
     await fill(); await wrapper.get('input[type=checkbox]').setValue(true); await wrapper.get('form').trigger('submit'); await flushPromises()
     expect(snapshot).toEqual({ email: 'test@example.com', password: ' p|a,ss$[]+----word ', mfa_secret: 'JBSWY3DPEHPK3PXP' })
-    expect((wrapper.get('#logout-password').element as HTMLInputElement).value).toBe('')
-    expect((wrapper.get('#logout-secret').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#logout-credentials').element as HTMLTextAreaElement).value).toBe('')
     expect(vi.mocked(api.startSessionLogout).mock.calls[0][0].password).toBe('')
     expect(wrapper.text()).toContain('sessions.submitted')
   })
@@ -41,7 +38,7 @@ describe('independent session logout', () => {
     await fill(); await wrapper.get('input[type=checkbox]').setValue(true); await wrapper.get('form').trigger('submit'); await flushPromises()
     const first = vi.mocked(api.startSessionLogout).mock.calls[0]
     expect(wrapper.text()).toContain('sessions.submitUncertain')
-    expect((wrapper.get('#logout-password').element as HTMLInputElement).disabled).toBe(true)
+    expect((wrapper.get('#logout-credentials').element as HTMLTextAreaElement).disabled).toBe(true)
     await wrapper.findAll('button').find(b => b.text() === 'tokenGuard.rotation.retrySubmit')!.trigger('click'); await flushPromises()
     expect(api.startSessionLogout).toHaveBeenCalledTimes(2)
     expect(vi.mocked(api.startSessionLogout).mock.calls[1][1]).toBe(first[1])
@@ -84,10 +81,42 @@ it('releases a rejected logout submission and links the protected historical tas
   expect(wrapper.text()).not.toContain('submitUncertain')
   expect(wrapper.text()).not.toContain('retrySubmit')
   expect(wrapper.text()).not.toContain('private-cookie')
-  expect((wrapper.get('#logout-password').element as HTMLInputElement).disabled).toBe(false)
+  expect((wrapper.get('#logout-credentials').element as HTMLTextAreaElement).disabled).toBe(false)
   expect(vi.mocked(api.startSessionLogout).mock.calls[0][0].password).toBe('')
   expect(vi.mocked(api.startSessionLogout).mock.calls[0][0].mfa_secret).toBe('')
   expect(wrapper.get('a').attributes('href')).toBe('#logout-job-' + job.id)
   await wrapper.findAll('button').find(b => b.text() === 'tokenGuard.refresh')!.trigger('click'); await flushPromises()
   expect(api.startSessionLogout).toHaveBeenCalledTimes(1)
+})
+
+
+it('recognizes one pasted line without submitting or exposing parsed secrets in status text', async () => {
+  wrapper = mount(SessionLogoutPanel, { props: { configured: true, active: true } })
+  await fill(); await flushPromises()
+  expect(wrapper.text()).toContain('sessions.recognized')
+  expect(wrapper.text()).not.toContain('p|a,ss$[]+')
+  expect(wrapper.text()).not.toContain('JBSWY3DPEHPK3PXP')
+  expect(wrapper.findAll('input[type=email], input[type=password]')).toHaveLength(0)
+  expect(api.startSessionLogout).not.toHaveBeenCalled()
+})
+
+it.each(['invalid', 'u@example.com----pass----', 'u@example.com----pass----SEED\nv@example.com----pass----SEED'])('rejects malformed or multiple pasted accounts without dispatch: %s', async raw => {
+  wrapper = mount(SessionLogoutPanel, { props: { configured: true, active: true } })
+  await wrapper.get('#logout-credentials').setValue(raw)
+  await wrapper.get('input[type=checkbox]').setValue(true)
+  await wrapper.get('form').trigger('submit'); await flushPromises()
+  expect(wrapper.text()).toContain('sessions.invalid')
+  expect(api.startSessionLogout).not.toHaveBeenCalled()
+  expect((wrapper.get('#logout-credentials').element as HTMLTextAreaElement).disabled).toBe(false)
+})
+
+it('clears a pasted pending credential on unmount after an uncertain response', async () => {
+  vi.mocked(api.startSessionLogout).mockRejectedValueOnce(new Error('lost response'))
+  wrapper = mount(SessionLogoutPanel, { props: { configured: true, active: true } })
+  await fill(); await wrapper.get('input[type=checkbox]').setValue(true)
+  await wrapper.get('form').trigger('submit'); await flushPromises()
+  const entry = vi.mocked(api.startSessionLogout).mock.calls[0][0]
+  expect(entry.password).not.toBe('')
+  wrapper.unmount(); wrapper = undefined
+  expect(entry.password).toBe(''); expect(entry.mfa_secret).toBe('')
 })

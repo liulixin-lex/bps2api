@@ -8,6 +8,10 @@ export default {
     "relatedJob": "查看关联任务"
 },
   "sessions": {
+  "credentials": "账号凭据（整行粘贴）",
+  "credentialsHint": "格式：邮箱----密码----当前 2FA 密钥。自动识别三个字段，每次仅处理一个账号。",
+  "recognized": "已识别账号：{email}",
+
   "tab": "退出所有会话",
   "title": "退出 ChatGPT 所有会话",
   "description": "输入邮箱、密码和当前 2FA 密钥，由服务器自动登录并提交退出所有会话请求。",
@@ -18,7 +22,7 @@ export default {
   "submit": "一键退出所有会话",
   "status": "退出状态",
   "scope": "此操作不修改密码或 2FA。持有有效凭据的人仍可重新登录；不承诺同时撤销已导入 SUB2API／CPA 的 OAuth 凭据。",
-  "invalid": "请填写完整的邮箱、密码和当前 2FA 密钥。",
+  "invalid": "请按“邮箱----密码----当前 2FA 密钥”粘贴一条完整凭据，每次仅处理一个账号。",
   "submitted": "任务已提交，服务器将自动执行，请查看下方状态。",
   "submitUncertain": "提交尚未确认，请先刷新任务。需要再次提交时沿用原任务标识，不要新建重复任务。",
   "loadFailed": "任务读取失败，请检查共用维护服务配置与版本后刷新。",

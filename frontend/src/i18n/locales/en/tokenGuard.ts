@@ -8,6 +8,10 @@ export default {
     "relatedJob": "View related task"
 },
   "sessions": {
+  "credentials": "Account credentials (paste the full line)",
+  "credentialsHint": "Format: email----password----current 2FA secret. Fields are detected automatically; one account per submission.",
+  "recognized": "Recognized account: {email}",
+
   "tab": "Log out all sessions",
   "title": "Log out all ChatGPT sessions",
   "description": "Enter your email, password, and current 2FA secret. The server signs in automatically and requests logout of all sessions.",
@@ -18,7 +22,7 @@ export default {
   "submit": "Log out all sessions",
   "status": "Logout status",
   "scope": "Passwords and 2FA are unchanged. Valid credentials can sign in again. Revocation of OAuth credentials imported into SUB2API/CPA is not guaranteed.",
-  "invalid": "Enter the email, password, and current 2FA secret.",
+  "invalid": "Paste one complete credential line: email----password----current 2FA secret. Submit one account at a time.",
   "submitted": "Task submitted. The server will run it automatically; check the status below.",
   "submitUncertain": "Submission is unconfirmed. Refresh tasks first, then retry with the original request ID; do not create a duplicate task.",
   "loadFailed": "Could not read tasks. Check the shared worker configuration and version, then refresh.",
