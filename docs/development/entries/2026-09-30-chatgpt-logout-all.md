@@ -61,3 +61,26 @@
 - 前端：35 passed；vue-tsc 和改动文件 ESLint 通过。Vite 生产构建通过，保留既有 Browserslist/大 chunk 提示。
 - Go：service/admin handler 的 TwoFA/SessionLogout 定向回归通过。
 - 新 worker 镜像已构建；真实登录失败限制仍在，模拟接口响应不能证明真实设备退出。
+
+
+## 2026-09-30 07:15 UTC：测试站部署完成
+
+业务提交 f8d68ca50735a43206507adf3b7c0f7718c30e63；测试站版本 0.0.18-pr12.f8d68ca5，app/worker 分别为 bps2api:pr12-f8d68ca5 和 bps-twofa-worker:pr12-f8d68ca5。仅本机授权测试站更新，远端生产未修改，原 XY2API 保留。
+
+### 实际验收
+
+- 源码同输入 BASELINE/MODIFIED/ROLLBACK/补丁重建通过：旧版无 logout API/菜单；新版 GET 返回空列表、未确认 POST 400，原轮换列表不变；原字节回滚一致，继承文档保留。
+- 部署实际 BASELINE 07:14:48 → MODIFIED 07:15:02 → ROLLBACK 07:15:18 → FINAL 07:15:31 UTC。公网和回环健康、版本、静态资源字节、管理员鉴权、no-store、未确认请求拒绝均通过；回滚确实恢复 b0bbeae3 后再次上线候选。
+- 数据库：jobs.db 原 6 条、requests.db 原 rotation_requests 行哈希保持不变；新增空 session_logout_jobs 表，回滚旧 worker 后该兼容表保留，不删除数据，不能描述为数据库完全无修改。
+- 守护配置不变；Caddy 文件及原 XY2API/PostgreSQL/Redis 容器身份和健康状态不变。没有发起真实退出、轮换、继续验证请求。
+- 公网 Chromium 确认新菜单在自动更换 2FA 左侧、默认仍为 2FA、三字段/授权确认可用、切换保留输入、共用设置可展开。拦截所有真实管理员写操作，以浏览器本地合成响应验证提交参数、任务展示和密码/密钥清空。重新加载后实际退出任务列表仍为空；深色截图已脱敏并人工查看。
+
+### 交付与证据
+
+- 源码四角色：docs-local/chatgpt-logout-all-20260930/{MODIFIED_FILE,DIFF_FILE,VERIFICATION.txt,ROLLBACK.sh}；源码回滚仅对显式目标副本执行。
+- 部署四角色：/opt/bps2api-twofa-preview/evidence/chatgpt-logout-all-20260930/ 同名文件；回滚脚本先检查无活跃任务，仅恢复本次 app/worker 与部署身份，不删除新增任务表。
+- 原始日志、源码同输入结果、部署四阶段、数据库摘要与脱敏截图分别留存；本次通过 PR #12 交付，保持 open、不合并，未创建正式发布。发布 head 与远端一致性以本机 pr-publication.json 为准。
+
+### 未完成的外部验证
+
+本次界面/API/模拟浏览器流程已验收，真实 ChatGPT 自动登录及退出所有设备仍未通过端到端验收。前置只读探针遇到 login_failed，故没有确认当前上游原生退出路径，更没有实测撤销所有设备；不得把部署成功或模拟 accepted 当成真实退出成功。用户需要在此页面显式提交其指定账号才能产生真实退出动作；当前不接入人工验证，不自动重试不确定任务，不承诺 OAuth/API token 的失效范围。
